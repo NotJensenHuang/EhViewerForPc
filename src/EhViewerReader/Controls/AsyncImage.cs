@@ -199,6 +199,11 @@ public sealed class AsyncImage : Control
                 return;
             }
 
+            // Completions are queued at Background priority on purpose: during a
+            // fast scroll dozens of decodes finish per frame, and the default
+            // Normal priority would preempt input (wheel/scrollbar) and render,
+            // starving the UI thread. Slightly later cover arrival is invisible;
+            // a frozen scrollbar is not.
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 if (token.IsCancellationRequested || generation != _generation)
@@ -225,7 +230,7 @@ public sealed class AsyncImage : Control
                 _retiredBitmap?.Dispose();
                 _retiredBitmap = previous;
                 InvalidateVisual();
-            });
+            }, DispatcherPriority.Background);
         }
         catch (OperationCanceledException)
         {
@@ -241,7 +246,7 @@ public sealed class AsyncImage : Control
                     _failed = true;
                     InvalidateVisual();
                 }
-            });
+            }, DispatcherPriority.Background);
         }
     }
 

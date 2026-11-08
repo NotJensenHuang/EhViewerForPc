@@ -23,7 +23,7 @@ public sealed class AppServices : IDisposable
         Scanner = new LibraryScanner();
         Decoder = new ImageDecoder(Log);
         Images = new ImageLoader(Decoder, Log);
-        Covers = new CoverService(Images, Log);
+        Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
         ApplySettings(settings);
     }
@@ -86,6 +86,7 @@ public sealed class AppServices : IDisposable
             // Best effort on shutdown.
         }
 
+        Covers.Dispose();
         Decoder.Dispose();
     }
 }
