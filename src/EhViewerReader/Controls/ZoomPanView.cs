@@ -54,6 +54,8 @@ public sealed class ZoomPanView : Control
     private Bitmap? _retiredBitmap;
     private DecodedImage? _preloaded;
     private string? _preloadedKey;
+    private DecodedImage? _animated;
+    private Task<string>? _animationTask;
     private CancellationTokenSource? _cancellation;
     private CancellationTokenSource? _preloadCancellation;
     private int _generation;
@@ -122,6 +124,15 @@ public sealed class ZoomPanView : Control
     public double CurrentZoom => _zoom;
     public bool IsLoading => _loading;
     public bool HasImage => _bitmap is not null;
+
+    /// <summary>True while an animation session is attached to the current page.</summary>
+    internal bool HasAnimation => _animated is not null;
+
+    /// <summary>Test hook: the live animation session (its FrameIndex advances).</summary>
+    internal DecodedImage? AnimatedImageForTest => _animated;
+
+    /// <summary>Test hook: diagnostic reason why the last playback loop ended.</summary>
+    internal string? AnimationStopReason { get; private set; }
 
     protected override Size MeasureOverride(Size availableSize)
     {
@@ -224,10 +235,12 @@ public sealed class ZoomPanView : Control
             string.Equals(_preloadedKey, request.Key, StringComparison.Ordinal))
         {
             _bitmap = _preloaded.Bitmap;
+            DecodedImage adopted = _preloaded;
             _preloaded = null;
             _preloadedKey = null;
             _loading = false;
             _failed = false;
+            StartAnimation(adopted, _generation, CancellationToken.None);
             InvalidateVisual();
             TryPreload();
             return;
@@ -333,6 +346,7 @@ public sealed class ZoomPanView : Control
                     _failed = false;
                     RetireCurrent();
                     _bitmap = image.Bitmap;
+                    StartAnimation(image, generation, token);
                 }
 
                 InvalidateVisual();
@@ -352,6 +366,44 @@ public sealed class ZoomPanView : Control
                 InvalidateVisual();
             });
         }
+    }
+
+    /// <summary>
+    /// Starts frame playback when the freshly decoded page is animated. The
+    /// loop is bounded by the load generation: any page/fit change cancels it
+    /// and the control falls back to a static frame.
+    /// </summary>
+    private void StartAnimation(DecodedImage image, int generation, CancellationToken token)
+    {
+        if (!image.IsAnimated || image.FrameCount < 2) return;
+        _animated = image;
+        _animationTask = AnimationPlayer.PlayAsync(image, async next =>
+        {
+            return await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (token.IsCancellationRequested || generation != _generation || _animated is null)
+                {
+                    return false;
+                }
+
+                Bitmap? old = _bitmap;
+                _bitmap = next.Bitmap;
+                _animated = next;
+                if (old is not null)
+                {
+                    // The render thread may still reference the previous frame.
+                    Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+                }
+
+                InvalidateVisual();
+                return true;
+            });
+        }, token);
+        _ = _animationTask.ContinueWith(t =>
+        {
+            if (t.IsCompletedSuccessfully) AnimationStopReason = t.Result;
+            else if (t.IsFaulted) AnimationStopReason = "task-faulted:" + t.Exception?.InnerException?.GetType().Name;
+        }, TaskScheduler.Default);
     }
 
     private void TryPreload()
@@ -399,10 +451,12 @@ public sealed class ZoomPanView : Control
                 if (string.Equals(Request?.Key, request.Key, StringComparison.Ordinal) && _bitmap is null)
                 {
                     _bitmap = _preloaded.Bitmap;
+                    DecodedImage adopted = _preloaded;
                     _preloaded = null;
                     _preloadedKey = null;
                     _failed = false;
                     _loading = false;
+                    StartAnimation(adopted, _generation, token);
                     InvalidateVisual();
                 }
             });
@@ -420,6 +474,7 @@ public sealed class ZoomPanView : Control
     {
         _generation++;
         _preloadGeneration++;
+        _animated = null;
         _cancellation?.Cancel();
         _cancellation?.Dispose();
         _cancellation = null;

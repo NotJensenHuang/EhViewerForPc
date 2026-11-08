@@ -12,13 +12,12 @@
 
 | | |
 | --- | --- |
-| ![资料库](docs/screenshots/library.png) | ![多数据源](docs/screenshots/library-multi-source.png) |
-| 单页阅读 | 连续条漫 |
-| ![单页阅读](docs/screenshots/reader-single.png) | ![连续条漫](docs/screenshots/reader-continuous.png) |
-| 搜索筛选 | 版本管理（多副本） |
-| ![搜索筛选](docs/screenshots/library-search.png) | ![版本管理](docs/screenshots/versions.png) |
+| ![资料库](docs/screenshots/library.png) | ![横向连续](docs/screenshots/reader-horizontal.png) |
+| 资料库网格（多源合并） | 横向连续模式（RTL） |
+| ![单页阅读](docs/screenshots/reader-animated.png) | ![版本管理](docs/screenshots/versions.png) |
+| 单页阅读（GIF 动图播放） | 版本管理（多副本） |
 
-更多截图：`docs/screenshots/`（另有详情窗口、设置窗口）。
+更多截图：`docs/screenshots/`（另有纵向连续、搜索筛选、详情窗口、设置窗口）。
 
 ## 功能
 
@@ -27,7 +26,7 @@
 | 资料库 | 封面网格（ItemsRepeater 虚拟化，6,000+ 项仅创建约 20 个容器）、标题/文件夹/GID 搜索、排序、筛选、语言筛选、收藏、阅读进度、最近阅读 |
 | 多数据源 | 可添加多个下载根目录（多设备备份场景）；同一作品跨源自动合并为一张卡片，角标显示副本数 |
 | 版本管理 | 列出同一作品的全部副本（来源、页数、完整性、修改时间），可"用此版本阅读"或"设为默认"；切换副本后阅读进度按作品共享 |
-| 阅读器 | 单页（适应页面/宽度/高度/原始、缩放 1x–8x、拖动、滚轮/点击/键盘翻页）、连续条漫模式、阅读方向（日漫/美漫）、全屏、背景色；**独立非模态窗口**，阅读时可继续浏览资料库 |
+| 阅读器 | 单页（适应页面/宽度/高度/原始、缩放 1x–8x、拖动、滚轮/点击/键盘翻页）、纵向连续条漫、**横向连续**（适应高度逐页横排，双页合并的宽图与长条图按原始比例完整显示）、阅读方向（日漫/美漫，横向模式整条反转）、GIF/WebP 动图循环播放、全屏、背景色；**独立非模态窗口**，阅读时可继续浏览资料库 |
 | 进度 | 按"原始页号 + 页内偏移"保存与恢复；缺页时回退到最近存在的页并提示 |
 | 详情 | 路径、GID、实际/预期页数、缺页区间、扩展名统计、0 字节文件、`.ehviewer` 解析错误 |
 | 设置 | 主题、默认阅读模式/适应/方向、单张解码上限、数据源增删/启停、清除扫描缓存 |
@@ -49,9 +48,11 @@
 ## 构建与运行
 
 ```bash
-dotnet build EhViewerReader.slnx -c Release
+dotnet build src/EhViewerReader -c Release
 dotnet run --project src/EhViewerReader -c Release
 ```
+
+> 注意：解决方案 `EhViewerReader.slnx` 含 WAP 打包工程（wapproj），`dotnet build` 无法构建它——请用 Visual Studio 打开 slnx（生成、F5 调试、打包都在 VS 内完成）；命令行只构建/运行应用工程即可。
 
 首次启动点击"选择资料库"，指向 EhViewer 下载根目录（例如 `D:\BackUp\phoneGT5pro\ehviewer`）。
 
@@ -75,30 +76,21 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -p:PublishAot=true -o ar
 
 ## MSIX 打包
 
-`packaging/EhViewerReader.Msix` 是解决方案里的独立打包项目（VS 解决方案资源管理器中可见）：先以 NativeAOT 发布应用，再用 Windows SDK BuildTools 的 `MakeAppx` 生成 MSIX。
+`packaging/EhViewerReader.Msix` 是 VS 的 **Windows 应用程序打包项目**（`.wapproj`，与 little-fancy-tool-ava 同一套方案）。DesktopBridge 打包流程以**托管自包含**方式构建入口工程（`EhViewerMsixBuild=true` 时 `PublishAot=false` + `SelfContained=true`），因此包内不是 NativeAOT 单文件（NativeAOT 仍可通过 `dotnet publish -p:PublishAot=true` 单独获得）。
 
-```bash
-dotnet build packaging/EhViewerReader.Msix/EhViewerReader.Msix.csproj -c Release
-# -> artifacts/msix/EhViewerReader_1.0.0.0_x64.msix（约 15.9 MB）
+VS 中的用法：
+
+- **打包**：右键 `EhViewerReader.Msix` 工程 → 生成；产物在 `packaging/EhViewerReader.Msix/AppPackages/`（`_Test` 侧载目录内，含 `.msix`）。
+- **运行打包版**：把 `EhViewerReader.Msix` 设为启动项目，F5 = 部署 MSIX 并启动打包后的应用（首次 F5 需开启系统"开发人员模式"）。
+- 解决方案构建时 wapproj 默认不参与打包（`PackageOptionalProjectsInIdeBuilds=False`），保持应用工程的日常构建轻快。
+
+命令行构建 wapproj 必须使用 VS 自带 MSBuild（DesktopBridge targets 只随 VS 安装），`dotnet build` 不适用；纯命令行打 MSIX 请直接在 VS 中操作或调用 VS 的 MSBuild：
+
+```bat
+"I:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" packaging\EhViewerReader.Msix\EhViewerReader.Msix.wapproj /p:Configuration=Release /p:Platform=x64
 ```
 
-构建整个解决方案（`dotnet build EhViewerReader.slnx`，或 VS 里生成）时打包步骤会自动跳过，避免每次生成都跑一遍 AOT 发布；需要打包时直接构建该工程，或加 `-p:PackMsixOnBuild=true`。
-
-| 参数 | 说明 |
-| --- | --- |
-| `-p:MsixVersion=1.2.3.4` | 同时写入清单 `Identity/Version` 与文件名 |
-| `-p:SkipAotPublish=true` | 复用 `artifacts/msix/aot`，跳过 AOT 发布（迭代调试用） |
-| `-p:PackMsixOnBuild=true` | 在解决方案构建中强制打包 |
-| `-p:MsixPfx=path.pfx` | 生成后用 `signtool` 签名（证书 Subject 必须等于清单 `Publisher`） |
-| `-p:MsixPfxPassword=***` | 配合 PFX 使用 |
-
-打包布局在 `artifacts/msix/aot` 与 `artifacts/msix/layout`，不会覆盖 `artifacts/win-x64-aot`（因此应用正在运行时也能打包）。
-
-安装要求：
-
-- 开发机：开启"开发人员模式"后 `Add-AppxPackage -Path artifacts\msix\EhViewerReader_1.0.0.0_x64.msix -AllowUnsigned`。
-- 分发：用代码签名证书签名，并把 `Package.appxmanifest` 的 `Publisher` 改成证书 Subject；否则安装时报 `0x800B0109`。
-- 清单 Identity：`EhViewerReader.Local`，`runFullTrust`，x64；应用数据仍写入 `%LocalAppData%\EhViewerReader`。
+签名：工程默认 `AppxPackageSigningEnabled=False`。分发前在 VS"生成 → 应用程序包"里选证书签名，并把 `Package.appxmanifest` 的 `Publisher` 改成证书 Subject；否则安装时报 `0x800B0109`。清单 Identity：`EhViewerReader.Local`，`runFullTrust`；应用数据仍写入 `%LocalAppData%\EhViewerReader`。
 
 ## 命令行
 
@@ -131,9 +123,9 @@ dotnet run --project src/EhViewerReader -c Release -- --self-test --root "D:\pat
 | + / - / 0 | 放大 / 缩小 / 适应页面 |
 | Ctrl + 滚轮 | 以指针为中心缩放 |
 | 双击 | 适应页面 ↔ 100% |
-| 滚轮 | 内容溢出时平移，到边界后翻页（损坏页同样有效） |
+| 滚轮 | 单页：内容溢出时平移，到边界后翻页（损坏页同样有效）；横向模式：横向滚动 |
 | F11 / Esc | 全屏 / 退出全屏（再按关闭） |
-| M / D / B / ? | 模式 / 方向 / 背景 / 快捷键帮助 |
+| M / D / B / ? | 模式（单页→纵向→横向）/ 方向 / 背景 / 快捷键帮助 |
 
 库视图：`Ctrl+F` 搜索、`F5` 刷新、`Esc` 清除搜索；右键卡片打开菜单（含"版本管理"）。
 
@@ -176,7 +168,7 @@ src/EhViewerReader/bin/Debug/net10.0/EhViewerReader.exe --ui-smoke --out docs/sc
 ```
 src/EhViewerReader.Core/        格式解析、扫描、多源合并、缓存、进度（无 Avalonia 依赖）
 src/EhViewerReader/             Avalonia 应用：ViewModels、Views、Controls、Services、Assets
-packaging/EhViewerReader.Msix/  MSIX 打包项目（AOT 发布 + MakeAppx）
+packaging/EhViewerReader.Msix/  MSIX 打包项目（WAP wapproj，托管自包含负载）
 tests/EhViewerReader.Core.Tests/
 docs/                           PLAN.md、PLAN-CONTINUATION.md、FORMAT.md、TEST_REPORT.md、screenshots/
 ```
@@ -188,9 +180,9 @@ docs/                           PLAN.md、PLAN-CONTINUATION.md、FORMAT.md、TES
 ## 已知限制
 
 - 纯离线：不登录、不搜索、不下载、不抓取标签。
-- 双页模式与"继续阅读"横向条未实现（计划中的可选增强）。
-- GIF/WebP 动图只显示首帧。
-- 连续模式为"按宽度缩放 + 纵向滚动"，不提供页内缩放。
+- "继续阅读"横向定位条未实现（计划中的可选增强）。
+- 连续/横向模式为整页适配滚动，不提供页内缩放（单页模式支持 1x–8x）。
+- 动图在阅读器内循环播放；库封面只取首帧（避免滚动网格解码风暴）。
 - 无全局位图缓存：页面/封面位图由控件独占，只保留当前页与预取页。
 - 扫描不做文件系统实时监听；下载完成后点击"刷新"或重启。
 - 多数据源按顺序扫描（避免机械盘并发寻道）；源较多时总耗时线性增加。

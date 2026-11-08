@@ -24,6 +24,10 @@ public sealed class AsyncImage : Control
     public static readonly StyledProperty<bool> DecodeWidthOnlyProperty =
         AvaloniaProperty.Register<AsyncImage, bool>(nameof(DecodeWidthOnly));
 
+    /// <summary>Play GIF/WebP animations. Library covers keep this off.</summary>
+    public static readonly StyledProperty<bool> AnimateProperty =
+        AvaloniaProperty.Register<AsyncImage, bool>(nameof(Animate));
+
     private static readonly IBrush PlaceholderBrush = new SolidColorBrush(Color.Parse("#20242C"));
     private static readonly IBrush ErrorBrush = new SolidColorBrush(Color.Parse("#FF6B81"));
     private static readonly IBrush MutedTextBrush = new SolidColorBrush(Color.Parse("#8A93A6"));
@@ -31,6 +35,7 @@ public sealed class AsyncImage : Control
 
     private Bitmap? _bitmap;
     private Bitmap? _retiredBitmap;
+    private DecodedImage? _animated;
     private CancellationTokenSource? _cancellation;
     private int _generation;
     private bool _attached;
@@ -63,6 +68,15 @@ public sealed class AsyncImage : Control
         get => GetValue(DecodeWidthOnlyProperty);
         set => SetValue(DecodeWidthOnlyProperty, value);
     }
+
+    public bool Animate
+    {
+        get => GetValue(AnimateProperty);
+        set => SetValue(AnimateProperty, value);
+    }
+
+    /// <summary>Test hook: the live animation session, if any.</summary>
+    internal DecodedImage? AnimatedImageForTest => _animated;
 
     protected override Size MeasureOverride(Size availableSize)
     {
@@ -199,11 +213,13 @@ public sealed class AsyncImage : Control
                 {
                     _bitmap = null;
                     _failed = true;
+                    _animated = null;
                 }
                 else
                 {
                     _bitmap = image.Bitmap;
                     _failed = false;
+                    StartAnimation(image, generation, token);
                 }
 
                 _retiredBitmap?.Dispose();
@@ -229,6 +245,37 @@ public sealed class AsyncImage : Control
         }
     }
 
+    /// <summary>
+    /// Frame playback for animated pages in the reader (Animate=true). Library
+    /// covers never animate, so a scrolling grid cannot spawn decode storms.
+    /// </summary>
+    private void StartAnimation(DecodedImage image, int generation, CancellationToken token)
+    {
+        if (!Animate || !image.IsAnimated || image.FrameCount < 2) return;
+        _animated = image;
+        _ = AnimationPlayer.PlayAsync(image, async next =>
+        {
+            return await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (token.IsCancellationRequested || generation != _generation || _animated is null)
+                {
+                    return false;
+                }
+
+                Bitmap? old = _bitmap;
+                _bitmap = next.Bitmap;
+                _animated = next;
+                if (old is not null)
+                {
+                    Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+                }
+
+                InvalidateVisual();
+                return true;
+            });
+        }, token);
+    }
+
     private void RetireCurrent()
     {
         _retiredBitmap?.Dispose();
@@ -239,6 +286,7 @@ public sealed class AsyncImage : Control
     private void ReleaseBitmaps()
     {
         _generation++;
+        _animated = null;
         _cancellation?.Cancel();
         _cancellation?.Dispose();
         _cancellation = null;

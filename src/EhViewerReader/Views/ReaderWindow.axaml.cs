@@ -14,6 +14,7 @@ public partial class ReaderWindow : Window
     private readonly ReaderViewModel _viewModel;
     private readonly DispatcherTimer _resizeTimer;
     private int _scrollRequestSequence;
+    private int _horizontalScrollSequence;
 
     public ReaderWindow(ReaderViewModel viewModel)
     {
@@ -27,6 +28,7 @@ public partial class ReaderWindow : Window
         _resizeTimer.Tick += OnResizeSettled;
 
         viewModel.ScrollToRequested += OnScrollToRequested;
+        viewModel.HorizontalScrollToRequested += OnHorizontalScrollToRequested;
         Loaded += OnLoaded;
         Closing += OnClosing;
         SizeChanged += OnWindowSizeChanged;
@@ -47,6 +49,7 @@ public partial class ReaderWindow : Window
         try
         {
             UpdateContinuousWidth();
+            UpdateContinuousHeight();
             await _viewModel.InitializeAsync();
             SingleView.Focus();
         }
@@ -62,12 +65,13 @@ public partial class ReaderWindow : Window
     private void OnClosing(object? sender, WindowClosingEventArgs e)
     {
         _viewModel.ScrollToRequested -= OnScrollToRequested;
+        _viewModel.HorizontalScrollToRequested -= OnHorizontalScrollToRequested;
         _viewModel.Dispose();
     }
 
     private void OnWindowSizeChanged(object? sender, SizeChangedEventArgs e)
     {
-        if (!_viewModel.IsContinuousMode) return;
+        if (_viewModel.IsSingleMode) return;
         _resizeTimer.Stop();
         _resizeTimer.Start();
     }
@@ -76,13 +80,23 @@ public partial class ReaderWindow : Window
     {
         _resizeTimer.Stop();
         UpdateContinuousWidth();
+        UpdateContinuousHeight();
     }
 
     private void UpdateContinuousWidth()
     {
+        if (_viewModel.IsHorizontalMode) return;
         double viewport = ContinuousScroll.Viewport.Width;
         if (viewport <= 0) viewport = Bounds.Width;
         _viewModel.SetContinuousWidth(viewport);
+    }
+
+    private void UpdateContinuousHeight()
+    {
+        if (!_viewModel.IsHorizontalMode) return;
+        double viewport = HorizontalScroll.Viewport.Height;
+        if (viewport <= 0) viewport = Bounds.Height;
+        _viewModel.SetContinuousHeight(viewport);
     }
 
     private void OnScrollToRequested(object? sender, double offset)
@@ -96,10 +110,60 @@ public partial class ReaderWindow : Window
         }, DispatcherPriority.Loaded);
     }
 
+    private void OnHorizontalScrollToRequested(object? sender, double offset)
+    {
+        int sequence = ++_horizontalScrollSequence;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (sequence != _horizontalScrollSequence) return;
+            ApplyHorizontalOffset(offset, sequence);
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void ApplyHorizontalOffset(double offset, int sequence)
+    {
+        if (!_viewModel.IsHorizontalMode) return;
+        HorizontalScroll.Offset = new Vector(Math.Max(0, offset), 0);
+        _viewModel.UpdateScrollOffsetX(HorizontalScroll.Offset.X, HorizontalScroll.Viewport.Width);
+
+        // A mode switch or a slider jump can outrun the layout: the extent is
+        // still settling and Offset gets clamped to a smaller value. Retry at
+        // Background once the layout has caught up.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (sequence != _horizontalScrollSequence) return;
+            if (Math.Abs(HorizontalScroll.Offset.X - offset) > 1)
+            {
+                HorizontalScroll.Offset = new Vector(Math.Max(0, offset), 0);
+            }
+        }, DispatcherPriority.Background);
+    }
+
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
     {
-        if (!_viewModel.IsContinuousMode) return;
-        _viewModel.UpdateScrollOffset(ContinuousScroll.Offset.Y, ContinuousScroll.Viewport.Height);
+        if (_viewModel.IsHorizontalMode)
+        {
+            _viewModel.UpdateScrollOffsetX(HorizontalScroll.Offset.X, HorizontalScroll.Viewport.Width);
+        }
+        else if (_viewModel.IsContinuousMode)
+        {
+            _viewModel.UpdateScrollOffset(ContinuousScroll.Offset.Y, ContinuousScroll.Viewport.Height);
+        }
+    }
+
+    private void OnHorizontalWheel(object? sender, PointerWheelEventArgs e)
+    {
+        if (!_viewModel.IsHorizontalMode) return;
+        double delta = e.Delta.Y;
+        if (Math.Abs(delta) < 0.01) return;
+        e.Handled = true;
+        if ((e.KeyModifiers & KeyModifiers.Control) != 0) return; // no zoom in horizontal mode
+
+        // Small per-notch step keeps horizontal panning pixel-smooth instead
+        // of jumping half a viewport per wheel tick.
+        double step = Math.Clamp(HorizontalScroll.Viewport.Width * 0.12, 48, 240) * Math.Abs(delta);
+        double direction = _viewModel.RightToLeft ? delta : -delta;
+        HorizontalScroll.Offset = HorizontalScroll.Offset + new Vector(direction * step, 0);
     }
 
     private void OnPageTurnRequested(object? sender, PageTurnEventArgs e)
@@ -109,6 +173,8 @@ public partial class ReaderWindow : Window
 
     private void OnBack(object? sender, RoutedEventArgs e) => Close();
 
+    // Mode chips toggle: clicking the active mode returns to single-page mode,
+    // so a second click on "横向" (or "连续") leaves that mode again.
     private async void OnSingleMode(object? sender, RoutedEventArgs e)
     {
         await _viewModel.SetModeAsync(ReadingMode.Single);
@@ -117,7 +183,20 @@ public partial class ReaderWindow : Window
 
     private async void OnContinuousMode(object? sender, RoutedEventArgs e)
     {
-        await _viewModel.SetModeAsync(ReadingMode.Continuous);
+        await _viewModel.SetModeAsync(_viewModel.IsContinuousMode
+            ? ReadingMode.Single
+            : ReadingMode.Continuous);
+        if (_viewModel.IsContinuousMode) UpdateContinuousWidth();
+        else SingleView.Focus();
+    }
+
+    private async void OnDoubleMode(object? sender, RoutedEventArgs e)
+    {
+        await _viewModel.SetModeAsync(_viewModel.IsHorizontalMode
+            ? ReadingMode.Single
+            : ReadingMode.Double);
+        if (_viewModel.IsHorizontalMode) UpdateContinuousHeight();
+        else SingleView.Focus();
     }
 
     private void OnToggleDirection(object? sender, RoutedEventArgs e) => _viewModel.ToggleDirection();
@@ -232,9 +311,15 @@ public partial class ReaderWindow : Window
 
     private async Task ToggleModeAsync()
     {
-        ReadingMode target = _viewModel.IsSingleMode ? ReadingMode.Continuous : ReadingMode.Single;
+        ReadingMode target = _viewModel.IsSingleMode
+            ? ReadingMode.Continuous
+            : _viewModel.IsContinuousMode
+                ? ReadingMode.Double
+                : ReadingMode.Single;
         await _viewModel.SetModeAsync(target);
         if (target == ReadingMode.Single) SingleView.Focus();
+        else if (target == ReadingMode.Continuous) UpdateContinuousWidth();
+        else UpdateContinuousHeight();
     }
 
     private void ShowHelp()
@@ -248,11 +333,12 @@ public partial class ReaderWindow : Window
             + / - / 0    放大 / 缩小 / 适应
             Ctrl + 滚轮  以指针为中心缩放
             双击         适应页面 ↔ 100%
-            滚轮         内容溢出时平移，到边界后翻页
-            单击左/右 1/3   翻页
+            滚轮         单页：内容溢出时平移，到边界后翻页
+                         横向模式：横向滚动
+            单击左/右 1/3   翻页（单页模式）
             F11          全屏
             Esc          退出全屏；再按关闭阅读器
-            M            切换单页 / 连续
+            M            切换单页 / 纵向连续 / 横向连续
             D            切换阅读方向
             B            切换背景色
             ?            显示本帮助

@@ -50,7 +50,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _services = services;
         AppSettings settings = services.Settings;
         _themeIndex = (int)settings.Theme;
-        _modeIndex = settings.DefaultReadingMode == ReadingMode.Continuous ? 1 : 0;
+        _modeIndex = (int)settings.DefaultReadingMode;
         _fitIndex = (int)settings.DefaultFitMode;
         _backgroundIndex = (int)settings.ReaderBackground;
         _rightToLeft = settings.RightToLeft;
@@ -65,7 +65,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     public string[] ThemeLabels { get; } = ["跟随系统", "深色", "浅色"];
-    public string[] ModeLabels { get; } = ["单页", "连续"];
+    public string[] ModeLabels { get; } = ["单页", "纵向连续", "横向连续"];
     public string[] FitLabels { get; } = ["适应页面", "适应宽度", "适应高度", "原始大小"];
     public string[] BackgroundLabels { get; } = ["黑色", "深灰", "灰色", "白色"];
 
@@ -88,7 +88,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public int ModeIndex
     {
         get => _modeIndex;
-        set => SetProperty(ref _modeIndex, Math.Clamp(value, 0, 1));
+        set => SetProperty(ref _modeIndex, Math.Clamp(value, 0, 2));
     }
 
     public int FitIndex
@@ -188,7 +188,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
 
         settings.Theme = (AppTheme)_themeIndex;
-        settings.DefaultReadingMode = _modeIndex == 1 ? ReadingMode.Continuous : ReadingMode.Single;
+        settings.DefaultReadingMode = (ReadingMode)_modeIndex;
         settings.DefaultFitMode = (FitMode)_fitIndex;
         settings.ReaderBackground = (ReaderBackground)_backgroundIndex;
         settings.RightToLeft = _rightToLeft;

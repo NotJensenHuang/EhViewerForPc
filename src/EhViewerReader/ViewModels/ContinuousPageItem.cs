@@ -10,7 +10,9 @@ namespace EhViewerReader.ViewModels;
 /// </summary>
 public sealed class ContinuousPageItem : ObservableObject
 {
-    public const double Gap = 12;
+    /// <summary>Gap between consecutive pages. Zero: continuous mode renders
+    /// pages flush so a gallery reads like one seamless strip.</summary>
+    public const double Gap = 0;
     private const double PlaceholderWidth = 1200;
     private const double PlaceholderHeight = 1600;
 
@@ -52,7 +54,17 @@ public sealed class ContinuousPageItem : ObservableObject
     }
 
     public double SlotHeight => _displayHeight + Gap;
+    public double SlotWidth => _displayWidth + Gap;
     public double Top { get; set; }
+
+    /// <summary>
+    /// Horizontal slot position, accumulated in <em>display order</em> (the
+    /// order the items are laid out, reversed for right-to-left reading).
+    /// </summary>
+    public double Left { get; set; }
+
+    /// <summary>Index in reading order; display order differs when RTL.</summary>
+    public int ReadIndex { get; set; }
 
     public double Ratio => OriginalHeight / (double)Math.Max(1, OriginalWidth);
 
@@ -60,6 +72,13 @@ public sealed class ContinuousPageItem : ObservableObject
     {
         DisplayWidth = width;
         DisplayHeight = Math.Max(80, width * Ratio);
+    }
+
+    /// <summary>Sizes the slot for horizontal reading: height fixed, width by ratio.</summary>
+    public void ResizeToHeight(double height)
+    {
+        DisplayHeight = Math.Max(80, height);
+        DisplayWidth = Ratio > 0.01 ? Math.Max(80, height / Ratio) : PlaceholderWidth;
     }
 
     public string Label => Page.Number.ToString();

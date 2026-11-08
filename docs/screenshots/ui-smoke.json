@@ -1,5 +1,5 @@
 {
-  "syntheticLibrary": "C:\\Users\\90684\\AppData\\Local\\Temp\\EhReaderSmokeLib-48f4c0d8c4774711ab9ac82338b5d26c",
+  "syntheticLibrary": "C:\\Users\\90684\\AppData\\Local\\Temp\\EhReaderSmokeLib-75e8586ddab242eeb80822ec194b27d2",
   "galleries": 31,
   "filtered": 31,
   "status": "31 \u4E2A\u4F5C\u54C1 \u00B7 194 \u9875 \u00B7 0.0s\uFF08\u7F13\u5B58 0\uFF09",
@@ -15,7 +15,7 @@
   "libraryScroll": "0,0 1200x553",
   "uiTree": "MainWindow\n  Panel\n    Border\n    Border\n    Panel\n    VisualLayerManager\n      ChromeOverlayLayer\n        TitleBar\n      ContentPresenter\n        Grid",
   "searchMatches": 1,
-  "backupLibrary": "C:\\Users\\90684\\AppData\\Local\\Temp\\EhReaderSmokeBackup-2d304e3d61a14450a876a3cacc7ecdd3",
+  "backupLibrary": "C:\\Users\\90684\\AppData\\Local\\Temp\\EhReaderSmokeBackup-b5f169ea06164d8080c50a1da360c9a1",
   "multiSource": {
     "sources": 2,
     "works": 31,
@@ -31,7 +31,7 @@
   "versionsWindow": {
     "rows": 3,
     "summary": "3 \u4E2A\u7248\u672C \u00B7 2 \u4E2A\u6570\u636E\u6E90",
-    "defaultSource": "EhReaderSmokeLib-48f4c0d8c4774711ab9ac82338b5d26c",
+    "defaultSource": "EhReaderSmokeLib-75e8586ddab242eeb80822ec194b27d2",
     "pageCounts": [
       8,
       4,
@@ -39,12 +39,101 @@
     ]
   },
   "readerPage": "1 / 9",
-  "readerLayout": "12,9 64x30  Button:\u2190 \u8FD4\u56DE\n24,17 40x16  \u2190 \u8FD4\u56DE\n88,8 133x17  [English] \u5408\u6210\u6837\u672C 30\n88,27 33x14  1 / 9\n129,27 308x14  EhReaderSmokeLib-48f4c0d8c47\u2026\n795,9 51x29  Button:\u5355\u9875\n809,16 24x16  \u5355\u9875\n854,9 51x29  Button:\u8FDE\u7EED\n867,16 24x16  \u8FDE\u7EED\n923,16 54x16  \u9002\u5E94\u9875\u9762\n1027,9 63x31  Button:\u53F3\u2192\u5DE6\n1040,16 36x16  \u53F3\u2192\u5DE6\n1097,9 51x31  Button:\u5168\u5C4F\n1111,16 24x16  \u5168\u5C4F\n0,50 0x0  \u6B63\u5728\u6D4B\u91CF\u9875\u9762\u5C3A\u5BF8\n0,50 0x0  \u8FDE\u7EED\u9605\u8BFB\u9700\u8981\u9875\u9762\u9AD8\u5EA6\uFF0C\u9996\u6B21\u6253\u5F00\u4F1A\u7F13\u5B58\u5230\u672C\u5730\u3002\n12,651 63x31  Button:\u4E0A\u4E00\u9875\n25,659 36x16  \u4E0A\u4E00\u9875\n85,657 0x20  Button:\n105,657 921x20  Button:\n1035,651 63x31  Button:\u4E0B\u4E00\u9875\n1049,659 36x16  \u4E0B\u4E00\u9875\n1112,660 36x14  1 / 9",
+  "readerLayout": "12,9 64x30  Button:\u2190 \u8FD4\u56DE\n24,17 40x16  \u2190 \u8FD4\u56DE\n88,8 133x17  [English] \u5408\u6210\u6837\u672C 30\n88,27 33x14  1 / 9\n129,27 314x14  EhReaderSmokeLib-75e8586ddab\u2026\n737,9 51x29  Button:\u5355\u9875\n750,16 24x16  \u5355\u9875\n795,9 51x29  Button:\u8FDE\u7EED\n809,16 24x16  \u8FDE\u7EED\n1097,9 51x29  Button:\u6A2A\u5411\n1111,16 24x16  \u6A2A\u5411\n864,16 54x16  \u9002\u5E94\u9875\u9762\n968,9 63x31  Button:\u53F3\u2192\u5DE6\n981,16 36x16  \u53F3\u2192\u5DE6\n1039,9 51x31  Button:\u5168\u5C4F\n1052,16 24x16  \u5168\u5C4F\n0,50 0x0  \u6B63\u5728\u6D4B\u91CF\u9875\u9762\u5C3A\u5BF8\n0,50 0x0  \u8FDE\u7EED\u9605\u8BFB\u9700\u8981\u9875\u9762\u9AD8\u5EA6\uFF0C\u9996\u6B21\u6253\u5F00\u4F1A\u7F13\u5B58\u5230\u672C\u5730\u3002\n12,651 63x31  Button:\u4E0A\u4E00\u9875\n25,659 36x16  \u4E0A\u4E00\u9875\n85,657 0x20  Button:\n105,657 921x20  Button:\n1035,651 63x31  Button:\u4E0B\u4E00\u9875\n1049,659 36x16  \u4E0B\u4E00\u9875\n1112,660 36x14  1 / 9",
   "continuousItems": 9,
-  "progressRestore": {
-    "expected": "2 / 9",
-    "restored": "2 / 9",
+  "horizontalMode": {
+    "items": 9,
+    "displayItems": 9,
+    "rtlReversed": true,
+    "extentWidth": 3797,
+    "viewportWidth": 1160,
+    "firstItemWidth": 410.7,
+    "vmItemWidth": 410.5,
+    "vmPageWidths": [
+      410.5,
+      410.5,
+      437,
+      410.5,
+      410.5,
+      410.5,
+      410.5,
+      410.5,
+      410.5
+    ],
+    "uiPageWidths": [
+      410.7,
+      410.7,
+      410.7,
+      437.3,
+      410.7,
+      410.7,
+      410.7
+    ],
+    "vmLefts": [
+      0,
+      410.5,
+      821,
+      1231.5,
+      1642.1,
+      2052.6,
+      2463.1,
+      2900.1,
+      3310.6
+    ],
+    "widerThanViewport": true,
+    "pageAtProbe": "2 / 9",
+    "pageAfterStep": "3 / 9",
+    "offsetXBefore": 2848,
+    "offsetXAfter": 2463.1,
+    "stepMoved": true
+  },
+  "sliderPrecision": {
+    "landedPage": 5,
+    "slider": 5.5,
+    "itemWidth": 410.5,
+    "expectedOffset": 1847.3,
+    "raisedTarget": 1847.3,
+    "pageOffset": 0.5,
+    "offsetSamples": [
+      1847.3,
+      1847.3,
+      1847.3
+    ],
     "ok": true
+  },
+  "modePersisted": true,
+  "modeToggleBack": {
+    "singleAfterToggle": true,
+    "savedMode": 0,
+    "ok": true
+  },
+  "progressRestore": {
+    "expected": "5 / 9",
+    "restored": "5 / 9",
+    "ok": true
+  },
+  "gifLookup": {
+    "found": true,
+    "folder": "C:\\Users\\90684\\AppData\\Local\\Temp\\EhReaderSmokeLib-75e8586ddab242eeb80822ec194b27d2\\900000-[Chinese] \u5408\u6210\u6837\u672C 01"
+  },
+  "animatedGif": {
+    "isAnimated": true,
+    "frameCount": 2,
+    "frame1Ok": true,
+    "durationMs": 100
+  },
+  "readerAnimation": {
+    "hasSession": true,
+    "samples": [
+      1,
+      0,
+      1,
+      0,
+      1,
+      0
+    ],
+    "advancing": true,
+    "stopReason": null
   },
   "readerWindow": {
     "nonModal": true,
@@ -64,19 +153,22 @@
   },
   "stress": {
     "galleries": 6315,
-    "scanSeconds": 0.61,
+    "scanSeconds": 0.72,
     "realizedContainers": 26,
     "realizedAfterScroll": 26,
     "extentHeight": 577560,
     "error": null
   },
-  "elapsedSeconds": 28.34,
+  "elapsedSeconds": 38.66,
   "screenshots": [
     "library.png",
     "library-search.png",
     "details.png",
     "reader-single.png",
+    "reader-animated.png",
     "reader-continuous.png",
+    "reader-horizontal.png",
+    "versions.png",
     "settings.png"
   ]
 }

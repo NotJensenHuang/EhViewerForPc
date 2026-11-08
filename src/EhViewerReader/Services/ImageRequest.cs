@@ -55,6 +55,9 @@ public sealed class ImageLoader
         _log = log;
     }
 
+    /// <summary>Direct decoder access (diagnostics and smoke tests).</summary>
+    public ImageDecoder Decoder => _decoder;
+
     public int MaxMegapixels { get; set; } = 24;
     public int MaxDimension { get; set; } = 16000;
 

@@ -16,7 +16,7 @@
   <Grid RowDefinitions="Auto,*,Auto" Background="{Binding BackgroundBrush}">
     <Border Grid.Row="0" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,0,0,1" Padding="12,8">
-      <Grid ColumnDefinitions="Auto,12,*,Auto,8,Auto,8,Auto,8,Auto,8,Auto">
+      <Grid ColumnDefinitions="Auto,12,*,Auto,8,Auto,8,Auto,8,Auto,8,Auto,8,Auto">
         <Button Grid.Column="0" Content="← 返回" Classes="ghost" Click="OnBack" />
 
         <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="1">
@@ -32,7 +32,8 @@
         </StackPanel>
 
         <Button Grid.Column="3" Content="单页" Classes="chip" Classes.active="{Binding IsSingleMode}" Click="OnSingleMode" ToolTip.Tip="单页模式（M）" />
-        <Button Grid.Column="5" Content="连续" Classes="chip" Classes.active="{Binding IsContinuousMode}" Click="OnContinuousMode" ToolTip.Tip="连续模式（M）" />
+        <Button Grid.Column="5" Content="连续" Classes="chip" Classes.active="{Binding IsContinuousMode}" Click="OnContinuousMode" ToolTip.Tip="纵向连续模式（M 循环切换；再点一次返回单页）" />
+        <Button Grid.Column="13" Content="横向" Classes="chip" Classes.active="{Binding IsHorizontalMode}" Click="OnDoubleMode" ToolTip.Tip="横向连续模式：按高度逐页横排、无缝衔接，双页合并的宽图按原始宽度完整显示（再点一次返回单页）" />
 
         <ComboBox Grid.Column="7" Width="106" ItemsSource="{Binding FitOptions}" SelectedItem="{Binding SelectedFit}">
           <ComboBox.ItemTemplate>
@@ -66,13 +67,35 @@
                     ScrollChanged="OnScrollChanged">
         <ir:ItemsRepeater ItemsSource="{Binding ContinuousItems}">
           <ir:ItemsRepeater.Layout>
-            <layout:StackLayout Spacing="12" />
+            <layout:StackLayout Spacing="0" />
           </ir:ItemsRepeater.Layout>
           <ir:ItemsRepeater.ItemTemplate>
             <DataTemplate x:DataType="vm:ContinuousPageItem">
               <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
                       HorizontalAlignment="Center" Background="{DynamicResource AppBgAltBrush}">
-                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" />
+                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" />
+              </Border>
+            </DataTemplate>
+          </ir:ItemsRepeater.ItemTemplate>
+        </ir:ItemsRepeater>
+      </ScrollViewer>
+
+      <ScrollViewer x:Name="HorizontalScroll"
+                    IsVisible="{Binding IsHorizontalMode}"
+                    HorizontalScrollBarVisibility="Auto"
+                    VerticalScrollBarVisibility="Disabled"
+                    Padding="0,8,0,8"
+                    ScrollChanged="OnScrollChanged"
+                    PointerWheelChanged="OnHorizontalWheel">
+        <ir:ItemsRepeater ItemsSource="{Binding HorizontalDisplayItems}">
+          <ir:ItemsRepeater.Layout>
+            <layout:StackLayout Orientation="Horizontal" Spacing="0" />
+          </ir:ItemsRepeater.Layout>
+          <ir:ItemsRepeater.ItemTemplate>
+            <DataTemplate x:DataType="vm:ContinuousPageItem">
+              <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
+                      Background="{DynamicResource AppBgAltBrush}">
+                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" />
               </Border>
             </DataTemplate>
           </ir:ItemsRepeater.ItemTemplate>

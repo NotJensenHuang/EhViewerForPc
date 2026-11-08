@@ -53,4 +53,14 @@
     <AdditionalNativeLibraryDirectories Include="$(PkgMicrosoft_Windows_SDK_CPP_x64)\c\um\x64" />
     <AdditionalNativeLibraryDirectories Include="$(PkgMicrosoft_Windows_SDK_CPP_x64)\c\ucrt\x64" />
   </ItemGroup>
+
+  <!-- MSIX 打包（packaging/EhViewerReader.Msix.wapproj）通过 ProjectReference 的
+       AdditionalProperties 打开此开关：DesktopBridge 收集的是"构建产物"而非 publish
+       产物，NativeAOT 必须走 publish，因此打包负载退回托管自包含（与
+       little-fancy-tool-ava 的 FancyToolMsixBuild 同一套做法）。 -->
+  <PropertyGroup Condition="'$(EhViewerMsixBuild)' == 'true'">
+    <PublishAot>false</PublishAot>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
 </Project>

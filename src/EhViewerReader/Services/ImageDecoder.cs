@@ -21,6 +21,33 @@ public sealed class DecodedImage : IDisposable
     public string Path { get; }
     public long ApproximateBytes => (long)DecodedWidth * DecodedHeight * 4;
 
+    /// <summary>True when the file carries more than one animation frame.</summary>
+    public bool IsAnimated { get; init; }
+    public int FrameCount { get; init; }
+    public int FrameIndex { get; init; }
+
+    /// <summary>Frame duration in milliseconds as declared by the container.</summary>
+    public int FrameDurationMs { get; init; }
+
+    internal ImageDecoder? Owner { get; init; }
+    internal int TargetWidth { get; init; }
+    internal int TargetHeight { get; init; }
+    internal int MaxMegapixels { get; init; }
+    internal int MaxDimension { get; init; }
+
+    /// <summary>
+    /// Decodes the next animation frame with the same scaling parameters as the
+    /// original decode. Returns null for static images or on decode failure;
+    /// callers keep showing the current frame in that case.
+    /// </summary>
+    public Task<DecodedImage?> DecodeNextFrameAsync(CancellationToken cancellationToken)
+    {
+        if (!IsAnimated || Owner is null || FrameCount < 2) return Task.FromResult<DecodedImage?>(null);
+        int next = (FrameIndex + 1) % FrameCount;
+        return Owner.DecodeFrameAsync(
+            Path, next, TargetWidth, TargetHeight, MaxMegapixels, MaxDimension, cancellationToken);
+    }
+
     public void Dispose() => Bitmap.Dispose();
 }
 
@@ -48,8 +75,23 @@ public sealed class ImageDecoder : IDisposable
     /// <param name="path">Image file path.</param>
     /// <param name="targetWidth">Display-oriented target width in physical pixels, or null.</param>
     /// <param name="targetHeight">Display-oriented target height in physical pixels, or null.</param>
-    public async Task<DecodedImage?> DecodeAsync(
+    public Task<DecodedImage?> DecodeAsync(
         string path,
+        int? targetWidth,
+        int? targetHeight,
+        int maxMegapixels,
+        int maxDimension,
+        CancellationToken cancellationToken) =>
+        DecodeFrameAsync(path, 0, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken);
+
+    /// <summary>
+    /// Decodes one animation frame of the file. Frame 0 uses the standard
+    /// decode path; animated files report <see cref="DecodedImage.IsAnimated"/>
+    /// so controls can drive playback.
+    /// </summary>
+    public async Task<DecodedImage?> DecodeFrameAsync(
+        string path,
+        int frameIndex,
         int? targetWidth,
         int? targetHeight,
         int maxMegapixels,
@@ -59,7 +101,7 @@ public sealed class ImageDecoder : IDisposable
         try
         {
             return await Task.Run(
-                () => DecodeCore(path, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken),
+                () => DecodeCore(path, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken, frameIndex),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -114,7 +156,8 @@ public sealed class ImageDecoder : IDisposable
         int? targetHeight,
         int maxMegapixels,
         int maxDimension,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int frameIndex = 0)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using FileStream stream = OpenRead(path);
@@ -131,6 +174,9 @@ public sealed class ImageDecoder : IDisposable
         {
             throw new InvalidOperationException("Image has empty dimensions.");
         }
+
+        bool animated = codec.FrameCount > 1 && frameIndex >= 0 && frameIndex < codec.FrameCount;
+        var options = frameIndex > 0 ? new SKCodecOptions(frameIndex) : SKCodecOptions.Default;
 
         SKEncodedOrigin origin = codec.EncodedOrigin;
         bool swapped = SwapsDimensions(origin);
@@ -154,7 +200,9 @@ public sealed class ImageDecoder : IDisposable
         int decodeWidth = Math.Clamp(scaled.Width, 1, storedWidth);
         int decodeHeight = Math.Clamp(scaled.Height, 1, storedHeight);
 
-        bool direct = origin == SKEncodedOrigin.TopLeft && decodeWidth == finalWidth && decodeHeight == finalHeight;
+        bool direct = !animated && frameIndex == 0 &&
+                      origin == SKEncodedOrigin.TopLeft &&
+                      decodeWidth == finalWidth && decodeHeight == finalHeight;
         long estimatedBytes = (long)decodeWidth * decodeHeight * 4 +
                               (direct ? 0 : (long)finalWidth * finalHeight * 4);
         SemaphoreSlim gate = estimatedBytes >= LargeImageThresholdBytes ? _largeSemaphore : _normalSemaphore;
@@ -171,7 +219,8 @@ public sealed class ImageDecoder : IDisposable
             {
                 if (direct && DecodeIntoFramebuffer(codec, writeable, finalWidth, finalHeight, cancellationToken))
                 {
-                    return new DecodedImage(writeable, finalWidth, finalHeight, path);
+                    return CreateResult(writeable, path, codec, animated, frameIndex,
+                        finalWidth, finalHeight, targetWidth, targetHeight, maxMegapixels, maxDimension);
                 }
 
                 DecodeScaledAndDraw(
@@ -184,8 +233,10 @@ public sealed class ImageDecoder : IDisposable
                     ref decodeHeight,
                     finalWidth,
                     finalHeight,
-                    cancellationToken);
-                return new DecodedImage(writeable, finalWidth, finalHeight, path);
+                    cancellationToken,
+                    options);
+                return CreateResult(writeable, path, codec, animated, frameIndex,
+                    finalWidth, finalHeight, targetWidth, targetHeight, maxMegapixels, maxDimension);
             }
             catch
             {
@@ -199,6 +250,36 @@ public sealed class ImageDecoder : IDisposable
         }
     }
 
+    private DecodedImage CreateResult(
+        WriteableBitmap bitmap,
+        string path,
+        SKCodec codec,
+        bool animated,
+        int frameIndex,
+        int finalWidth,
+        int finalHeight,
+        int? targetWidth,
+        int? targetHeight,
+        int maxMegapixels,
+        int maxDimension)
+    {
+        int duration = animated
+            ? codec.FrameInfo[Math.Clamp(frameIndex, 0, codec.FrameInfo.Length - 1)].Duration
+            : 0;
+        return new DecodedImage(bitmap, finalWidth, finalHeight, path)
+        {
+            IsAnimated = animated,
+            FrameCount = animated ? codec.FrameCount : 1,
+            FrameIndex = frameIndex,
+            FrameDurationMs = duration,
+            Owner = this,
+            TargetWidth = targetWidth ?? 0,
+            TargetHeight = targetHeight ?? 0,
+            MaxMegapixels = maxMegapixels,
+            MaxDimension = maxDimension,
+        };
+    }
+
     private static bool DecodeIntoFramebuffer(
         SKCodec codec,
         WriteableBitmap target,
@@ -209,7 +290,7 @@ public sealed class ImageDecoder : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         using var framebuffer = target.Lock();
         var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Premul);
-        SKCodecResult result = codec.GetPixels(info, framebuffer.Address);
+        SKCodecResult result = codec.GetPixels(info, framebuffer.Address, SKCodecOptions.Default);
         if (result is SKCodecResult.Success or SKCodecResult.IncompleteInput)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -229,10 +310,11 @@ public sealed class ImageDecoder : IDisposable
         ref int decodeHeight,
         int finalWidth,
         int finalHeight,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SKCodecOptions options = default)
     {
         using SKBitmap? decoded = DecodeBitmap(
-            codec, storedWidth, storedHeight, ref decodeWidth, ref decodeHeight, cancellationToken);
+            codec, storedWidth, storedHeight, ref decodeWidth, ref decodeHeight, cancellationToken, options);
         if (decoded is null)
         {
             throw new InvalidOperationException("Pixel decode failed.");
@@ -275,14 +357,15 @@ public sealed class ImageDecoder : IDisposable
         int storedHeight,
         ref int decodeWidth,
         ref int decodeHeight,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SKCodecOptions options = default)
     {
         for (int attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var info = new SKImageInfo(decodeWidth, decodeHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
             var bitmap = new SKBitmap(info);
-            SKCodecResult result = codec.GetPixels(info, bitmap.GetPixels());
+            SKCodecResult result = codec.GetPixels(info, bitmap.GetPixels(), options);
             if (result is SKCodecResult.Success or SKCodecResult.IncompleteInput)
             {
                 return bitmap;

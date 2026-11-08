@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  WAP 工程的清单：Executable / EntryPoint 使用 $targetnametoken$ / $targetentrypoint$
+  占位符，打包时由 DesktopBridge targets 按入口工程（src/EhViewerReader）展开。
+  ProcessorArchitecture 由打包流程按构建平台写入，不在清单里固定。
+-->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
@@ -7,8 +12,7 @@
 
   <Identity Name="EhViewerReader.Local"
             Publisher="CN=EhViewerReader"
-            Version="1.0.0.0"
-            ProcessorArchitecture="x64" />
+            Version="1.0.0.0" />
 
   <Properties>
     <DisplayName>EhViewer 本地漫画阅读器</DisplayName>
@@ -22,12 +26,11 @@
   </Dependencies>
 
   <Resources>
-    <Resource Language="zh-CN" />
-    <Resource Language="en-US" />
+    <Resource Language="x-generate" />
   </Resources>
 
   <Applications>
-    <Application Id="EhViewerReader" Executable="EhViewerReader.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="EhViewerReader" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
       <uap:VisualElements
         DisplayName="EhViewer 本地漫画阅读器"
         Description="离线读取 EhViewer 下载目录的本地漫画阅读器"

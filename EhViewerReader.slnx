@@ -3,7 +3,7 @@
     <Project Path="src/EhViewerReader.Core/EhViewerReader.Core.csproj">
       <Platform Solution="*|x64" Project="x64" />
     </Project>
-    <Project Path="src/EhViewerReader/EhViewerReader.csproj">
+    <Project Path="src/EhViewerReader/EhViewerReader.csproj" DefaultStartup="true">
       <Platform Solution="*|x64" Project="x64" />
     </Project>
   </Folder>
@@ -12,8 +12,8 @@
     <Platform Name="x64" />
   </Configurations>
   <Folder Name="/packaging/">
-    <Project Path="packaging/EhViewerReader.Msix/EhViewerReader.Msix.csproj">
-      <Platform Solution="*|x64" Project="x64" />
+    <Project Path="packaging/EhViewerReader.Msix/EhViewerReader.Msix.wapproj" Type="c7167f0d-bc9f-4e6e-afe1-012c56b48db5" Id="b27c0465-9c92-441e-8ee1-5909bf5ebde9">
+      <Deploy />
     </Project>
   </Folder>
   <Folder Name="/tests/">

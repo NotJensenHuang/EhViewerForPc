@@ -19,6 +19,8 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _hintTimer;
     private IReadOnlyList<ContinuousPageItem> _continuousItems = [];
+    private IReadOnlyList<ContinuousPageItem> _horizontalItems = [];
+    private IReadOnlyList<ContinuousPageItem> _horizontalDisplayItems = [];
     private IReadOnlyList<FitOption> _fitOptions;
     private FitOption _selectedFit;
     private ReadingMode _mode;
@@ -26,6 +28,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private bool _isLoadingDimensions;
     private double _dimensionProgress;
     private double _continuousWidth = 1200;
+    private double _continuousHeight = 800;
     private int _index;
     private double _pageOffset;
     private bool _completed;
@@ -39,6 +42,15 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private IBrush _backgroundBrush = Brushes.Black;
     private bool _disposed;
     private Task? _dimensionTask;
+
+    /// <summary>
+    /// While the view is being (re)positioned after a mode switch or resize,
+    /// the ScrollViewer still sits at offset 0 and its ScrollChanged probe
+    /// would mistake the first display slot for the current page — in RTL
+    /// horizontal mode that is the LAST page. Suppressed until the viewport
+    /// settles at the requested offset.
+    /// </summary>
+    private bool _suppressScrollSync;
 
     public ReaderViewModel(AppServices services, GalleryInfo gallery)
     {
@@ -60,9 +72,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             new FitOption(FitMode.Original, "原始大小"),
         ];
         _selectedFit = _fitOptions.First(o => o.Value == services.Settings.DefaultFitMode);
-        _mode = services.Settings.DefaultReadingMode == ReadingMode.Double
-            ? ReadingMode.Single
-            : services.Settings.DefaultReadingMode;
+        _mode = services.Settings.DefaultReadingMode;
         _rightToLeft = services.Settings.RightToLeft;
         ApplyBackground(services.Settings.ReaderBackground);
 
@@ -86,6 +96,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     public event EventHandler<double>? ScrollToRequested;
 
+    /// <summary>Raised in horizontal mode: the target X offset the view should scroll to.</summary>
+    public event EventHandler<double>? HorizontalScrollToRequested;
+
     public GalleryInfo Gallery => _gallery;
     public AppServices Services => _services;
     public string Title => _gallery.DisplayTitle;
@@ -98,6 +111,11 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     public ReadingMode Mode => _mode;
     public bool IsSingleMode => _mode == ReadingMode.Single;
     public bool IsContinuousMode => _mode == ReadingMode.Continuous;
+
+    /// <summary>Horizontal continuous mode: pages laid out left-to-right (or
+    /// right-to-left) at a common height, so merged two-page images and long
+    /// strips simply occupy their natural width.</summary>
+    public bool IsHorizontalMode => _mode == ReadingMode.Double;
     public bool RightToLeft => _rightToLeft;
     public string DirectionLabel => _rightToLeft ? "右→左" : "左→右";
     public FitMode FitMode => _selectedFit.Value;
@@ -114,6 +132,8 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         {
             if (!SetProperty(ref _selectedFit, value) || value is null) return;
             OnPropertyChanged(nameof(FitMode));
+            _services.Settings.DefaultFitMode = value.Value;
+            _services.TrySaveSettings(out _);
         }
     }
 
@@ -133,6 +153,21 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     {
         get => _continuousItems;
         private set => SetProperty(ref _continuousItems, value);
+    }
+
+    /// <summary>Horizontal slots in reading order (page 0 first).</summary>
+    public IReadOnlyList<ContinuousPageItem> HorizontalItems
+    {
+        get => _horizontalItems;
+        private set => SetProperty(ref _horizontalItems, value);
+    }
+
+    /// <summary>Horizontal slots in display order (reversed for right-to-left
+    /// reading, so the first page sits at the right edge). Bound by the view.</summary>
+    public IReadOnlyList<ContinuousPageItem> HorizontalDisplayItems
+    {
+        get => _horizontalDisplayItems;
+        private set => SetProperty(ref _horizontalDisplayItems, value);
     }
 
     public bool IsLoadingDimensions
@@ -177,8 +212,15 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         set
         {
             if (!SetProperty(ref _sliderValue, value)) return;
-            int target = (int)Math.Round(value) - 1;
-            if (target != _index) GoToIndex(target, scrollContinuous: true);
+            if (_pages.Count == 0) return;
+
+            // Continuous position: integer part = page, fraction = offset
+            // inside the page, so dragging maps 1:1 to scroll pixels.
+            double target = Math.Clamp(value - 1, 0, _pages.Count - 1);
+            int index = (int)target;
+            double fraction = target - index;
+            if (index == _index && Math.Abs(fraction - _pageOffset) < 0.002) return;
+            SetIndex(index, scrollContinuous: true, offset: fraction);
         }
     }
 
@@ -279,7 +321,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         GalleryPage page = _pages[_index];
         PageLabel = $"{_index + 1} / {_pages.Count}";
         OriginalPageLabel = page.Number == _index + 1 ? string.Empty : $"原始第 {page.Number} 页";
-        SliderValue = _index + 1;
+        // Keep the slider in sync without re-entering its navigation setter.
+        _sliderValue = _index + 1 + _pageOffset;
+        OnPropertyChanged(nameof(SliderValue));
         OnPropertyChanged(nameof(CurrentPageNumber));
         OnPropertyChanged(nameof(CanPrev));
         OnPropertyChanged(nameof(CanNext));
@@ -302,7 +346,16 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
         if (scrollContinuous && IsContinuousMode)
         {
-            ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset));
+            SuppressSyncWhileRelocating(() =>
+                ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset)));
+        }
+
+        if (scrollContinuous && IsHorizontalMode)
+        {
+            double target = GetHorizontalOffsetForPage(_index, _pageOffset);
+            LastHorizontalTarget = target;
+            SuppressSyncWhileRelocating(() =>
+                HorizontalScrollToRequested?.Invoke(this, target));
         }
 
         if (changed && save) ScheduleSave();
@@ -355,22 +408,48 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     public async Task SetModeAsync(ReadingMode mode)
     {
         if (_mode == mode) return;
-        _mode = mode == ReadingMode.Double ? ReadingMode.Single : mode;
+        _mode = mode;
         OnPropertyChanged(nameof(Mode));
         OnPropertyChanged(nameof(IsSingleMode));
         OnPropertyChanged(nameof(IsContinuousMode));
+        OnPropertyChanged(nameof(IsHorizontalMode));
 
-        if (_mode == ReadingMode.Continuous)
-        {
-            await EnsureDimensionsAsync().ConfigureAwait(true);
-            double offset = GetScrollOffsetForPage(_index, _pageOffset);
-            ScrollToRequested?.Invoke(this, offset);
-        }
-        else
+        // The reading mode chosen in the reader persists as the default.
+        _services.Settings.DefaultReadingMode = mode;
+        _services.TrySaveSettings(out _);
+
+        if (IsSingleMode)
         {
             UpdateCurrentRequests();
             SetIndex(_index, scrollContinuous: false);
         }
+        else
+        {
+            await EnsureDimensionsAsync().ConfigureAwait(true);
+            if (IsContinuousMode)
+            {
+                SuppressSyncWhileRelocating(() =>
+                    ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset)));
+            }
+            else
+            {
+                SuppressSyncWhileRelocating(() =>
+                    HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Raises a repositioning request and keeps the scroll probe suppressed
+    /// until the view has applied it. The window posts the scroll at Loaded
+    /// and retries at Background (a fresh layout may clamp the first attempt);
+    /// the release therefore waits until SystemIdle, after both.
+    /// </summary>
+    private void SuppressSyncWhileRelocating(Action raise)
+    {
+        _suppressScrollSync = true;
+        raise();
+        Dispatcher.UIThread.Post(() => _suppressScrollSync = false, DispatcherPriority.SystemIdle);
     }
 
     public void ToggleDirection()
@@ -380,13 +459,28 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         _services.TrySaveSettings(out _);
         OnPropertyChanged(nameof(RightToLeft));
         OnPropertyChanged(nameof(DirectionLabel));
+        if (IsHorizontalMode && _horizontalItems.Count > 0)
+        {
+            RebuildHorizontalDisplay();
+            SuppressSyncWhileRelocating(() =>
+                HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
+        }
     }
 
     public async Task InitializeAsync()
     {
-        if (!IsContinuousMode) return;
+        if (IsSingleMode) return;
         await EnsureDimensionsAsync().ConfigureAwait(true);
-        ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset));
+        if (IsContinuousMode)
+        {
+            SuppressSyncWhileRelocating(() =>
+                ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset)));
+        }
+        else
+        {
+            SuppressSyncWhileRelocating(() =>
+                HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
+        }
     }
 
     public void ToggleBackground()
@@ -454,21 +548,33 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
                 .LoadAsync(_gallery, _pages, progress, _lifetime.Token)
                 .ConfigureAwait(true);
 
-            var items = new List<ContinuousPageItem>(_pages.Count);
+            var vertical = new List<ContinuousPageItem>(_pages.Count);
+            var horizontal = new List<ContinuousPageItem>(_pages.Count);
             for (int i = 0; i < _pages.Count; i++)
             {
                 PageDimension dimension = dimensions[i];
-                var request = new PageImageRequest(_pages[i].Candidates, _services.Images);
-                items.Add(new ContinuousPageItem(
+                vertical.Add(new ContinuousPageItem(
                     _pages[i],
-                    request,
+                    new PageImageRequest(_pages[i].Candidates, _services.Images),
                     dimension.Width,
                     dimension.Height,
                     dimension.Known));
+                horizontal.Add(new ContinuousPageItem(
+                    _pages[i],
+                    new PageImageRequest(_pages[i].Candidates, _services.Images),
+                    dimension.Width,
+                    dimension.Height,
+                    dimension.Known)
+                {
+                    ReadIndex = i,
+                });
             }
 
-            ContinuousItems = items;
+            ContinuousItems = vertical;
+            HorizontalItems = horizontal;
+            RebuildHorizontalDisplay();
             ApplyContinuousWidth();
+            ApplyContinuousHeight();
             DimensionProgress = 100;
         }
         catch (OperationCanceledException)
@@ -504,7 +610,8 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         RecomputeTops();
         if (IsContinuousMode)
         {
-            ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset));
+            SuppressSyncWhileRelocating(() =>
+                ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset)));
         }
     }
 
@@ -537,7 +644,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     public void UpdateScrollOffset(double offsetY, double viewportHeight)
     {
-        if (ContinuousItems.Count == 0 || !IsContinuousMode) return;
+        if (ContinuousItems.Count == 0 || !IsContinuousMode || _suppressScrollSync) return;
 
         double probe = offsetY + Math.Max(40, viewportHeight * 0.32);
         int low = 0;
@@ -569,6 +676,111 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         else
         {
             _pageOffset = fraction;
+            _sliderValue = _index + 1 + fraction;
+            OnPropertyChanged(nameof(SliderValue));
+            ScheduleSave();
+        }
+    }
+
+    /// <summary>Test hook: last horizontal target raised to the view.</summary>
+    internal double? LastHorizontalTarget { get; private set; }
+
+    /// <summary>Test hook: current internal page offset.</summary>
+    internal double PageOffsetForTest => _pageOffset;
+
+    /// <summary>Rebuilds the display-ordered list (reversed when RTL) and slots.</summary>
+    private void RebuildHorizontalDisplay()
+    {
+        List<ContinuousPageItem> display = _horizontalItems.ToList();
+        if (_rightToLeft) display.Reverse();
+        HorizontalDisplayItems = display;
+        RecomputeLefts();
+    }
+
+    private void RecomputeLefts()
+    {
+        double x = 0;
+        foreach (ContinuousPageItem item in _horizontalDisplayItems)
+        {
+            item.Left = x;
+            x += item.DisplayWidth + ContinuousPageItem.Gap;
+        }
+    }
+
+    public void SetContinuousHeight(double height)
+    {
+        double target = Math.Clamp(height, 280, 2400);
+        if (Math.Abs(target - _continuousHeight) < 2 && _horizontalItems.Count > 0)
+        {
+            return;
+        }
+
+        _continuousHeight = target;
+        if (_horizontalItems.Count == 0) return;
+
+        ApplyContinuousHeight();
+        if (IsHorizontalMode)
+        {
+            SuppressSyncWhileRelocating(() =>
+                HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
+        }
+    }
+
+    private void ApplyContinuousHeight()
+    {
+        foreach (ContinuousPageItem item in _horizontalItems)
+        {
+            item.ResizeToHeight(_continuousHeight);
+        }
+
+        RecomputeLefts();
+    }
+
+    public double GetHorizontalOffsetForPage(int index, double fraction)
+    {
+        if (_horizontalItems.Count == 0) return 0;
+        ContinuousPageItem item = _horizontalItems[Math.Clamp(index, 0, _horizontalItems.Count - 1)];
+        return item.Left + Math.Clamp(fraction, 0, 1) * item.DisplayWidth;
+    }
+
+    /// <summary>Horizontal counterpart of <see cref="UpdateScrollOffset"/>: maps the
+    /// scroll X offset back to the page under the probe point.</summary>
+    public void UpdateScrollOffsetX(double offsetX, double viewportWidth)
+    {
+        if (_horizontalDisplayItems.Count == 0 || !IsHorizontalMode || _suppressScrollSync) return;
+
+        double probe = offsetX + Math.Max(40, viewportWidth * 0.32);
+        int low = 0;
+        int high = _horizontalDisplayItems.Count - 1;
+        int found = 0;
+        while (low <= high)
+        {
+            int mid = (low + high) / 2;
+            if (_horizontalDisplayItems[mid].Left <= probe)
+            {
+                found = mid;
+                low = mid + 1;
+            }
+            else
+            {
+                high = mid - 1;
+            }
+        }
+
+        ContinuousPageItem item = _horizontalDisplayItems[found];
+        double fraction = item.DisplayWidth <= 0
+            ? 0
+            : Math.Clamp((probe - item.Left) / item.DisplayWidth, 0, 1);
+
+        if (item.ReadIndex != _index)
+        {
+            SetIndex(item.ReadIndex, scrollContinuous: false, offset: fraction);
+        }
+        else
+        {
+            _pageOffset = fraction;
+            _sliderValue = _index + 1 + fraction;
+            OnPropertyChanged(nameof(SliderValue));
             ScheduleSave();
         }
     }

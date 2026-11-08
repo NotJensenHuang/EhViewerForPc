@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX 打包工程（Windows Application Packaging Project，对齐 little-fancy-tool-ava 方案）。
+
+  - VS 中右键本工程"生成"即产出 MSIX；设为启动项目可 F5 部署并启动打包版应用。
+  - 负载为入口工程的托管自包含构建（EhViewerMsixBuild=true 时 PublishAot=false +
+    SelfContained=true），不再走 NativeAOT（AOT 需要 publish，与 DesktopBridge
+    收集"构建产物"的流程不兼容，参考项目同样选择放弃 AOT）。
+  - 命令行构建必须使用 VS 自带的 MSBuild（DesktopBridge targets 只随 VS 安装），
+    `dotnet build` 无法构建 wapproj。
+-->
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Condition="'$(VisualStudioVersion)' == '' or '$(VisualStudioVersion)' &lt; '15.0'">
+    <VisualStudioVersion>15.0</VisualStudioVersion>
+  </PropertyGroup>
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|AnyCPU">
+      <Configuration>Debug</Configuration>
+      <Platform>AnyCPU</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|AnyCPU">
+      <Configuration>Release</Configuration>
+      <Platform>AnyCPU</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup>
+    <WapProjPath Condition="'$(WapProjPath)'==''">$(MSBuildExtensionsPath)\Microsoft\DesktopBridge\</WapProjPath>
+  </PropertyGroup>
+  <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.props" />
+  <PropertyGroup>
+    <ProjectGuid>b27c0465-9c92-441e-8ee1-5909bf5ebde9</ProjectGuid>
+    <TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <DefaultLanguage>zh-CN</DefaultLanguage>
+    <AppxPackageSigningEnabled>False</AppxPackageSigningEnabled>
+    <!-- Unsigned packages must not request cleanup of a certificate that was never created. -->
+    <GenerateTemporaryStoreCertificate>$(AppxPackageSigningEnabled)</GenerateTemporaryStoreCertificate>
+    <NoWarn>$(NoWarn);NU1702;NU1701</NoWarn>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+    <AppxPackageSigningTimestampDigestAlgorithm>SHA256</AppxPackageSigningTimestampDigestAlgorithm>
+    <AppxAutoIncrementPackageRevision>True</AppxAutoIncrementPackageRevision>
+    <GenerateTestArtifacts>true</GenerateTestArtifacts>
+    <AppxBundlePlatforms>x64</AppxBundlePlatforms>
+    <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
+    <EntryPointProjectUniqueName>..\..\src\EhViewerReader\EhViewerReader.csproj</EntryPointProjectUniqueName>
+    <!-- VS builds the solution's ordinary app evaluation, not this isolated
+         reference. Publish the isolated variant before collecting its outputs. -->
+    <WapAlwaysBuildDependentProjects>true</WapAlwaysBuildDependentProjects>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <AppxBundle>Always</AppxBundle>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <AppxBundle>Always</AppxBundle>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <AppxBundle>Always</AppxBundle>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <AppxBundle>Always</AppxBundle>
+  </PropertyGroup>
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest">
+      <SubType>Designer</SubType>
+    </AppxManifest>
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\*.png" />
+  </ItemGroup>
+  <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.targets" />
+  <ItemGroup>
+    <!-- 版本由根 Directory.Packages.props（CPM）统一管理，此处不得写显式 Version（NU1008）。 -->
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\EhViewerReader\EhViewerReader.csproj">
+      <!-- The IDE built ordinary dependency outputs. This isolated evaluation
+           must build its own complete dependency graph, including references. -->
+      <AdditionalProperties>EhViewerMsixBuild=true;BuildingInsideVisualStudio=false;BuildProjectReferences=true</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+  <!-- Restore before DesktopBridge queries deployable content from the isolated app.
+       Use a separate evaluation so the publish build loads the new NuGet imports. -->
+  <Target Name="RestoreMsixProjectReferences" BeforeTargets="SetProjectReferenceProperties" Condition="'$(DesignTimeBuild)' != 'true'">
+    <MSBuild Projects="@(ProjectReference)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=win-x64;SelfContained=true;MSBuildIsRestoring=true" />
+  </Target>
+</Project>

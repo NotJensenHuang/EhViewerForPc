@@ -28,6 +28,7 @@ public static class UiSmokeService
 
         var report = new Dictionary<string, object?>();
         var stopwatch = Stopwatch.StartNew();
+        ReadingMode originalMode = viewModel.Services.Settings.DefaultReadingMode;
 
         string library = Path.Combine(Path.GetTempPath(), "EhReaderSmokeLib-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(library);
@@ -189,7 +190,6 @@ public static class UiSmokeService
 
             readerViewModel.Step(1);
             await Task.Delay(500);
-            string pageBeforeClose = readerViewModel.PageLabel;
 
             await readerViewModel.SetModeAsync(ReadingMode.Continuous);
             await WaitUntilAsync(() => !readerViewModel.IsLoadingDimensions, TimeSpan.FromSeconds(60));
@@ -197,9 +197,109 @@ public static class UiSmokeService
             SaveScreenshot(reader, Path.Combine(output, "reader-continuous.png"));
             report["continuousItems"] = readerViewModel.ContinuousItems.Count;
 
+            // Horizontal continuous mode (ReadingMode.Double): pages side by
+            // side at a common height; merged two-page images keep their width.
+            await readerViewModel.SetModeAsync(ReadingMode.Double);
+            await WaitUntilAsync(() => !readerViewModel.IsLoadingDimensions, TimeSpan.FromSeconds(60));
+            await Task.Delay(1200);
+            var horizontalScroll = reader.FindControl<ScrollViewer>("HorizontalScroll");
+            if (horizontalScroll is not null)
+            {
+                readerViewModel.SetContinuousHeight(horizontalScroll.Viewport.Height);
+            }
+
+            await Task.Delay(700);
+            double firstItemWidth = 0;
+            if (horizontalScroll?.Content is Visual hContent)
+            {
+                Border? firstHBorder = hContent.GetVisualDescendants().OfType<Border>().FirstOrDefault();
+                firstItemWidth = firstHBorder?.Bounds.Width ?? 0;
+            }
+            double xBefore = horizontalScroll?.Offset.X ?? 0;
+            string pageAtProbe = readerViewModel.PageLabel;
+            readerViewModel.Step(1);
+            await Task.Delay(800);
+            double xAfter = horizontalScroll?.Offset.X ?? 0;
+            string pageAfterStep = readerViewModel.PageLabel;
+            report["horizontalMode"] = new
+            {
+                items = readerViewModel.HorizontalItems.Count,
+                displayItems = readerViewModel.HorizontalDisplayItems.Count,
+                rtlReversed = readerViewModel.RightToLeft &&
+                    !ReferenceEquals(readerViewModel.HorizontalDisplayItems.FirstOrDefault(),
+                                     readerViewModel.HorizontalItems.FirstOrDefault()),
+                extentWidth = Math.Round(horizontalScroll?.Extent.Width ?? 0, 0),
+                viewportWidth = Math.Round(horizontalScroll?.Viewport.Width ?? 0, 0),
+                firstItemWidth = Math.Round(firstItemWidth, 1),
+                vmItemWidth = readerViewModel.HorizontalItems.Count > 0
+                    ? Math.Round(readerViewModel.HorizontalItems[0].DisplayWidth, 1)
+                    : 0,
+                vmPageWidths = readerViewModel.HorizontalItems.Select(i => Math.Round(i.DisplayWidth, 1)).ToArray(),
+                uiPageWidths = horizontalScroll is not null && horizontalScroll.Content is Visual hc
+                    ? hc.GetVisualDescendants().OfType<Border>().Select(b => Math.Round(b.Bounds.Width, 1)).ToArray()
+                    : null,
+                vmLefts = readerViewModel.HorizontalDisplayItems.Select(i => Math.Round(i.Left, 1)).ToArray(),
+                widerThanViewport = (horizontalScroll?.Extent.Width ?? 0) > (horizontalScroll?.Viewport.Width ?? 0),
+                pageAtProbe,
+                pageAfterStep,
+                offsetXBefore = Math.Round(xBefore, 1),
+                offsetXAfter = Math.Round(xAfter, 1),
+                stepMoved = Math.Abs(xAfter - xBefore) > 10,
+            };
+            SaveScreenshot(reader, Path.Combine(output, "reader-horizontal.png"));
+
+            // Slider precision: a fractional slider position must land inside
+            // the target page (5.5 → page 5, halfway), matching scroll pixels.
+            ReadingMode savedMode = viewModel.Services.Settings.DefaultReadingMode;
+            readerViewModel.SliderValue = 5.5;
+            await Task.Delay(800);
+            double expectedSliderOffset = readerViewModel.GetHorizontalOffsetForPage(4, 0.5);
+            var offsetSamples = new List<double>();
+            for (int i = 0; i < 3; i++)
+            {
+                offsetSamples.Add(Math.Round(horizontalScroll?.Offset.X ?? 0, 1));
+                await Task.Delay(400);
+            }
+
+            report["sliderPrecision"] = new
+            {
+                landedPage = readerViewModel.CurrentPageNumber,
+                slider = Math.Round(readerViewModel.SliderValue, 2),
+                itemWidth = Math.Round(readerViewModel.HorizontalItems[4].DisplayWidth, 1),
+                expectedOffset = Math.Round(expectedSliderOffset, 1),
+                raisedTarget = Math.Round(readerViewModel.LastHorizontalTarget ?? -1, 1),
+                pageOffset = Math.Round(readerViewModel.PageOffsetForTest, 3),
+                offsetSamples,
+                ok = Math.Abs((horizontalScroll?.Offset.X ?? 0) - expectedSliderOffset) < 24,
+            };
+
+            // The mode chosen in the reader persists as the default...
+            report["modePersisted"] = viewModel.Services.Settings.DefaultReadingMode == ReadingMode.Double;
+
+            // ...and clicking the active mode chip again returns to single page.
+            var toggleVm = readerViewModel;
+            await toggleVm.SetModeAsync(toggleVm.IsHorizontalMode ? ReadingMode.Single : ReadingMode.Double);
+            await Task.Delay(600);
+            report["modeToggleBack"] = new
+            {
+                singleAfterToggle = toggleVm.IsSingleMode,
+                savedMode = (int)viewModel.Services.Settings.DefaultReadingMode,
+                ok = toggleVm.IsSingleMode &&
+                     viewModel.Services.Settings.DefaultReadingMode == ReadingMode.Single,
+            };
+
+            // In horizontal mode the probe point advances pages as the window
+            // shows several at once, so the progress to restore is whatever the
+            // reader is on when it actually closes.
+            string pageBeforeClose = readerViewModel.PageLabel;
+
             reader.Close();
             await Task.Delay(400);
             viewModel.RefreshItemProgress(item);
+
+            // Restore the user's default reading mode after the toggle test.
+            viewModel.Services.Settings.DefaultReadingMode = savedMode;
+            viewModel.Services.TrySaveSettings(out _);
 
             var restored = new ReaderViewModel(viewModel.Services, item.Info);
             report["progressRestore"] = new
@@ -209,6 +309,73 @@ public static class UiSmokeService
                 ok = restored.PageLabel == pageBeforeClose,
             };
             restored.Dispose();
+        }
+
+        // Animated GIF regression: synthetic gallery "900000-[Chinese] 合成样本 01"
+        // carries a two-frame GIF as page 2. The 900000 card is a merged
+        // three-version card whose preferred version is NOT the one holding the
+        // GIF, so the lookup must scan every version's folder.
+        GalleryInfo? gifInfo = viewModel.Galleries
+            .SelectMany(g => g.Versions.Count > 1 ? g.Versions : [g.Info])
+            .FirstOrDefault(info => info.FolderPath is not null &&
+                                    File.Exists(Path.Combine(info.FolderPath, "00000002.gif")));
+        report["gifLookup"] = new
+        {
+            found = gifInfo is not null,
+            folder = gifInfo?.FolderPath,
+        };
+        if (gifInfo is not null)
+        {
+            string gifPath = Path.Combine(gifInfo.FolderPath, "00000002.gif");
+            ImageDecoder decoder = viewModel.Services.Images.Decoder;
+            DecodedImage? gif = await decoder.DecodeAsync(gifPath, null, null, 24, 16000, CancellationToken.None);
+            DecodedImage? gifFrame1 = gif is not null ? await gif.DecodeNextFrameAsync(CancellationToken.None) : null;
+            report["animatedGif"] = new
+            {
+                isAnimated = gif?.IsAnimated == true,
+                frameCount = gif?.FrameCount ?? 0,
+                frame1Ok = gifFrame1 is not null && gifFrame1.FrameIndex == 1,
+                durationMs = gif?.FrameDurationMs ?? 0,
+            };
+            gifFrame1?.Dispose();
+            gif?.Dispose();
+
+            var gifViewModel = new ReaderViewModel(viewModel.Services, gifInfo);
+            var gifReader = new ReaderWindow(gifViewModel)
+            {
+                WindowStartupLocation = WindowStartupLocation.Manual,
+                Position = new PixelPoint(100, 100),
+            };
+            gifReader.Show();
+            await Task.Delay(1200);
+            // The reading mode is a persisted setting and may be horizontal;
+            // animation playback is asserted on the single-page surface.
+            await gifViewModel.SetModeAsync(ReadingMode.Single);
+            await Task.Delay(600);
+            gifViewModel.GoToIndex(1, scrollContinuous: false);
+            await Task.Delay(1500);
+            ZoomPanView? singleView = gifReader.FindControl<ZoomPanView>("SingleView");
+
+            // Each applied frame is a NEW DecodedImage object (FrameIndex is
+            // immutable), so re-read the control's current session every time.
+            var samples = new List<int>();
+            for (int i = 0; i < 6; i++)
+            {
+                samples.Add(singleView?.AnimatedImageForTest?.FrameIndex ?? -1);
+                await Task.Delay(80);
+            }
+
+            report["readerAnimation"] = new
+            {
+                hasSession = (singleView?.AnimatedImageForTest) is not null,
+                samples,
+                advancing = samples.Distinct().Count() >= 2,
+                stopReason = singleView?.AnimationStopReason,
+            };
+            SaveScreenshot(gifReader, Path.Combine(output, "reader-animated.png"));
+            gifReader.Close();
+            await Task.Delay(300);
+            gifViewModel.Dispose();
         }
 
         var settings = new SettingsWindow(new SettingsViewModel(viewModel.Services), viewModel)
@@ -289,6 +456,10 @@ public static class UiSmokeService
             };
             corruptWindow.Show();
             await Task.Delay(1200);
+            // The default reading mode is a persisted setting and may be
+            // horizontal; this regression is about single-page wheel turning.
+            await corruptViewModel.SetModeAsync(ReadingMode.Single);
+            await Task.Delay(400);
             corruptViewModel.GoToIndex(2, scrollContinuous: false);
             await Task.Delay(900);
             string corruptBefore = corruptViewModel.PageLabel;
@@ -338,10 +509,15 @@ public static class UiSmokeService
         };
 
         report["elapsedSeconds"] = Math.Round(stopwatch.Elapsed.TotalSeconds, 2);
+
+        // Restore the user's reading mode: the mode-persistence assertions in
+        // this smoke run intentionally rewrite it.
+        viewModel.Services.Settings.DefaultReadingMode = originalMode;
+        viewModel.Services.TrySaveSettings(out _);
         report["screenshots"] = new[]
         {
-            "library.png", "library-search.png", "details.png", "reader-single.png", "reader-continuous.png",
-            "settings.png",
+            "library.png", "library-search.png", "details.png", "reader-single.png", "reader-animated.png",
+            "reader-continuous.png", "reader-horizontal.png", "versions.png", "settings.png",
         };
         await WriteReport(output, report);
         Console.WriteLine("UI smoke screenshots: " + output);
@@ -525,6 +701,16 @@ public static class UiSmokeService
                     continue;
                 }
 
+                if (i == 0 && page == 2)
+                {
+                    // Animated GIF regression page: the reader must play frames,
+                    // not freeze on the first one.
+                    File.WriteAllBytes(
+                        Path.Combine(folder, $"{page:00000000}.gif"),
+                        RenderAnimatedGif(320, 480));
+                    continue;
+                }
+
                 if (i == 26 && page == pageCount)
                 {
                     continue; // trailing missing page
@@ -546,6 +732,118 @@ public static class UiSmokeService
         // One empty directory and one hidden temp directory that must be skipped.
         Directory.CreateDirectory(Path.Combine(root, "910000-[Chinese] 空样本"));
         Directory.CreateDirectory(Path.Combine(root, new string('a', 64) + ".tmp"));
+    }
+
+    private static byte[] RenderAnimatedGif(int width, int height)
+    {
+        // Two-frame GIF89a (red -> blue, 100 ms per frame, loop forever) written
+        // by hand so the smoke test does not depend on an encoder that SkiaSharp
+        // does not provide for multi-frame formats.
+        using var ms = new MemoryStream();
+        using (var writer = new BinaryWriter(ms, System.Text.Encoding.ASCII, leaveOpen: true))
+        {
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("GIF89a"));
+            writer.Write((ushort)width);
+            writer.Write((ushort)height);
+            writer.Write((byte)0x81); // global color table, 2^(1+1) = 4 colors
+            writer.Write((byte)0x00); // background color index
+            writer.Write((byte)0x00); // pixel aspect ratio
+            writer.Write(new byte[] { 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255 });
+            writer.Write(new byte[] { 0x21, 0xFF, 0x0B }); // application extension
+            writer.Write(System.Text.Encoding.ASCII.GetBytes("NETSCAPE2.0"));
+            writer.Write(new byte[] { 0x03, 0x01, 0x00, 0x00, 0x00 }); // loop forever
+
+            WriteGifFrame(writer, width, height, 2, 10);
+            WriteGifFrame(writer, width, height, 3, 10);
+            writer.Write((byte)0x3B); // trailer
+        }
+
+        return ms.ToArray();
+    }
+
+    private static void WriteGifFrame(BinaryWriter writer, int width, int height, byte colorIndex, int delayCentiseconds)
+    {
+        writer.Write(new byte[] { 0x21, 0xF9, 0x04, 0x04 }); // GCE: do not dispose
+        writer.Write((ushort)delayCentiseconds);
+        writer.Write(new byte[] { 0x00, 0x00 });
+        writer.Write((byte)0x2C); // image descriptor
+        writer.Write((ushort)0);
+        writer.Write((ushort)0);
+        writer.Write((ushort)width);
+        writer.Write((ushort)height);
+        writer.Write((byte)0x00);
+        writer.Write((byte)2); // LZW min code size (4-color palette)
+        var pixels = new byte[width * height];
+        Array.Fill(pixels, colorIndex);
+        byte[] lzw = GifLzwEncode(pixels);
+        for (int offset = 0; offset < lzw.Length; offset += 255)
+        {
+            int chunk = Math.Min(255, lzw.Length - offset);
+            writer.Write((byte)chunk);
+            writer.Write(lzw, offset, chunk);
+        }
+
+        writer.Write((byte)0x00); // block terminator
+    }
+
+    private static byte[] GifLzwEncode(byte[] indices)
+    {
+        const int minCodeSize = 2;
+        int clearCode = 1 << minCodeSize;
+        int endCode = clearCode + 1;
+        int nextCode = endCode + 1;
+        int codeSize = minCodeSize + 1;
+        var dict = new Dictionary<(int Prefix, int Pixel), int>();
+        var output = new List<byte>();
+        uint accumulator = 0;
+        int bitCount = 0;
+
+        void Emit(int code)
+        {
+            accumulator |= (uint)(code << bitCount);
+            bitCount += codeSize;
+            while (bitCount >= 8)
+            {
+                output.Add((byte)(accumulator & 0xFF));
+                accumulator >>= 8;
+                bitCount -= 8;
+            }
+        }
+
+        Emit(clearCode);
+        int prefix = indices[0];
+        for (int i = 1; i < indices.Length; i++)
+        {
+            int pixel = indices[i];
+            if (dict.TryGetValue((prefix, pixel), out int code))
+            {
+                prefix = code;
+                continue;
+            }
+
+            Emit(prefix);
+            if (nextCode < 4096)
+            {
+                // GIF LZW: the decoder grows its code width one entry behind
+                // the encoder, so the check uses the value being assigned.
+                if (nextCode == (1 << codeSize) && codeSize < 12) codeSize++;
+                dict[(prefix, pixel)] = nextCode++;
+            }
+            else
+            {
+                Emit(clearCode);
+                dict.Clear();
+                nextCode = endCode + 1;
+                codeSize = minCodeSize + 1;
+            }
+
+            prefix = pixel;
+        }
+
+        Emit(prefix);
+        Emit(endCode);
+        if (bitCount > 0) output.Add((byte)(accumulator & 0xFF));
+        return output.ToArray();
     }
 
     private static byte[] RenderPage(int page, int pageCount, int galleryIndex, int width, int height)
