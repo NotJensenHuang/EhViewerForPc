@@ -76,21 +76,21 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -p:PublishAot=true -o ar
 
 ## MSIX 打包
 
-`packaging/EhViewerReader.Msix` 是 VS 的 **Windows 应用程序打包项目**（`.wapproj`，与 little-fancy-tool-ava 同一套方案）。DesktopBridge 打包流程以**托管自包含**方式构建入口工程（`EhViewerMsixBuild=true` 时 `PublishAot=false` + `SelfContained=true`），因此包内不是 NativeAOT 单文件（NativeAOT 仍可通过 `dotnet publish -p:PublishAot=true` 单独获得）。
+`packaging/EhViewerReader.Msix` 是 VS 的 **Windows 应用程序打包项目**（`.wapproj`，方案源自 little-fancy-tool-ava），但负载改为 **NativeAOT 发布产物**（约 16 MB，与 `dotnet publish -p:PublishAot=true` 一致）：打包前自动执行 AOT 发布到 `artifacts/msix/aot`，再注入包负载、移除托管构建产物。NativeAOT 必须走 publish（AOT 代码生成不在 Build 管线中），因此工程里有两个自定义 target（`PublishAotForMsix` / `InjectAotPayload`）在 `_ConvertItems` 前后完成替换——这是对 DesktopBridge 内部条目的非官方用法，VS 升级后如打包异常优先回归这里。
 
 VS 中的用法：
 
-- **打包**：右键 `EhViewerReader.Msix` 工程 → 生成；产物在 `packaging/EhViewerReader.Msix/AppPackages/`（`_Test` 侧载目录内，含 `.msix`）。
+- **打包**：右键 `EhViewerReader.Msix` 工程 → 生成；每次打包都会先跑一遍 AOT 发布（1–3 分钟，可用 `-p:SkipAotPublish=true` 复用上次产物）。产物在 `packaging/EhViewerReader.Msix/AppPackages/`（`_Test` 侧载目录内）。
 - **运行打包版**：把 `EhViewerReader.Msix` 设为启动项目，F5 = 部署 MSIX 并启动打包后的应用（首次 F5 需开启系统"开发人员模式"）。
 - 解决方案构建时 wapproj 默认不参与打包（`PackageOptionalProjectsInIdeBuilds=False`），保持应用工程的日常构建轻快。
 
-命令行构建 wapproj 必须使用 VS 自带 MSBuild（DesktopBridge targets 只随 VS 安装），`dotnet build` 不适用；纯命令行打 MSIX 请直接在 VS 中操作或调用 VS 的 MSBuild：
+命令行构建 wapproj 必须使用 VS 自带 MSBuild（DesktopBridge targets 只随 VS 安装），`dotnet build` 不适用：
 
 ```bat
 "I:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" packaging\EhViewerReader.Msix\EhViewerReader.Msix.wapproj /p:Configuration=Release /p:Platform=x64
 ```
 
-签名：工程默认 `AppxPackageSigningEnabled=False`。分发前在 VS"生成 → 应用程序包"里选证书签名，并把 `Package.appxmanifest` 的 `Publisher` 改成证书 Subject；否则安装时报 `0x800B0109`。清单 Identity：`EhViewerReader.Local`，`runFullTrust`；应用数据仍写入 `%LocalAppData%\EhViewerReader`。
+签名：工程已配置测试证书（`PackageCertificateThumbprint`）。正式分发时用代码签名证书替换，并把 `Package.appxmanifest` 的 `Publisher` 改成证书 Subject；否则安装报 `0x800B0109`。清单 Identity：`EhViewerReader.Local`，`runFullTrust`；应用数据仍写入 `%LocalAppData%\EhViewerReader`。
 
 ## 命令行
 

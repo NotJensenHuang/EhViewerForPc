@@ -1,7 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
-  WAP 工程的清单：Executable / EntryPoint 使用 $targetnametoken$ / $targetentrypoint$
-  占位符，打包时由 DesktopBridge targets 按入口工程（src/EhViewerReader）展开。
+  WAP 工程的清单。负载 = InjectAotPayload 注入到 EhViewerReader\ 子目录的
+  NativeAOT 发布产物（替换托管构建产物）。Executable/EntryPoint 用占位符：
+  DesktopBridge 会按入口工程把它展开为 EhViewerReader\EhViewerReader.exe，
+  与注入的负载路径一致（实测字面 Executable 会被入口清单生成步骤改写，
+  导致"清单引用了不属于负载的文件"错误，必须用占位符）。
   ProcessorArchitecture 由打包流程按构建平台写入，不在清单里固定。
 -->
 <Package
@@ -11,7 +14,7 @@
   IgnorableNamespaces="uap rescap">
 
   <Identity Name="EhViewerReader.Local"
-            Publisher="CN=EhViewerReader"
+            Publisher="CN=CF259542-70C0-4852-9523-066A80212473"
             Version="1.0.0.0" />
 
   <Properties>

@@ -19,6 +19,7 @@
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <TrimmerSingleWarn>false</TrimmerSingleWarn>
     <Platforms>AnyCPU;x64</Platforms>
+	<PublishAot Condition="'$(Configuration)' == 'Release'">true</PublishAot>
   </PropertyGroup>
 
   <ItemGroup>
