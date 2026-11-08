@@ -1,0 +1,214 @@
+{
+  "root": "D:/BackUp/phoneGT5pro/ehviewer",
+  "dataDirectory": "C:\\Users\\90684\\AppData\\Local\\Temp/ehreader-selftest-srcgen",
+  "machine": "HOME-PC \u00B7 Microsoft Windows NT 10.0.26300.0 \u00B7 .NET 10.0.13 \u00B7 20 cores \u00B7 zh-CN",
+  "syntheticLongStrip": {
+    "ms": 46.8,
+    "decodedWidth": 977,
+    "decodedHeight": 14998,
+    "megabytes": 55.9
+  },
+  "coldScanSeconds": 5.65,
+  "library": {
+    "galleries": 6327,
+    "pages": 245548,
+    "emptyGalleries": 1,
+    "missingGalleries": 27,
+    "zeroByteGalleries": 13,
+    "noHeader": 162,
+    "noThumb": 256,
+    "duplicateGidGalleries": 2,
+    "gidConflictGalleries": 0,
+    "noGidGalleries": 0,
+    "gidFromHeaderOnly": 5,
+    "maxPages": 1728,
+    "missingRanges": 39,
+    "ignoredDirectories": 0,
+    "cacheHitsCold": 0
+  },
+  "cacheSaved": true,
+  "warmScanSeconds": 0.78,
+  "warmCacheHits": 6327,
+  "warmScanned": 0,
+  "largestDimensions": {
+    "pages": 1728,
+    "unknown": 0,
+    "seconds": 2.4
+  },
+  "dimensionProbes": 240,
+  "deepProbe": false,
+  "longStrip": null,
+  "largestImage": {
+    "gid": 1037080,
+    "page": 3,
+    "sourceWidth": 1260,
+    "sourceHeight": 2160,
+    "ms": 11.5,
+    "decodedWidth": 700,
+    "decodedHeight": 1200,
+    "megabytes": 3.2
+  },
+  "zeroBytePage": {
+    "gid": 3044877,
+    "page": 17,
+    "returnedNull": true
+  },
+  "managedHeapMb": 54.7,
+  "peakWorkingSetMb": 257.1,
+  "workingSetMb": 162.1,
+  "decodes": [
+    {
+      "kind": "cover",
+      "gid": 4205269,
+      "pageCount": 1,
+      "ms": 9.5,
+      "ok": true,
+      "width": 360,
+      "height": 508,
+      "megabytes": 0.7
+    },
+    {
+      "kind": "cover",
+      "gid": 2029025,
+      "pageCount": 2,
+      "ms": 13.2,
+      "ok": true,
+      "width": 250,
+      "height": 316,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 2030703,
+      "pageCount": 2,
+      "ms": 10.8,
+      "ok": true,
+      "width": 250,
+      "height": 324,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 2360815,
+      "pageCount": 2,
+      "ms": 15.8,
+      "ok": true,
+      "width": 250,
+      "height": 348,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 2420563,
+      "pageCount": 2,
+      "ms": 11.8,
+      "ok": true,
+      "width": 250,
+      "height": 348,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 2558599,
+      "pageCount": 2,
+      "ms": 11.6,
+      "ok": true,
+      "width": 250,
+      "height": 353,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 2694297,
+      "pageCount": 2,
+      "ms": 12.8,
+      "ok": true,
+      "width": 250,
+      "height": 354,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 2765864,
+      "pageCount": 2,
+      "ms": 6.3,
+      "ok": true,
+      "width": 250,
+      "height": 343,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 3536241,
+      "pageCount": 2,
+      "ms": 26.8,
+      "ok": true,
+      "width": 205,
+      "height": 375,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 1079274,
+      "pageCount": 3,
+      "ms": 19,
+      "ok": true,
+      "width": 250,
+      "height": 204,
+      "megabytes": 0.2
+    },
+    {
+      "kind": "cover",
+      "gid": 1272537,
+      "pageCount": 3,
+      "ms": 9.2,
+      "ok": true,
+      "width": 250,
+      "height": 353,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "cover",
+      "gid": 2213724,
+      "pageCount": 3,
+      "ms": 11.3,
+      "ok": true,
+      "width": 250,
+      "height": 353,
+      "megabytes": 0.3
+    },
+    {
+      "kind": "page",
+      "gid": 2737036,
+      "page": 1,
+      "ms": 19.3,
+      "ok": true,
+      "width": 1024,
+      "height": 1536,
+      "megabytes": 6
+    },
+    {
+      "kind": "page",
+      "gid": 2737036,
+      "page": 865,
+      "ms": 18.6,
+      "ok": true,
+      "width": 1024,
+      "height": 1536,
+      "megabytes": 6
+    },
+    {
+      "kind": "page",
+      "gid": 2737036,
+      "page": 1728,
+      "ms": 17.9,
+      "ok": true,
+      "width": 1024,
+      "height": 1536,
+      "megabytes": 6
+    }
+  ],
+  "failures": [],
+  "pass": true,
+  "finishedUtc": "2026-11-08T08:45:28.5212111Z"
+}

@@ -1,0 +1,125 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerReader.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="580" d:DesignHeight="660"
+        x:Class="EhViewerReader.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Title="设置" Width="580" Height="700" CanResize="False"
+        Background="{DynamicResource AppBgBrush}"
+        WindowStartupLocation="CenterOwner">
+  <Grid RowDefinitions="*,Auto" Background="{DynamicResource AppBgBrush}">
+    <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled">
+      <!-- Padding is on a Border: ScrollViewer.Padding offsets content without
+           reducing the width it offers, which clipped the right edge. -->
+      <Border Padding="24,20">
+        <StackPanel Spacing="18">
+        <StackPanel Spacing="8">
+          <TextBlock Text="数据源" FontWeight="SemiBold" FontSize="14" />
+          <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap"
+                     Text="可添加多个 EhViewer 下载目录（例如各设备的备份）。目录只读；同一作品在多处存在时会合并成一张卡片，并可在“版本管理”里选择副本。" />
+          <ItemsControl ItemsSource="{Binding Sources}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <StackPanel Spacing="8" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:SourceRowViewModel">
+                <Border Classes="panel" Padding="12">
+                  <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
+                    <CheckBox Grid.Row="0" Grid.Column="0" IsChecked="{Binding Enabled}" Margin="0,0,8,0"
+                              VerticalAlignment="Center" ToolTip.Tip="停用后不扫描该目录" />
+                    <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2" VerticalAlignment="Center"
+                                MinWidth="0" Margin="0,0,8,0">
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12"
+                                 TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                 ToolTip.Tip="{Binding DisplayName}" />
+                      <TextBlock Text="{Binding RootPath}" Classes="secondary" FontSize="11"
+                                 TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                 ToolTip.Tip="{Binding RootPath}" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="0" Grid.Column="2" Orientation="Horizontal" Spacing="6"
+                                VerticalAlignment="Center">
+                      <Button Content="打开" Classes="ghost" FontSize="11" Padding="7,2" MinHeight="24"
+                              Tag="{Binding}" Click="OnOpenSource" />
+                      <Button Content="移除" Classes="ghost" FontSize="11" Padding="7,2" MinHeight="24"
+                              Tag="{Binding}" Click="OnRemoveSource" />
+                    </StackPanel>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding StatusText}"
+                               Classes="muted" FontSize="10" Margin="0,4,0,0"
+                               IsVisible="{Binding IsMissing}" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="添加数据源" Click="OnAddSource" />
+            <Button Content="打开数据目录" Click="OnOpenDataDirectory" />
+          </StackPanel>
+        </StackPanel>
+
+        <StackPanel Spacing="8">
+          <TextBlock Text="外观" FontWeight="SemiBold" FontSize="14" />
+          <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto" RowSpacing="10">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="主题" Classes="secondary" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="0" Grid.Column="1" Width="180" HorizontalAlignment="Left"
+                      ItemsSource="{Binding ThemeLabels}" SelectedIndex="{Binding ThemeIndex}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="阅读背景" Classes="secondary" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="1" Grid.Column="1" Width="180" HorizontalAlignment="Left"
+                      ItemsSource="{Binding BackgroundLabels}" SelectedIndex="{Binding BackgroundIndex}" />
+          </Grid>
+        </StackPanel>
+
+        <StackPanel Spacing="8">
+          <TextBlock Text="阅读" FontWeight="SemiBold" FontSize="14" />
+          <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="默认模式" Classes="secondary" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="0" Grid.Column="1" Width="180" HorizontalAlignment="Left"
+                      ItemsSource="{Binding ModeLabels}" SelectedIndex="{Binding ModeIndex}" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="默认适应" Classes="secondary" VerticalAlignment="Center" />
+            <ComboBox Grid.Row="1" Grid.Column="1" Width="180" HorizontalAlignment="Left"
+                      ItemsSource="{Binding FitLabels}" SelectedIndex="{Binding FitIndex}" />
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="阅读方向" Classes="secondary" VerticalAlignment="Center" />
+            <CheckBox Grid.Row="2" Grid.Column="1" Content="从右到左（日漫）" IsChecked="{Binding RightToLeft}" />
+          </Grid>
+        </StackPanel>
+
+        <StackPanel Spacing="8">
+          <TextBlock Text="性能与缓存" FontWeight="SemiBold" FontSize="14" />
+          <Grid ColumnDefinitions="150,*,70" RowDefinitions="Auto,Auto" RowSpacing="12">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="单张解码上限" Classes="secondary" VerticalAlignment="Center" />
+            <Slider Grid.Row="0" Grid.Column="1" Minimum="4" Maximum="96" TickFrequency="4"
+                    IsSnapToTickEnabled="True" Value="{Binding MaxMegapixels}" VerticalAlignment="Center" />
+            <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding MaxMegapixelsLabel}" Classes="caption"
+                       VerticalAlignment="Center" HorizontalAlignment="Right" />
+            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Classes="muted" FontSize="11"
+                       TextWrapping="Wrap"
+                       Text="封面与页面按卡片/视口尺寸解码，只保留当前页与预取页；不建立全局位图缓存。" />
+          </Grid>
+        </StackPanel>
+
+        <StackPanel Spacing="8">
+          <TextBlock Text="维护" FontWeight="SemiBold" FontSize="14" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button Content="清除扫描缓存" Click="OnResetCache" />
+            <TextBlock Classes="muted" FontSize="11" Text="下次启动会重新扫描（不修改资料库）"
+                       VerticalAlignment="Center" />
+          </StackPanel>
+        </StackPanel>
+        </StackPanel>
+      </Border>
+    </ScrollViewer>
+
+    <Border Grid.Row="1" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" Padding="20,14">
+      <Grid ColumnDefinitions="*,Auto,Auto">
+        <TextBlock Classes="muted" FontSize="11" Text="{Binding DataDirectory}" VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis" />
+        <Button Grid.Column="1" Content="取消" Click="OnCancel" Margin="0,0,8,0" />
+        <Button Grid.Column="2" Content="保存" Classes="primary" Click="OnSave" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

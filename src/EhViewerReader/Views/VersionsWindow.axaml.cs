@@ -1,0 +1,65 @@
+using System.Diagnostics;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using EhViewerReader.Core.Models;
+using EhViewerReader.ViewModels;
+
+namespace EhViewerReader.Views;
+
+public partial class VersionsWindow : Window
+{
+    private readonly VersionsViewModel? _viewModel;
+
+    public VersionsWindow()
+    {
+        InitializeComponent();
+        Icon = AppIcons.Window;
+        Avalonia.Media.RenderOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
+    }
+
+    public VersionsWindow(VersionsViewModel viewModel) : this()
+    {
+        _viewModel = viewModel;
+        DataContext = viewModel;
+    }
+
+    /// <summary>Copy the user chose to read; null when the dialog was just closed.</summary>
+    public GalleryInfo? ReadVersion => _viewModel?.ReadVersion;
+
+    /// <summary>Copy the user marked as the default for this work.</summary>
+    public GalleryInfo? DefaultVersion => _viewModel?.DefaultVersion;
+
+    private void OnRead(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null || sender is not Button { Tag: GalleryVersionViewModel version }) return;
+        _viewModel.ReadVersion = version.Info;
+        Close();
+    }
+
+    private void OnSetDefault(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null || sender is not Button { Tag: GalleryVersionViewModel version }) return;
+        _viewModel.DefaultVersion = version.Info;
+        Close();
+    }
+
+    private void OnOpenFolder(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: GalleryVersionViewModel version }) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = "\"" + version.FolderPath + "\"",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            Services.AppServices.Current?.Log.Warn("Open version folder failed", ex);
+        }
+    }
+
+    private void OnClose(object? sender, RoutedEventArgs e) => Close();
+}

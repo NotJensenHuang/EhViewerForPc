@@ -1,0 +1,56 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Windows are created with DI constructors, never through the runtime XAML
+         loader; AVLN3001 is a false positive for these three windows. -->
+    <NoWarn>$(NoWarn);AVLN3001</NoWarn>
+    <!-- NativeAOT: dotnet publish -c Release -r win-x64 -p:PublishAot=true.
+         JSON persistence uses source-generated contexts (StorageJsonContext /
+         ReaderJsonContext); no reflection-based serialization on runtime paths. -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <Platforms>AnyCPU;x64</Platforms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Win32" />
+    <PackageReference Include="Avalonia.Skia" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Controls.ItemsRepeater" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="Avalonia.Diagnostics">
+      <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
+      <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EhViewerReader.Core\EhViewerReader.Core.csproj" />
+  </ItemGroup>
+
+  <!-- NativeAOT linking needs the Windows SDK import libraries. Some Visual
+       Studio installations ship the headers without the x64 .lib files, which
+       makes link.exe fail with LNK1181; the SDK NuGet package supplies them.
+       These assets are build-time only and are never copied to the output. -->
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+    <PackageReference Include="Microsoft.Windows.SDK.CPP.x64" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+    <AdditionalNativeLibraryDirectories Include="$(PkgMicrosoft_Windows_SDK_CPP_x64)\c\um\x64" />
+    <AdditionalNativeLibraryDirectories Include="$(PkgMicrosoft_Windows_SDK_CPP_x64)\c\ucrt\x64" />
+  </ItemGroup>
+</Project>

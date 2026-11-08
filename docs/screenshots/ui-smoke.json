@@ -1,0 +1,82 @@
+{
+  "syntheticLibrary": "C:\\Users\\90684\\AppData\\Local\\Temp\\EhReaderSmokeLib-48f4c0d8c4774711ab9ac82338b5d26c",
+  "galleries": 31,
+  "filtered": 31,
+  "status": "31 \u4E2A\u4F5C\u54C1 \u00B7 194 \u9875 \u00B7 0.0s\uFF08\u7F13\u5B58 0\uFF09",
+  "layout": {
+    "window": "0,0 1200x700",
+    "content": "0,0 1200x700",
+    "scaling": 1.5,
+    "screen": "bounds 0, 0, 3840, 2160 \u00B7 work 0, 0, 3840, 2088 \u00B7 scale 1.5"
+  },
+  "windowIcon": true,
+  "libraryLayout": "28,23 20x18  EH\n66,16 156x17  EhViewer \u672C\u5730\u6F2B\u753B\u9605\u8BFB\u5668\n66,35 156x13  \u53EA\u8BFB\u8D44\u6599\u5E93 \u00B7 \u79BB\u7EBF\u8BFB\u53D6\n253,23 0x0  \u641C\u7D22\u6807\u9898\u3001\u6587\u4EF6\u5939\u6216 GID\uFF08Ctrl\u002BF\uFF09\n253,23 668x17  \u641C\u7D22\u6807\u9898\u3001\u6587\u4EF6\u5939\u6216 GID\uFF08Ctrl\u002BF\uFF09\n242,16 0x0  Button:\u6E05\u9664\n955,24 66x16  \u6700\u8FD1\u9605\u8BFB\n1071,17 51x31  Button:\u5237\u65B0\n1084,24 24x16  \u5237\u65B0\n1129,17 51x31  Button:\u8BBE\u7F6E\n1143,24 24x16  \u8BBE\u7F6E\n20,75 51x29  Button:\u5168\u90E8\n33,81 24x16  \u5168\u90E8\n79,75 51x29  Button:\u5728\u8BFB\n92,81 24x16  \u5728\u8BFB\n137,75 51x29  Button:\u672A\u8BFB\n151,81 24x16  \u672A\u8BFB\n196,75 51x29  Button:\u5DF2\u8BFB\n209,81 24x16  \u5DF2\u8BFB\n255,75 51x29  Button:\u6536\u85CF\n268,81 24x16  \u6536\u85CF\n313,75 63x29  Button:\u4E0D\u5B8C\u6574\n327,81 36x16  \u4E0D\u5B8C\u6574\n1068,81 70x16  \u5168\u90E8\u8BED\u8A00\n46,139 19x13  0 \u9875\n184,139 30x13  \u65E0\u56FE\u7247\n31,129 0x0  \u2665 \u6536\u85CF\n30,391 0x0  0%\n31,403 197x40  [Chinese] \u7A7A\u6837\u672C\n31,444 46x14  #910000\n83,444 22x14  \u4E2D\u6587\n207,444 22x14  \u672A\u8BFB\n280,139 19x13  9 \u9875\n399,139 49x13  1 \u4E2A\u635F\u574F\u9875\n265,129 0x0  \u2665 \u6536\u85CF\n264,391 0x0  0%\n265,403 197x40  [English] \u5408\u6210\u6837\u672C 30\n265,444 46x14  #900029\n317,444 22x14  \u82F1\u6587\n441,444 22x14  \u672A\u8BFB\n514,139 19x13  8 \u9875\n499,129 0x0  \u2665 \u6536\u85CF\n498,391 0x0  0%\n499,403 197x40  [English] \u91CD\u590D GID \u6837\u672C\n499,444 46x14  #900000\n551,444 22x14  \u82F1\u6587\n675,444 22x14  \u672A\u8BFB\n748,139 19x13  7 \u9875\n733,129 0x0  \u2665 \u6536\u85CF\n732,391 0x0  0%\n733,403 197x40  \u65E0 GID \u5408\u6210\u6837\u672C\n733,444 46x14  #900027\n909,444 22x14  \u672A\u8BFB\n982,139 29x13  5/6 \u9875\n1130,139 20x13  \u7F3A\u9875\n967,129 0x0  \u2665 \u6536\u85CF\n966,391 0x0  0%\n967,403 197x40  [Japanese] \u5408\u6210\u6837\u672C 27\n967,444 46x14  #900026\n1019,444 22x14  \u65E5\u6587\n1143,444 22x14  \u672A\u8BFB\n46,505 19x13  5 \u9875\n31,495 0x0  \u2665 \u6536\u85CF\n30,757 0x0  0%\n31,769 197x40  [English] \u5408\u6210\u6837\u672C 26\n31,810 46x14  #900025\n83,810 22x14  \u82F1\u6587\n207,810 22x14  \u672A\u8BFB\n280,505 19x13  4 \u9875\n265,495 0x0  \u2665 \u6536\u85CF\n264,757 0x0  0%\n265,769 197x40  [Chinese] \u5408\u6210\u6837\u672C 25\n265,810 46x14  #900024\n317,810 22x14  \u4E2D\u6587\n441,810 22x14  \u672A\u8BFB\n514,505 19x13  9 \u9875\n499,495 0x0  \u2665 \u6536\u85CF\n498,757 0x0  0%\n499,769 197x40  [Chinese] [Digital] \u5408\u6210\u6837\u672C 24\n499,810 46x14  #900023",
+  "statusBar": "0,664 1200x36",
+  "libraryScroll": "0,0 1200x553",
+  "uiTree": "MainWindow\n  Panel\n    Border\n    Border\n    Panel\n    VisualLayerManager\n      ChromeOverlayLayer\n        TitleBar\n      ContentPresenter\n        Grid",
+  "searchMatches": 1,
+  "backupLibrary": "C:\\Users\\90684\\AppData\\Local\\Temp\\EhReaderSmokeBackup-2d304e3d61a14450a876a3cacc7ecdd3",
+  "multiSource": {
+    "sources": 2,
+    "works": 31,
+    "multiVersionCards": 3,
+    "copies": 7,
+    "addError": null,
+    "allShareWorkId": true,
+    "distinctStableIds": true
+  },
+  "firstCardBadge": "2 \u9875 width=19",
+  "firstCardBadgeOk": true,
+  "emptyBadges": "none",
+  "versionsWindow": {
+    "rows": 3,
+    "summary": "3 \u4E2A\u7248\u672C \u00B7 2 \u4E2A\u6570\u636E\u6E90",
+    "defaultSource": "EhReaderSmokeLib-48f4c0d8c4774711ab9ac82338b5d26c",
+    "pageCounts": [
+      8,
+      4,
+      2
+    ]
+  },
+  "readerPage": "1 / 9",
+  "readerLayout": "12,9 64x30  Button:\u2190 \u8FD4\u56DE\n24,17 40x16  \u2190 \u8FD4\u56DE\n88,8 133x17  [English] \u5408\u6210\u6837\u672C 30\n88,27 33x14  1 / 9\n129,27 308x14  EhReaderSmokeLib-48f4c0d8c47\u2026\n795,9 51x29  Button:\u5355\u9875\n809,16 24x16  \u5355\u9875\n854,9 51x29  Button:\u8FDE\u7EED\n867,16 24x16  \u8FDE\u7EED\n923,16 54x16  \u9002\u5E94\u9875\u9762\n1027,9 63x31  Button:\u53F3\u2192\u5DE6\n1040,16 36x16  \u53F3\u2192\u5DE6\n1097,9 51x31  Button:\u5168\u5C4F\n1111,16 24x16  \u5168\u5C4F\n0,50 0x0  \u6B63\u5728\u6D4B\u91CF\u9875\u9762\u5C3A\u5BF8\n0,50 0x0  \u8FDE\u7EED\u9605\u8BFB\u9700\u8981\u9875\u9762\u9AD8\u5EA6\uFF0C\u9996\u6B21\u6253\u5F00\u4F1A\u7F13\u5B58\u5230\u672C\u5730\u3002\n12,651 63x31  Button:\u4E0A\u4E00\u9875\n25,659 36x16  \u4E0A\u4E00\u9875\n85,657 0x20  Button:\n105,657 921x20  Button:\n1035,651 63x31  Button:\u4E0B\u4E00\u9875\n1049,659 36x16  \u4E0B\u4E00\u9875\n1112,660 36x14  1 / 9",
+  "continuousItems": 9,
+  "progressRestore": {
+    "expected": "2 / 9",
+    "restored": "2 / 9",
+    "ok": true
+  },
+  "readerWindow": {
+    "nonModal": true,
+    "mainWindowEnabled": true,
+    "singleWindowPerGallery": true,
+    "readerPage": "1 / 8",
+    "offsetBefore": 640,
+    "offsetAfter": 640,
+    "scrollStable": true,
+    "orderStable": true
+  },
+  "corruptPageWheel": {
+    "page": "3 / 9",
+    "after": "4 / 9",
+    "handled": true,
+    "ok": true
+  },
+  "stress": {
+    "galleries": 6315,
+    "scanSeconds": 0.61,
+    "realizedContainers": 26,
+    "realizedAfterScroll": 26,
+    "extentHeight": 577560,
+    "error": null
+  },
+  "elapsedSeconds": 28.34,
+  "screenshots": [
+    "library.png",
+    "library-search.png",
+    "details.png",
+    "reader-single.png",
+    "reader-continuous.png",
+    "settings.png"
+  ]
+}

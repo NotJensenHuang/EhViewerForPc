@@ -1,0 +1,20 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EhViewerReader.App"
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <ResourceDictionary>
+      <Color x:Key="SystemAccentColor">#FF6B81</Color>
+      <Color x:Key="SystemAccentColorLight1">#FF8A9B</Color>
+      <Color x:Key="SystemAccentColorLight2">#FFA6B3</Color>
+      <Color x:Key="SystemAccentColorLight3">#FFC2CA</Color>
+      <Color x:Key="SystemAccentColorDark1">#E2556B</Color>
+      <Color x:Key="SystemAccentColorDark2">#C2465B</Color>
+      <Color x:Key="SystemAccentColorDark3">#A2384B</Color>
+    </ResourceDictionary>
+  </Application.Resources>
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://EhViewerReader/Styles/Theme.axaml" />
+  </Application.Styles>
+</Application>

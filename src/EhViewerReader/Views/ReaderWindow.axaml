@@ -1,0 +1,110 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerReader.ViewModels"
+        xmlns:controls="using:EhViewerReader.Controls"
+        xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
+        xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
+        mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="860"
+        x:Class="EhViewerReader.Views.ReaderWindow"
+        x:DataType="vm:ReaderViewModel"
+        Title="{Binding Title}"
+        Width="1160" Height="700" MinWidth="720" MinHeight="520"
+        Background="{Binding BackgroundBrush}"
+        WindowStartupLocation="CenterOwner">
+  <Grid RowDefinitions="Auto,*,Auto" Background="{Binding BackgroundBrush}">
+    <Border Grid.Row="0" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,0,0,1" Padding="12,8">
+      <Grid ColumnDefinitions="Auto,12,*,Auto,8,Auto,8,Auto,8,Auto,8,Auto">
+        <Button Grid.Column="0" Content="← 返回" Classes="ghost" Click="OnBack" />
+
+        <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="1">
+          <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold"
+                     HorizontalAlignment="Left" TextTrimming="CharacterEllipsis" MaxWidth="560" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="{Binding PageLabel}" Classes="caption" FontFamily="{DynamicResource AppMonoFont}" />
+            <TextBlock Text="{Binding SourceText}" Classes="caption" IsVisible="{Binding HasSourceText}"
+                       ToolTip.Tip="此作品当前打开的数据源副本" />
+            <TextBlock Text="{Binding OriginalPageLabel}" Classes="caption" IsVisible="{Binding OriginalPageLabel, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <TextBlock Text="{Binding MissingSummary}" Classes="caption" Foreground="{DynamicResource AppWarningBrush}" />
+          </StackPanel>
+        </StackPanel>
+
+        <Button Grid.Column="3" Content="单页" Classes="chip" Classes.active="{Binding IsSingleMode}" Click="OnSingleMode" ToolTip.Tip="单页模式（M）" />
+        <Button Grid.Column="5" Content="连续" Classes="chip" Classes.active="{Binding IsContinuousMode}" Click="OnContinuousMode" ToolTip.Tip="连续模式（M）" />
+
+        <ComboBox Grid.Column="7" Width="106" ItemsSource="{Binding FitOptions}" SelectedItem="{Binding SelectedFit}">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:FitOption">
+              <TextBlock Text="{Binding Label}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <Button Grid.Column="9" Content="{Binding DirectionLabel}" Click="OnToggleDirection" ToolTip.Tip="切换阅读方向（D）" />
+        <Button Grid.Column="11" Content="全屏" Click="OnToggleFullscreen" ToolTip.Tip="全屏（F11）" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1">
+      <controls:ZoomPanView x:Name="SingleView"
+                           IsVisible="{Binding IsSingleMode}"
+                           Request="{Binding SingleRequest}"
+                           PreloadRequest="{Binding PreloadRequest}"
+                           FitMode="{Binding FitMode}"
+                           RightToLeft="{Binding RightToLeft}"
+                           MaxMegapixels="{Binding MaxMegapixels}"
+                           MaxDimension="{Binding MaxDimension}"
+                           PageTurnRequested="OnPageTurnRequested" />
+
+      <ScrollViewer x:Name="ContinuousScroll"
+                    IsVisible="{Binding IsContinuousMode}"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled"
+                    Padding="0,8,0,24"
+                    ScrollChanged="OnScrollChanged">
+        <ir:ItemsRepeater ItemsSource="{Binding ContinuousItems}">
+          <ir:ItemsRepeater.Layout>
+            <layout:StackLayout Spacing="12" />
+          </ir:ItemsRepeater.Layout>
+          <ir:ItemsRepeater.ItemTemplate>
+            <DataTemplate x:DataType="vm:ContinuousPageItem">
+              <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
+                      HorizontalAlignment="Center" Background="{DynamicResource AppBgAltBrush}">
+                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" />
+              </Border>
+            </DataTemplate>
+          </ir:ItemsRepeater.ItemTemplate>
+        </ir:ItemsRepeater>
+      </ScrollViewer>
+
+      <Border Classes="panel" Padding="22,16" HorizontalAlignment="Center" VerticalAlignment="Center"
+              IsVisible="{Binding IsLoadingDimensions}" Width="380">
+        <StackPanel Spacing="10">
+          <TextBlock Text="正在测量页面尺寸" FontWeight="SemiBold" />
+          <ProgressBar Minimum="0" Maximum="100" Value="{Binding DimensionProgress}" Height="6" />
+          <TextBlock Classes="muted" FontSize="11"
+                     Text="连续阅读需要页面高度，首次打开会缓存到本地。" />
+        </StackPanel>
+      </Border>
+
+      <Border Background="#CC000000" CornerRadius="8" Padding="14,8" HorizontalAlignment="Center"
+              VerticalAlignment="Top" Margin="0,14,0,0" IsVisible="{Binding ShowRestoreHint}">
+        <TextBlock Text="{Binding RestoreHint}" Foreground="#F2F4F8" FontSize="12" />
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,1,0,0" Padding="12,8">
+      <Grid ColumnDefinitions="Auto,10,*,10,Auto,14,Auto">
+        <Button Grid.Column="0" Content="上一页" Command="{Binding PrevPageCommand}" />
+        <Slider Grid.Column="2" Minimum="1" Maximum="{Binding SliderMaximum}" Value="{Binding SliderValue}"
+                VerticalAlignment="Center" IsEnabled="{Binding HasPages}" />
+        <Button Grid.Column="4" Content="下一页" Command="{Binding NextPageCommand}" />
+        <TextBlock Grid.Column="6" Text="{Binding PageLabel}" Classes="secondary" FontSize="12"
+                   FontFamily="{DynamicResource AppMonoFont}" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>
