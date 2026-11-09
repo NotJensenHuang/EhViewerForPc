@@ -227,7 +227,7 @@ public sealed class AsyncImage : Control
                     StartAnimation(image, generation, token);
                 }
 
-                _retiredBitmap?.Dispose();
+                AnimationFramePool.Release(_retiredBitmap);
                 _retiredBitmap = previous;
                 InvalidateVisual();
             }, DispatcherPriority.Background);
@@ -272,7 +272,7 @@ public sealed class AsyncImage : Control
                 _animated = next;
                 if (old is not null)
                 {
-                    Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+                    Dispatcher.UIThread.Post(() => AnimationFramePool.Release(old), DispatcherPriority.Background);
                 }
 
                 InvalidateVisual();
@@ -283,7 +283,7 @@ public sealed class AsyncImage : Control
 
     private void RetireCurrent()
     {
-        _retiredBitmap?.Dispose();
+        AnimationFramePool.Release(_retiredBitmap);
         _retiredBitmap = _bitmap;
         _bitmap = null;
     }
@@ -296,7 +296,7 @@ public sealed class AsyncImage : Control
         _cancellation?.Dispose();
         _cancellation = null;
         RetireCurrent();
-        _retiredBitmap?.Dispose();
+        AnimationFramePool.Release(_retiredBitmap);
         _retiredBitmap = null;
         _lastSourceKey = null;
         _loading = false;

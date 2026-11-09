@@ -29,6 +29,19 @@ public partial class App : Application
 
             StartupOptions options = StartupOptions.Current ?? new StartupOptions();
             options.EnsureIsolatedDataDirectory();
+            if (!string.IsNullOrWhiteSpace(options.AnimProbe))
+            {
+                // Diagnostic mode: measure one animated file, no window at all.
+                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                Dispatcher.UIThread.Post(async () =>
+                {
+                    int code = await AnimationProbe.RunAsync(options.AnimProbe!, options.OutputPath, options.DumpFrames);
+                    desktop.Shutdown(code);
+                });
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+
             if (options.SelfTest)
             {
                 Dispatcher.UIThread.Post(async () =>

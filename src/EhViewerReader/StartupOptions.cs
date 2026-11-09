@@ -13,6 +13,12 @@ public sealed class StartupOptions
     public string? DataDirectory { get; private set; }
     public string? OutputPath { get; private set; }
     public string? ProbeFile { get; private set; }
+
+    /// <summary>File measured by the animation probe; no window is created.</summary>
+    public string? AnimProbe { get; private set; }
+
+    /// <summary>Optional directory the animation probe writes sample frames to.</summary>
+    public string? DumpFrames { get; private set; }
     public bool SelfTest { get; private set; }
     public bool UiSmoke { get; private set; }
     public bool SkipSnapshot { get; private set; }
@@ -49,6 +55,12 @@ public sealed class StartupOptions
                     break;
                 case "--probe-file":
                     options.ProbeFile = Next(args, ref i);
+                    break;
+                case "--anim-probe":
+                    options.AnimProbe = Next(args, ref i);
+                    break;
+                case "--dump-frames":
+                    options.DumpFrames = Next(args, ref i);
                     break;
                 case "--self-test":
                     options.SelfTest = true;

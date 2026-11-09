@@ -340,6 +340,34 @@ public static class UiSmokeService
             gifFrame1?.Dispose();
             gif?.Dispose();
 
+            // Per-frame decode cost. Frames of a "dirty rect" GIF depend on their
+            // predecessor, so this separates "decoding is slow" from "presenting
+            // is slow" when the animation stutters.
+            var decodeTimes = new List<double>();
+            AnimationCursor? decodeCursor = decoder.TryOpenAnimationCursor(gifPath, null, null, 24, 16000);
+            if (decodeCursor is not null)
+            {
+                for (int i = 1; i < decodeCursor.FrameCount; i++)
+                {
+                    var frameWatch = Stopwatch.StartNew();
+                    DecodedImage? frame = await decodeCursor.DecodeFrameAsync(i, CancellationToken.None);
+                    frameWatch.Stop();
+                    decodeTimes.Add(Math.Round(frameWatch.Elapsed.TotalMilliseconds, 1));
+                    frame?.Dispose();
+                }
+
+                decodeCursor.Dispose();
+            }
+
+            report["gifDecodeProbe"] = new
+            {
+                frames = decodeTimes.Count,
+                avgMs = decodeTimes.Count > 0 ? Math.Round(decodeTimes.Average(), 1) : 0,
+                maxMs = decodeTimes.Count > 0 ? decodeTimes.Max() : 0,
+                lastMs = decodeTimes.Count > 0 ? decodeTimes[^1] : 0,
+                perFrame = decodeTimes,
+            };
+
             var gifViewModel = new ReaderViewModel(viewModel.Services, gifInfo);
             var gifReader = new ReaderWindow(gifViewModel)
             {
@@ -358,18 +386,54 @@ public static class UiSmokeService
 
             // Each applied frame is a NEW DecodedImage object (FrameIndex is
             // immutable), so re-read the control's current session every time.
-            var samples = new List<int>();
-            for (int i = 0; i < 6; i++)
+            //
+            // Frame-pacing and stall regression: the synthetic GIF declares 60 ms
+            // per frame (16 fps). observedFps catches "runs too slow", maxGapMs
+            // catches "freezes for a while in the middle".
+            var sampledFrames = new List<int>();
+            var sampleWatch = Stopwatch.StartNew();
+            int transitions = 0;
+            long maxGapMs = 0;
+            long lastChangeMs = 0;
+            int previousFrame = singleView?.AnimatedImageForTest?.FrameIndex ?? -1;
+            while (sampleWatch.ElapsedMilliseconds < 3000)
             {
-                samples.Add(singleView?.AnimatedImageForTest?.FrameIndex ?? -1);
-                await Task.Delay(80);
+                int frame = singleView?.AnimatedImageForTest?.FrameIndex ?? -1;
+                long nowMs = sampleWatch.ElapsedMilliseconds;
+                if (previousFrame >= 0 && frame >= 0 && frame != previousFrame)
+                {
+                    transitions++;
+                    if (lastChangeMs > 0)
+                    {
+                        long gap = nowMs - lastChangeMs;
+                        if (gap > maxGapMs) maxGapMs = gap;
+                    }
+
+                    lastChangeMs = nowMs;
+                }
+
+                previousFrame = frame;
+                if (sampledFrames.Count < 24) sampledFrames.Add(frame);
+                await Task.Delay(20);
             }
 
+            double observedSeconds = Math.Max(0.001, sampleWatch.Elapsed.TotalSeconds);
+            double observedFps = Math.Round(transitions / observedSeconds, 1);
+            const int declaredFps = 16; // 60 ms per frame, rounded down
             report["readerAnimation"] = new
             {
                 hasSession = (singleView?.AnimatedImageForTest) is not null,
-                samples,
-                advancing = samples.Distinct().Count() >= 2,
+                frameCount = singleView?.AnimatedImageForTest?.FrameCount ?? 0,
+                samples = sampledFrames,
+                transitions,
+                observedFps,
+                declaredFps,
+                maxGapMs,
+                // A frame is skipped only when its decode overruns its own
+                // duration; a gap of several periods is a visible freeze.
+                pacingOk = observedFps >= declaredFps * 0.8,
+                noStall = maxGapMs < 400,
+                advancing = transitions >= 2,
                 stopReason = singleView?.AnimationStopReason,
             };
             SaveScreenshot(gifReader, Path.Combine(output, "reader-animated.png"));
@@ -704,10 +768,11 @@ public static class UiSmokeService
                 if (i == 0 && page == 2)
                 {
                     // Animated GIF regression page: the reader must play frames,
-                    // not freeze on the first one.
+                    // not freeze on the first one. Sized so a per-frame full
+                    // re-decode is expensive enough for the pacing check to see.
                     File.WriteAllBytes(
                         Path.Combine(folder, $"{page:00000000}.gif"),
-                        RenderAnimatedGif(320, 480));
+                        RenderAnimatedGif(1280, 1800));
                     continue;
                 }
 
@@ -734,11 +799,22 @@ public static class UiSmokeService
         Directory.CreateDirectory(Path.Combine(root, new string('a', 64) + ".tmp"));
     }
 
-    private static byte[] RenderAnimatedGif(int width, int height)
+    private static byte[] RenderAnimatedGif(int width, int height) =>
+        RenderAnimatedGif(width, height, frameCount: 30, delayCentiseconds: 6, dirtyRects: true);
+
+    /// <summary>
+    /// Multi-frame GIF89a written by hand so the smoke test does not depend on an
+    /// encoder that SkiaSharp does not provide for multi-frame formats.
+    ///
+    /// <paramref name="dirtyRects"/> produces the shape real web GIFs have: a
+    /// transparent frame that only paints a small moving square on top of the
+    /// previous frame (disposal = "do not dispose"). Every frame is therefore
+    /// dependent on its predecessor, which is what makes per-frame re-decoding
+    /// from frame 0 expensive.
+    /// </summary>
+    private static byte[] RenderAnimatedGif(
+        int width, int height, int frameCount, int delayCentiseconds, bool dirtyRects = false)
     {
-        // Two-frame GIF89a (red -> blue, 100 ms per frame, loop forever) written
-        // by hand so the smoke test does not depend on an encoder that SkiaSharp
-        // does not provide for multi-frame formats.
         using var ms = new MemoryStream();
         using (var writer = new BinaryWriter(ms, System.Text.Encoding.ASCII, leaveOpen: true))
         {
@@ -753,12 +829,73 @@ public static class UiSmokeService
             writer.Write(System.Text.Encoding.ASCII.GetBytes("NETSCAPE2.0"));
             writer.Write(new byte[] { 0x03, 0x01, 0x00, 0x00, 0x00 }); // loop forever
 
-            WriteGifFrame(writer, width, height, 2, 10);
-            WriteGifFrame(writer, width, height, 3, 10);
+            if (dirtyRects)
+            {
+                // Opaque base frame, then transparent bands scrolling down.
+                WriteGifFrame(writer, width, height, 1, delayCentiseconds);
+                int band = Math.Max(8, height / 40);
+                for (int i = 1; i < frameCount; i++)
+                {
+                    int top = (int)((long)i * band % Math.Max(1, height - band));
+                    byte color = (byte)(2 + i % 2);
+                    WriteGifBand(writer, width, top, band, color, delayCentiseconds);
+                }
+            }
+            else
+            {
+                for (int i = 0; i < frameCount; i++)
+                {
+                    byte color = (byte)(2 + i % 2);
+                    WriteGifFrame(writer, width, height, color, delayCentiseconds);
+                }
+            }
+
             writer.Write((byte)0x3B); // trailer
         }
 
         return ms.ToArray();
+    }
+
+    /// <summary>
+    /// One transparent frame that only paints a band: the image descriptor covers
+    /// a sub-rectangle, the rest of the pixels are the transparent index, and the
+    /// graphic control extension leaves the previous frame in place.
+    /// </summary>
+    private static void WriteGifBand(
+        BinaryWriter writer, int width, int top, int height, byte colorIndex, int delayCentiseconds)
+    {
+        writer.Write(new byte[] { 0x21, 0xF9, 0x04, 0x05 }); // GCE: disposal=1, transparency on
+        writer.Write((ushort)delayCentiseconds);
+        writer.Write(new byte[] { 0x00, 0x00 });             // transparent color index = 0
+        writer.Write((byte)0x2C);                            // image descriptor
+        writer.Write((ushort)0);
+        writer.Write((ushort)top);
+        writer.Write((ushort)width);
+        writer.Write((ushort)height);
+        writer.Write((byte)0x00);
+        writer.Write((byte)2); // LZW min code size (4-color palette)
+
+        var pixels = new byte[width * height];
+        int idx = 0;
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                // Mostly transparent; a diagonal stripe carries the colour so the
+                // frame is not a solid block (closer to real delta frames).
+                pixels[idx++] = (x + y) % 5 < 3 ? colorIndex : (byte)0;
+            }
+        }
+
+        byte[] lzw = GifLzwEncode(pixels);
+        for (int offset = 0; offset < lzw.Length; offset += 255)
+        {
+            int chunk = Math.Min(255, lzw.Length - offset);
+            writer.Write((byte)chunk);
+            writer.Write(lzw, offset, chunk);
+        }
+
+        writer.Write((byte)0x00);
     }
 
     private static void WriteGifFrame(BinaryWriter writer, int width, int height, byte colorIndex, int delayCentiseconds)

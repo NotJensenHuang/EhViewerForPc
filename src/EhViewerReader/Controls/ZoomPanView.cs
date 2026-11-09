@@ -163,8 +163,9 @@ public sealed class ZoomPanView : Control
         // The render thread may still hold a reference for one frame.
         Dispatcher.UIThread.Post(() =>
         {
-            current?.Dispose();
-            retired?.Dispose();
+            // Pool-backed animation frames must go back to the pool, not the GC.
+            AnimationFramePool.Release(current);
+            AnimationFramePool.Release(retired);
             preloaded?.Dispose();
         }, DispatcherPriority.Background);
         base.OnDetachedFromVisualTree(e);
@@ -252,7 +253,7 @@ public sealed class ZoomPanView : Control
 
     private void RetireCurrent()
     {
-        _retiredBitmap?.Dispose();
+        AnimationFramePool.Release(_retiredBitmap);
         _retiredBitmap = _bitmap;
         _bitmap = null;
     }
@@ -391,8 +392,9 @@ public sealed class ZoomPanView : Control
                 _animated = next;
                 if (old is not null)
                 {
-                    // The render thread may still reference the previous frame.
-                    Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+                    // The render thread may still reference the previous frame;
+                    // pooled frame buffers are recycled instead of collected.
+                    Dispatcher.UIThread.Post(() => AnimationFramePool.Release(old), DispatcherPriority.Background);
                 }
 
                 InvalidateVisual();

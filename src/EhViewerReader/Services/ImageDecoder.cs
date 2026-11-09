@@ -34,6 +34,7 @@ public sealed class DecodedImage : IDisposable
     internal int TargetHeight { get; init; }
     internal int MaxMegapixels { get; init; }
     internal int MaxDimension { get; init; }
+    private bool _disposed;
 
     /// <summary>
     /// Decodes the next animation frame with the same scaling parameters as the
@@ -48,7 +49,18 @@ public sealed class DecodedImage : IDisposable
             Path, next, TargetWidth, TargetHeight, MaxMegapixels, MaxDimension, cancellationToken);
     }
 
-    public void Dispose() => Bitmap.Dispose();
+    /// <summary>True when the bitmap is borrowed from <see cref="AnimationFramePool"/>.</summary>
+    internal bool IsPooled { get; init; }
+
+    /// <summary>Releases the frame. Pooled frames go back to the pool; everything
+    /// else is disposed. Safe to call twice.</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (IsPooled) AnimationFramePool.Release(Bitmap);
+        else Bitmap.Dispose();
+    }
 }
 
 public sealed record DecodeFailure(string Path, string Message)
@@ -150,6 +162,46 @@ public sealed class ImageDecoder : IDisposable
         }
     }
 
+    /// <summary>
+    /// Opens a sequential frame reader for an animated file. Returns null for
+    /// static images and for files Skia cannot open, in which case the caller
+    /// keeps using the one-shot <see cref="DecodeFrameAsync"/> path.
+    /// </summary>
+    public AnimationCursor? TryOpenAnimationCursor(
+        string path,
+        int? targetWidth,
+        int? targetHeight,
+        int maxMegapixels,
+        int maxDimension)
+    {
+        FileStream? stream = null;
+        SKCodec? codec = null;
+        try
+        {
+            stream = OpenRead(path);
+            codec = SKCodec.Create(stream, out SKCodecResult result);
+            if (codec is null || result != SKCodecResult.Success || codec.FrameCount < 2)
+            {
+                codec?.Dispose();
+                stream.Dispose();
+                return null;
+            }
+
+            var cursor = new AnimationCursor(
+                this, path, stream, codec, targetWidth, targetHeight, maxMegapixels, maxDimension);
+            stream = null;
+            codec = null;
+            return cursor;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidOperationException or PathTooLongException)
+        {
+            _log.Warn("Animation cursor open failed: " + path, ex);
+            codec?.Dispose();
+            stream?.Dispose();
+            return null;
+        }
+    }
+
     private DecodedImage DecodeCore(
         string path,
         int? targetWidth,
@@ -168,6 +220,39 @@ public sealed class ImageDecoder : IDisposable
             throw new InvalidOperationException("Unsupported or corrupt image (" + createResult + ").");
         }
 
+        SKBitmap? scratch = null;
+        try
+        {
+            return DecodeFrameWithCodec(
+                codec, path, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken, frameIndex,
+                pooledBuffer: false, ref scratch);
+        }
+        finally
+        {
+            scratch?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Decodes one frame through an already-open codec. Split out so playback can
+    /// keep a single codec alive across frames: opening the stream and letting
+    /// Skia re-parse the container on every frame is pure overhead, and GIF/WebP
+    /// readers are stateful, so a kept codec advances sequentially instead of
+    /// seeking on each request. Callers must not use one codec concurrently;
+    /// <see cref="AnimationCursor"/> serializes access.
+    /// </summary>
+    internal DecodedImage DecodeFrameWithCodec(
+        SKCodec codec,
+        string path,
+        int? targetWidth,
+        int? targetHeight,
+        int maxMegapixels,
+        int maxDimension,
+        CancellationToken cancellationToken,
+        int frameIndex,
+        bool pooledBuffer,
+        ref SKBitmap? scratch)
+    {
         int storedWidth = codec.Info.Width;
         int storedHeight = codec.Info.Height;
         if (storedWidth <= 0 || storedHeight <= 0)
@@ -205,22 +290,29 @@ public sealed class ImageDecoder : IDisposable
                       decodeWidth == finalWidth && decodeHeight == finalHeight;
         long estimatedBytes = (long)decodeWidth * decodeHeight * 4 +
                               (direct ? 0 : (long)finalWidth * finalHeight * 4);
+
+        // Animation frames come from a single sequential cursor: one session has
+        // at most one decode in flight, so the parallel-decode guard would only
+        // make playback wait behind page prefetch (the "freezes mid-way" report).
         SemaphoreSlim gate = estimatedBytes >= LargeImageThresholdBytes ? _largeSemaphore : _normalSemaphore;
-        gate.Wait(cancellationToken);
+        bool gated = !pooledBuffer;
+        if (gated) gate.Wait(cancellationToken);
         try
         {
-            var writeable = new WriteableBitmap(
-                new Avalonia.PixelSize(finalWidth, finalHeight),
-                new Avalonia.Vector(96, 96),
-                PixelFormat.Bgra8888,
-                AlphaFormat.Premul);
+            WriteableBitmap writeable = pooledBuffer
+                ? AnimationFramePool.Rent(finalWidth, finalHeight)
+                : new WriteableBitmap(
+                    new Avalonia.PixelSize(finalWidth, finalHeight),
+                    new Avalonia.Vector(96, 96),
+                    PixelFormat.Bgra8888,
+                    AlphaFormat.Premul);
 
             try
             {
                 if (direct && DecodeIntoFramebuffer(codec, writeable, finalWidth, finalHeight, cancellationToken))
                 {
                     return CreateResult(writeable, path, codec, animated, frameIndex,
-                        finalWidth, finalHeight, targetWidth, targetHeight, maxMegapixels, maxDimension);
+                        finalWidth, finalHeight, targetWidth, targetHeight, maxMegapixels, maxDimension, pooledBuffer);
                 }
 
                 DecodeScaledAndDraw(
@@ -234,19 +326,152 @@ public sealed class ImageDecoder : IDisposable
                     finalWidth,
                     finalHeight,
                     cancellationToken,
-                    options);
+                    options,
+                    ref scratch);
                 return CreateResult(writeable, path, codec, animated, frameIndex,
-                    finalWidth, finalHeight, targetWidth, targetHeight, maxMegapixels, maxDimension);
+                    finalWidth, finalHeight, targetWidth, targetHeight, maxMegapixels, maxDimension, pooledBuffer);
             }
             catch
             {
-                writeable.Dispose();
+                if (pooledBuffer) AnimationFramePool.Release(writeable);
+                else writeable.Dispose();
                 throw;
             }
         }
         finally
         {
-            gate.Release();
+            if (gated) gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Decodes one animation frame into a persistent, already-composed canvas.
+    ///
+    /// GIF/WebP frames are deltas: without telling Skia which frame is already in
+    /// the destination buffer (<see cref="SKCodecOptions.PriorFrame"/>) it has to
+    /// rebuild the frame chain from the start of the file for every request. That
+    /// is what made long animations collapse - on a real 75-frame GIF the cost
+    /// grew from 8 ms at frame 1 to 200 ms at frame 70, so playback stalled
+    /// mid-way. Keeping the canvas and passing the prior frame makes each step a
+    /// delta decode instead of a full replay.
+    /// </summary>
+    internal DecodedImage DecodeAnimationFrame(
+        SKCodec codec,
+        string path,
+        int frameIndex,
+        int? targetWidth,
+        int? targetHeight,
+        int maxMegapixels,
+        int maxDimension,
+        bool pooledBuffer,
+        ref SKBitmap? canvas,
+        ref int canvasFrame,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        int storedWidth = codec.Info.Width;
+        int storedHeight = codec.Info.Height;
+        if (storedWidth <= 0 || storedHeight <= 0)
+        {
+            throw new InvalidOperationException("Image has empty dimensions.");
+        }
+
+        SKEncodedOrigin origin = codec.EncodedOrigin;
+        bool swapped = SwapsDimensions(origin);
+        int orientedWidth = swapped ? storedHeight : storedWidth;
+        int orientedHeight = swapped ? storedWidth : storedHeight;
+
+        (int finalWidth, int finalHeight) = ImageBudget.Compute(
+            orientedWidth, orientedHeight, targetWidth, targetHeight, maxMegapixels, maxDimension);
+
+        float desiredScale = Math.Min(
+            finalWidth / (float)orientedWidth,
+            finalHeight / (float)orientedHeight);
+        SKSizeI scaled = codec.GetScaledDimensions(Math.Clamp(desiredScale, 0.01f, 1f));
+        int decodeWidth = Math.Clamp(scaled.Width, 1, storedWidth);
+        int decodeHeight = Math.Clamp(scaled.Height, 1, storedHeight);
+
+        var info = new SKImageInfo(decodeWidth, decodeHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+        if (canvas is null || canvas.Width != decodeWidth || canvas.Height != decodeHeight)
+        {
+            canvas?.Dispose();
+            canvas = new SKBitmap(info);
+            canvasFrame = -1;
+        }
+
+        // Seeking backwards (loop wrap) invalidates the composed base; the frame
+        // has to be rebuilt from a clean canvas.
+        if (canvasFrame < 0 || frameIndex <= canvasFrame)
+        {
+            canvas.Erase(SKColors.Transparent);
+            canvasFrame = -1;
+        }
+
+        SKCodecOptions options = canvasFrame >= 0
+            ? new SKCodecOptions(frameIndex, canvasFrame)
+            : new SKCodecOptions(frameIndex);
+
+        SKCodecResult result = codec.GetPixels(info, canvas.GetPixels(), options);
+        if (result is not (SKCodecResult.Success or SKCodecResult.IncompleteInput))
+        {
+            // The delta could not be applied to what we hold (non-monotonic frame
+            // dependency). Rebuild from a clean canvas once.
+            canvas.Erase(SKColors.Transparent);
+            canvasFrame = -1;
+            result = codec.GetPixels(info, canvas.GetPixels(), new SKCodecOptions(frameIndex));
+            if (result is not (SKCodecResult.Success or SKCodecResult.IncompleteInput))
+            {
+                throw new InvalidOperationException("Animation frame decode failed (" + result + ").");
+            }
+        }
+
+        canvasFrame = frameIndex;
+
+        WriteableBitmap writeable = pooledBuffer
+            ? AnimationFramePool.Rent(finalWidth, finalHeight)
+            : new WriteableBitmap(
+                new Avalonia.PixelSize(finalWidth, finalHeight),
+                new Avalonia.Vector(96, 96),
+                PixelFormat.Bgra8888,
+                AlphaFormat.Premul);
+
+        try
+        {
+            using var framebuffer = writeable.Lock();
+            var targetInfo = new SKImageInfo(finalWidth, finalHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var surface = new SKBitmap();
+            if (!surface.InstallPixels(targetInfo, framebuffer.Address, framebuffer.RowBytes))
+            {
+                throw new InvalidOperationException("Unable to wrap the writeable bitmap.");
+            }
+
+            using var skCanvas = new SKCanvas(surface);
+            skCanvas.Clear(SKColors.Transparent);
+
+            int orientedDecodeWidth = swapped ? decodeHeight : decodeWidth;
+            int orientedDecodeHeight = swapped ? decodeWidth : decodeHeight;
+            float scale = Math.Min(
+                finalWidth / (float)orientedDecodeWidth,
+                finalHeight / (float)orientedDecodeHeight);
+
+            SKMatrix matrix = SKMatrix.CreateScale(scale, scale);
+            if (origin != SKEncodedOrigin.TopLeft)
+            {
+                matrix = SKMatrix.Concat(matrix, CreateOrientationMatrix(origin, decodeWidth, decodeHeight));
+            }
+
+            skCanvas.SetMatrix(matrix);
+            skCanvas.DrawBitmap(canvas, 0, 0);
+            skCanvas.Flush();
+
+            return CreateResult(writeable, path, codec, animated: true, frameIndex,
+                finalWidth, finalHeight, targetWidth, targetHeight, maxMegapixels, maxDimension, pooledBuffer);
+        }
+        catch
+        {
+            if (pooledBuffer) AnimationFramePool.Release(writeable);
+            else writeable.Dispose();
+            throw;
         }
     }
 
@@ -261,7 +486,8 @@ public sealed class ImageDecoder : IDisposable
         int? targetWidth,
         int? targetHeight,
         int maxMegapixels,
-        int maxDimension)
+        int maxDimension,
+        bool pooledBuffer = false)
     {
         int duration = animated
             ? codec.FrameInfo[Math.Clamp(frameIndex, 0, codec.FrameInfo.Length - 1)].Duration
@@ -273,6 +499,7 @@ public sealed class ImageDecoder : IDisposable
             FrameIndex = frameIndex,
             FrameDurationMs = duration,
             Owner = this,
+            IsPooled = pooledBuffer,
             TargetWidth = targetWidth ?? 0,
             TargetHeight = targetHeight ?? 0,
             MaxMegapixels = maxMegapixels,
@@ -311,44 +538,53 @@ public sealed class ImageDecoder : IDisposable
         int finalWidth,
         int finalHeight,
         CancellationToken cancellationToken,
-        SKCodecOptions options = default)
+        SKCodecOptions options,
+        ref SKBitmap? scratch)
     {
-        using SKBitmap? decoded = DecodeBitmap(
-            codec, storedWidth, storedHeight, ref decodeWidth, ref decodeHeight, cancellationToken, options);
+        SKBitmap? decoded = DecodeBitmap(
+            codec, storedWidth, storedHeight, ref decodeWidth, ref decodeHeight, cancellationToken, options, ref scratch);
         if (decoded is null)
         {
             throw new InvalidOperationException("Pixel decode failed.");
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        using var framebuffer = target.Lock();
-        var info = new SKImageInfo(finalWidth, finalHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
-        using var surface = new SKBitmap();
-        if (!surface.InstallPixels(info, framebuffer.Address, framebuffer.RowBytes))
+        try
         {
-            throw new InvalidOperationException("Unable to wrap the writeable bitmap.");
+            cancellationToken.ThrowIfCancellationRequested();
+            using var framebuffer = target.Lock();
+            var info = new SKImageInfo(finalWidth, finalHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
+            using var surface = new SKBitmap();
+            if (!surface.InstallPixels(info, framebuffer.Address, framebuffer.RowBytes))
+            {
+                throw new InvalidOperationException("Unable to wrap the writeable bitmap.");
+            }
+
+            using var canvas = new SKCanvas(surface);
+            canvas.Clear(SKColors.Transparent);
+
+            bool swapped = SwapsDimensions(origin);
+            int orientedDecodeWidth = swapped ? decodeHeight : decodeWidth;
+            int orientedDecodeHeight = swapped ? decodeWidth : decodeHeight;
+            float scale = Math.Min(
+                finalWidth / (float)orientedDecodeWidth,
+                finalHeight / (float)orientedDecodeHeight);
+
+            SKMatrix matrix = SKMatrix.CreateScale(scale, scale);
+            if (origin != SKEncodedOrigin.TopLeft)
+            {
+                SKMatrix orientation = CreateOrientationMatrix(origin, decodeWidth, decodeHeight);
+                matrix = SKMatrix.Concat(matrix, orientation);
+            }
+
+            canvas.SetMatrix(matrix);
+            canvas.DrawBitmap(decoded, 0, 0);
+            canvas.Flush();
         }
-
-        using var canvas = new SKCanvas(surface);
-        canvas.Clear(SKColors.Transparent);
-
-        bool swapped = SwapsDimensions(origin);
-        int orientedDecodeWidth = swapped ? decodeHeight : decodeWidth;
-        int orientedDecodeHeight = swapped ? decodeWidth : decodeHeight;
-        float scale = Math.Min(
-            finalWidth / (float)orientedDecodeWidth,
-            finalHeight / (float)orientedDecodeHeight);
-
-        SKMatrix matrix = SKMatrix.CreateScale(scale, scale);
-        if (origin != SKEncodedOrigin.TopLeft)
+        finally
         {
-            SKMatrix orientation = CreateOrientationMatrix(origin, decodeWidth, decodeHeight);
-            matrix = SKMatrix.Concat(matrix, orientation);
+            // The scratch buffer is owned by the caller and reused across frames.
+            if (!ReferenceEquals(decoded, scratch)) decoded.Dispose();
         }
-
-        canvas.SetMatrix(matrix);
-        canvas.DrawBitmap(decoded, 0, 0);
-        canvas.Flush();
     }
 
     private static SKBitmap? DecodeBitmap(
@@ -358,20 +594,29 @@ public sealed class ImageDecoder : IDisposable
         ref int decodeWidth,
         ref int decodeHeight,
         CancellationToken cancellationToken,
-        SKCodecOptions options = default)
+        SKCodecOptions options,
+        ref SKBitmap? scratch)
     {
         for (int attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var info = new SKImageInfo(decodeWidth, decodeHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
-            var bitmap = new SKBitmap(info);
+            bool reusable = scratch is { } existing &&
+                            existing.Width == decodeWidth &&
+                            existing.Height == decodeHeight;
+            SKBitmap bitmap = reusable ? scratch! : new SKBitmap(info);
+            if (reusable) bitmap.Erase(SKColors.Transparent);
+
             SKCodecResult result = codec.GetPixels(info, bitmap.GetPixels(), options);
             if (result is SKCodecResult.Success or SKCodecResult.IncompleteInput)
             {
+                scratch = bitmap;
                 return bitmap;
             }
 
-            bitmap.Dispose();
+            if (!reusable) bitmap.Dispose();
+            else scratch = null;
+
             bool scaled = decodeWidth != storedWidth || decodeHeight != storedHeight;
             if (!scaled)
             {
@@ -465,6 +710,119 @@ public sealed class ImageDecoder : IDisposable
     {
         _normalSemaphore.Dispose();
         _largeSemaphore.Dispose();
+        // The frame pool is intentionally left alone: a pooled bitmap may still be
+        // referenced by the render thread while the window is closing, and the
+        // buffers are worthless after process exit anyway.
+    }
+}
+
+/// <summary>
+/// Sequential frame reader for one animated file, owned by a single playback
+/// loop. The stream and codec stay open for the whole session, so the container
+/// is parsed once and Skia can advance frame by frame instead of the per-frame
+/// open/parse/seek the one-shot path has to do.
+///
+/// Decoding happens on the thread pool; <see cref="Dispose"/> waits for an
+/// in-flight frame so Skia never touches a released codec.
+/// </summary>
+public sealed class AnimationCursor : IDisposable
+{
+    private readonly ImageDecoder _decoder;
+    private readonly FileStream _stream;
+    private readonly SKCodec _codec;
+    private readonly string _path;
+    private readonly int? _targetWidth;
+    private readonly int? _targetHeight;
+    private readonly int _maxMegapixels;
+    private readonly int _maxDimension;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private bool _disposed;
+
+    /// <summary>
+    /// Persistent composition buffer. Frames are deltas on top of the previous
+    /// one, so this must survive between calls (see DecodeAnimationFrame).
+    /// </summary>
+    private SKBitmap? _canvas;
+
+    /// <summary>Frame currently composed into <see cref="_canvas"/>; -1 = empty.</summary>
+    private int _canvasFrame = -1;
+
+    internal AnimationCursor(
+        ImageDecoder decoder,
+        string path,
+        FileStream stream,
+        SKCodec codec,
+        int? targetWidth,
+        int? targetHeight,
+        int maxMegapixels,
+        int maxDimension)
+    {
+        _decoder = decoder;
+        _path = path;
+        _stream = stream;
+        _codec = codec;
+        _targetWidth = targetWidth;
+        _targetHeight = targetHeight;
+        _maxMegapixels = maxMegapixels;
+        _maxDimension = maxDimension;
+        FrameCount = codec.FrameCount;
+    }
+
+    public int FrameCount { get; }
+
+    /// <summary>Declared duration of one frame, in milliseconds.</summary>
+    public int FrameDurationMs(int frameIndex)
+    {
+        SKCodecFrameInfo[] info = _codec.FrameInfo;
+        if (info.Length == 0) return 0;
+        return info[Math.Clamp(frameIndex, 0, info.Length - 1)].Duration;
+    }
+
+    public async Task<DecodedImage?> DecodeFrameAsync(int frameIndex, CancellationToken cancellationToken)
+    {
+        if (_disposed) return null;
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_disposed) return null;
+            return await Task.Run(
+                () => _decoder.DecodeAnimationFrame(
+                    _codec, _path, frameIndex, _targetWidth, _targetHeight, _maxMegapixels, _maxDimension,
+                    pooledBuffer: true, ref _canvas, ref _canvasFrame, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or InvalidOperationException or PathTooLongException)
+        {
+            return null;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _gate.Wait();
+        try
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _codec.Dispose();
+            _stream.Dispose();
+            _canvas?.Dispose();
+            _canvas = null;
+        }
+        finally
+        {
+            _gate.Release();
+            _gate.Dispose();
+        }
     }
 }
 
