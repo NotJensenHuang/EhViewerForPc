@@ -1,0 +1,12 @@
+avalonia.win32 12.1.6
+avalonia.skia 12.1.6
+avalonia.harfbuzz 12.1.6
+avalonia.themes.fluent 12.1.6
+avalonia.fonts.inter 12.1.6
+avalonia.remote.protocol 12.1.6
+microsoft.net.test.sdk 18.11.0
+microsoft.codecoverage 18.11.0
+microsoft.testplatform.testhost 18.11.0
+microsoft.testplatform.objectmodel 17.13.0
+xunit.runner.visualstudio 4.0.1
+coverlet.collector 10.1.0

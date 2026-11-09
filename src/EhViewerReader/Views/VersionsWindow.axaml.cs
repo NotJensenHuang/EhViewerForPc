@@ -14,7 +14,7 @@ public partial class VersionsWindow : Window
     {
         InitializeComponent();
         Icon = AppIcons.Window;
-        Avalonia.Media.RenderOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
+        Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
     }
 
     public VersionsWindow(VersionsViewModel viewModel) : this()

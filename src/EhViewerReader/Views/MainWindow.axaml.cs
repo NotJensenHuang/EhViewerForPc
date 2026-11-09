@@ -21,7 +21,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Icon = AppIcons.Window;
-        Avalonia.Media.RenderOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
+        Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
         KeyDown += OnWindowKeyDown;
         Closing += OnWindowClosing;
     }

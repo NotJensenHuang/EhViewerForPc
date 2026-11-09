@@ -4,7 +4,7 @@
 
 面向 Windows 桌面的**纯离线**漫画阅读器：直接读取 EhViewer（含 [Ehviewer_CN_SXJ](https://github.com/xiaojieonly/Ehviewer_CN_SXJ)）的下载目录，以原生速度扫描、以虚拟化网格浏览、以单页或连续模式阅读。**全程不修改资料库中的任何文件。**
 
-- UI：Avalonia 11.3.6 + Fluent（深色 / 浅色）
+- UI：Avalonia 12.1.6 + Fluent（深色 / 浅色）
 - 运行时：.NET 10（Windows x64），支持 NativeAOT 原生单文件发布
 - 已验证规模：6,327 个画廊 / 245,548 页 / 约 24.4 万张图片（2.8 TB 机械盘，冷扫 81 s，热缓存 0.5 s 内启动）
 
@@ -70,7 +70,7 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -p:PublishAot=true -o ar
 
 - 需要 VS 2022/2026 的 MSVC 链接器与 Windows SDK **导入库**（`um\x64\*.lib`）。若 SDK 只装了头文件，项目会通过 `Microsoft.Windows.SDK.CPP.x64` NuGet 包补齐（仅构建期使用，`ExcludeAssets="all"`，不进入输出）。
 - 所有持久化 JSON 走源生成上下文：`StorageJsonContext`（设置/进度/扫描缓存）与 `ReaderJsonContext`（页面尺寸缓存）；运行路径上没有反射序列化。
-- XAML 使用编译绑定；`Avalonia.Diagnostics` 仅在 Debug 构建中引用。
+- XAML 使用编译绑定；Avalonia 12 起 `Avalonia.Diagnostics` 包已移除（Dev Tools 改为独立产品），项目不引用调试器包，文本整形由 `Avalonia.HarfBuzz` 提供。
 - 输出为约 22.9 MB 原生 exe，另附带 3 个原生库：`libSkiaSharp.dll`、`libHarfBuzzSharp.dll`、`av_libglesv2.dll`。
 - AOT 下 `--self-test` / `--ui-smoke` 的 JSON 报告会降级为扁平结构（截图与流程不受影响）。
 

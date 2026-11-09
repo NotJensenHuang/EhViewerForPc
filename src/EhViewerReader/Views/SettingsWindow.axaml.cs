@@ -17,7 +17,7 @@ public partial class SettingsWindow : Window
     {
         InitializeComponent();
         Icon = AppIcons.Window;
-        Avalonia.Media.RenderOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
+        Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
         _viewModel = viewModel;
         _mainViewModel = mainViewModel;
         _originalTheme = mainViewModel.Services.Settings.Theme;

@@ -30,7 +30,7 @@
         </StackPanel>
 
         <Grid Grid.Column="2" VerticalAlignment="Center">
-          <TextBox x:Name="SearchBox" Text="{Binding SearchText}" Watermark="搜索标题、文件夹或 GID（Ctrl+F）" />
+          <TextBox x:Name="SearchBox" Text="{Binding SearchText}" PlaceholderText="搜索标题、文件夹或 GID（Ctrl+F）" />
           <Button Content="清除" Classes="ghost" HorizontalAlignment="Right" VerticalAlignment="Center"
                   Margin="0,0,4,0" FontSize="11" Click="OnClearSearch"
                   IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />

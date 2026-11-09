@@ -621,7 +621,7 @@ public static class UiSmokeService
             Math.Max(1, (int)Math.Ceiling(size.Height * scaling)));
         using var bitmap = new RenderTargetBitmap(pixelSize, new Vector(96 * scaling, 96 * scaling));
         bitmap.Render(visual);
-        bitmap.Save(path);
+        bitmap.Save(path, new PngBitmapEncoderOptions());
     }
 
     private static string DescribeTree(Visual visual, int depth)
@@ -999,19 +999,18 @@ public static class UiSmokeService
         using var text = new SKPaint
         {
             Color = SKColors.White,
-            TextSize = Math.Max(28, width / 9f),
             IsAntialias = true,
-            TextAlign = SKTextAlign.Center,
         };
-        canvas.DrawText($"P{page}", width / 2f, height / 2f + text.TextSize / 3f, text);
+        float titleSize = Math.Max(28, width / 9f);
+        using var titleFont = new SKFont { Size = titleSize };
+        canvas.DrawText($"P{page}", width / 2f, height / 2f + titleSize / 3f, SKTextAlign.Center, titleFont, text);
         using var small = new SKPaint
         {
             Color = new SKColor(255, 255, 255, 170),
-            TextSize = Math.Max(16, width / 18f),
             IsAntialias = true,
-            TextAlign = SKTextAlign.Center,
         };
-        canvas.DrawText($"{page} / {pageCount}", width / 2f, height * 0.78f, small);
+        using var smallFont = new SKFont { Size = Math.Max(16, width / 18f) };
+        canvas.DrawText($"{page} / {pageCount}", width / 2f, height * 0.78f, SKTextAlign.Center, smallFont, small);
         canvas.Flush();
 
         using var image = SKImage.FromBitmap(bitmap);
