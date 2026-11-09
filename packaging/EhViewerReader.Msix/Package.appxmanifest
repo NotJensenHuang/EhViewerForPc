@@ -15,7 +15,7 @@
 
   <Identity Name="EhViewerReader.Local"
             Publisher="CN=CF259542-70C0-4852-9523-066A80212473"
-            Version="1.0.0.0" />
+            Version="1.0.1.0" />
 
   <Properties>
     <DisplayName>EhViewer 本地漫画阅读器</DisplayName>
