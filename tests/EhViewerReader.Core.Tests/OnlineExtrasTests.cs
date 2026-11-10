@@ -129,6 +129,50 @@ public sealed class OnlineExtrasTests
     }
 
     [Fact]
+    public void DetailReadsFavoriteStateFromLinkText()
+    {
+        const string favorited = """
+            <html><body><h1 id="gn">Fav</h1>
+            <div id="gdf" onclick="return pop_fav()"><div id="fav"></div>
+              <div>&nbsp; <a id="favoritelink" href="#"><img src="/g/mr.gif" /> Favorite 3</a></div></div>
+            </body></html>
+            """;
+
+        EhGalleryDetails on = EhParser.ParseGalleryDetail(favorited, EhSite.EHentai, 1, "tok");
+        Assert.True(on.IsFavorited);
+        Assert.Equal("Favorite 3", on.FavoriteName);
+        Assert.True(on.IsFavorite);
+
+        const string plain = """
+            <html><body><h1 id="gn">New</h1>
+            <div id="gdf"><a id="favoritelink" href="#"><img src="/g/mr.gif" /> Add to Favorites</a></div>
+            </body></html>
+            """;
+
+        EhGalleryDetails off = EhParser.ParseGalleryDetail(plain, EhSite.EHentai, 1, "tok");
+        Assert.False(off.IsFavorited);
+        Assert.False(off.IsFavorite);
+    }
+
+    [Fact]
+    public void FavoritePopupParsesSelectedSlot()
+    {
+        const string popup = """
+            <html><body><form method="post" action="gallerypopups.php?gid=1&amp;t=tok&amp;act=addfav">
+            <select name="favcat">
+              <option value="0">Favorite 0</option>
+              <option value="3" selected="selected">Favorite 3</option>
+            </select>
+            <input type="submit" name="delete" value="Remove from Favorites" />
+            <input type="submit" name="apply" value="Apply Changes" />
+            </form></body></html>
+            """;
+
+        Assert.Equal(3, EhParser.ParseFavoriteSlot(popup));
+        Assert.Equal(-1, EhParser.ParseFavoriteSlot("<html><body><p>not a popup</p></body></html>"));
+    }
+
+    [Fact]
     public void DetailWithoutCommentsStillParses()
     {
         const string html = """

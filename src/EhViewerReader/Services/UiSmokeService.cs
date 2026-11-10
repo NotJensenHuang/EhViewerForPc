@@ -28,6 +28,7 @@ public static class UiSmokeService
         Directory.CreateDirectory(output);
 
         var report = new Dictionary<string, object?>();
+        var pageShots = new List<string>();
         var stopwatch = Stopwatch.StartNew();
         ReadingMode originalMode = viewModel.Services.Settings.DefaultReadingMode;
 
@@ -312,6 +313,23 @@ public static class UiSmokeService
             restored.Dispose();
         }
 
+        // History is local: the reader just recorded progress for the item above.
+        HistoryViewModel? history = window.Shell?.History;
+        history?.Reload();
+        window.Shell?.Navigate("history");
+        await Task.Delay(700);
+        SaveScreenshot(window, Path.Combine(output, "page-history.png"));
+        pageShots.Add("page-history.png");
+        window.Shell?.Navigate("library");
+        await Task.Delay(200);
+        report["localHistory"] = new Dictionary<string, object?>
+        {
+            ["items"] = history?.Items.Count ?? 0,
+            ["first"] = history?.Items.FirstOrDefault()?.Title,
+            ["lastRead"] = history?.Items.FirstOrDefault()?.LastReadText,
+            ["progress"] = history?.Items.FirstOrDefault()?.ProgressText,
+        };
+
         // Animated GIF regression: synthetic gallery "900000-[Chinese] 合成样本 01"
         // carries a two-frame GIF as page 2. The 900000 card is a merged
         // three-version card whose preferred version is NOT the one holding the
@@ -576,10 +594,9 @@ public static class UiSmokeService
         // Shell navigation: every page must instantiate and lay out. Network
         // loads are fire-and-forget, so the capture happens while they are in
         // flight and a missing page shows up as an empty content host.
-        var pageShots = new List<string>();
         if (window.Shell is { } shell)
         {
-            foreach (string key in new[] { "online", "search", "favorites", "history", "downloads", "settings" })
+            foreach (string key in new[] { "online", "search", "favorites", "downloads", "settings" })
             {
                 shell.Navigate(key);
                 await Task.Delay(900);
@@ -755,6 +772,51 @@ public static class UiSmokeService
             catch (Exception ex)
             {
                 report["webLoginError"] = ex.Message;
+            }
+
+            // Local-copy badge: 800000 exists in the stress library (the current
+            // root by now), so the card and the detail window must flag it
+            // without any network.
+            try
+            {
+                var localSummary = new EhGallerySummary
+                {
+                    Gid = 800000,
+                    Token = "local",
+                    Title = "压力样本 00000（本地命中）",
+                    Pages = 4,
+                };
+                localSummary.Tags.Add("language:chinese");
+
+                var localCard = new OnlineGalleryItemViewModel(
+                    localSummary,
+                    AppServices.Current.OnlineImages.CreateThumbnailRequest(localSummary.ThumbUrl),
+                    shell);
+                report["localHitCard"] = new Dictionary<string, object?>
+                {
+                    ["inLocal"] = localCard.IsInLocalLibrary,
+                    ["language"] = localCard.LanguageText,
+                };
+
+                var localViewModel = new OnlineGalleryViewModel(AppServices.Current, shell, localSummary);
+                var localWindow = new OnlineGalleryWindow(localViewModel)
+                {
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                };
+                localWindow.Show(window);
+                await Task.Delay(1500);
+                SaveScreenshot(localWindow, Path.Combine(output, "online-local.png"));
+                pageShots.Add("online-local.png");
+                report["localHitDetail"] = new Dictionary<string, object?>
+                {
+                    ["banner"] = localViewModel.IsInLocalLibrary,
+                };
+                localWindow.Close();
+                await Task.Delay(200);
+            }
+            catch (Exception ex)
+            {
+                report["localHitError"] = ex.Message;
             }
 
             shell.Navigate("library");

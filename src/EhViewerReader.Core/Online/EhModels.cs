@@ -150,9 +150,20 @@ public sealed class EhGalleryDetails
     public double Rating { get; set; }
     public int FavoriteSlot { get; set; } = -1;
 
+    /// <summary>
+    /// True when the detail page's #favoritelink no longer reads
+    /// "Add to Favorites". This is the authoritative signal: the favourite
+    /// slot is only exposed by the popup, which can fail independently.
+    /// </summary>
+    public bool IsFavorited { get; set; }
+
+    /// <summary>Favourite category name shown on the detail page ("Favorite 3" or a custom name).</summary>
+    public string FavoriteName { get; set; } = string.Empty;
+
     /// <summary>Favourite count text from #favcount ("28 times").</summary>
     public string Favorited { get; set; } = string.Empty;
-    public bool IsFavorite => FavoriteSlot >= 0;
+
+    public bool IsFavorite => IsFavorited || FavoriteSlot >= 0;
 
     /// <summary>Number of votes behind <see cref="Rating"/> (#rating_count).</summary>
     public int RatingCount { get; set; }

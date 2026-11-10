@@ -398,7 +398,9 @@ public sealed class EhClient : IDisposable
     {
         try
         {
-            string url = EhUrls.GalleryPopup(Site, gid, token, "popup");
+            // The favourite popup is the addfav form; it preselects the slot
+            // the gallery currently sits in (only meaningful when favourited).
+            string url = EhUrls.GalleryPopup(Site, gid, token, "addfav");
             string html = await GetStringAsync(url, EhUrls.Detail(Site, gid, token), cancellationToken).ConfigureAwait(false);
             return EhParser.ParseFavoriteSlot(html);
         }
@@ -417,19 +419,29 @@ public sealed class EhClient : IDisposable
         string note,
         CancellationToken cancellationToken)
     {
-        string action = add ? "addfav" : "deletefav";
-        string url = EhUrls.GalleryPopup(Site, gid, token, action);
+        // The site always posts the addfav form; removal is favcat=favdel
+        // (there is no separate deletefav endpoint, despite the popup name).
+        string url = EhUrls.GalleryPopup(Site, gid, token, "addfav");
         var form = new Dictionary<string, string>
         {
-            ["favcat"] = slot.ToString(),
+            ["favcat"] = add ? slot.ToString(System.Globalization.CultureInfo.InvariantCulture) : "favdel",
             ["favnote"] = note ?? string.Empty,
-            ["apply"] = "Apply Changes",
+            ["submit"] = "Apply Changes",
             ["update"] = "1",
         };
 
         string body = await PostFormAsync(url, form, EhUrls.Detail(Site, gid, token), cancellationToken)
             .ConfigureAwait(false);
-        return !body.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+
+        if (body.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase))
+        {
+            _log?.Invoke("Favorite update rejected: session expired");
+            return false;
+        }
+
+        // The popup answers with a tiny confirmation page; anything that still
+        // shows the form means the request was not applied.
+        return !body.Contains("<form", StringComparison.OrdinalIgnoreCase) ||
                body.Contains("favorites.php", StringComparison.OrdinalIgnoreCase);
     }
 

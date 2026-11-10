@@ -333,7 +333,10 @@ public static partial class EhParser
             if (match.Success && int.TryParse(match.Groups[1].Value, out int pages)) details.Pages = pages;
         }
 
-        details.FavoriteSlot = ParseFavoriteSlot(html);
+        // The slot lives on the addfav popup, not on this page; the state comes
+        // from #favoritelink. Details parsed here keep FavoriteSlot at -1 and the
+        // client fills it in only when it needs to preselect the slot combo.
+        ParseFavoriteState(document, details);
         return details;
     }
 
@@ -780,6 +783,27 @@ public static partial class EhParser
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Reads the favourite state from #favoritelink. The link reads "Add to
+    /// Favorites" when the gallery is not in any slot, and the slot's name
+    /// ("Favorite 3", or the user's custom name) when it is.
+    /// </summary>
+    private static void ParseFavoriteState(HtmlNode document, EhGalleryDetails details)
+    {
+        HtmlNode? link = document.FirstDescendantById("favoritelink");
+        string text = Clean(link?.InnerText ?? string.Empty);
+        if (text.Length == 0)
+        {
+            HtmlNode? block = document.FirstDescendantById("gdf");
+            text = Clean(block?.InnerText ?? string.Empty);
+        }
+
+        if (text.Length == 0) return;
+
+        details.FavoriteName = text;
+        details.IsFavorited = !text.Contains("Add to Favorites", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Reads the currently selected favorite slot from the popup HTML.</summary>

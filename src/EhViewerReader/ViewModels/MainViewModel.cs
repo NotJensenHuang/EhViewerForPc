@@ -31,6 +31,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _scanCancellation;
     private IReadOnlyList<GalleryItemViewModel> _galleries = [];
+    private Dictionary<long, GalleryItemViewModel> _byGid = [];
     private IReadOnlyList<SortOption> _sortOptions;
     private IReadOnlyList<FilterOption> _filterOptions;
     private SortOption _selectedSort;
@@ -91,7 +92,37 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public event EventHandler? GalleryListReplaced;
     public event EventHandler? GalleryListRebalanced;
 
+    /// <summary>Raised when the gid → local-copy index changes (scan, reload, clear).</summary>
+    public event EventHandler? LocalIndexChanged;
+
     public AppServices Services => _services;
+
+    /// <summary>True when this gallery id already exists in a local source.</summary>
+    public bool HasLocalCopy(long gid)
+    {
+        lock (_byGid) return _byGid.ContainsKey(gid);
+    }
+
+    public bool TryGetLocalCopy(long gid, out GalleryItemViewModel? item)
+    {
+        lock (_byGid) return _byGid.TryGetValue(gid, out item);
+    }
+
+    /// <summary>Snapshot of every work, independent of the current filter/search.</summary>
+    public IReadOnlyList<GalleryItemViewModel> SnapshotAllWorks() => _all.ToArray();
+
+    /// <summary>Rebuilds the gid index so online listings can show "已在本机".</summary>
+    public void RebuildLocalIndex()
+    {
+        var map = new Dictionary<long, GalleryItemViewModel>();
+        foreach (GalleryItemViewModel item in _all)
+        {
+            if (item.Gid is long gid) map[gid] = item;
+        }
+
+        lock (_byGid) _byGid = map;
+        LocalIndexChanged?.Invoke(this, EventArgs.Empty);
+    }
 
     public IReadOnlyList<GalleryItemViewModel> Galleries
     {
@@ -326,6 +357,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             StatusText = _services.Settings.Sources.Any(s => s.Enabled)
                 ? "已配置的数据源目录不可用，请检查磁盘是否已连接"
                 : "未找到可用的数据源目录";
+            RebuildLocalIndex();
             return;
         }
 
@@ -471,6 +503,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ShowWelcome = ShouldShowWelcome;
         RebuildLanguageOptions();
         UpdateSourceDisplay();
+
+        RebuildLocalIndex();
 
         if (_all.Count == 0)
         {
@@ -853,6 +887,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         RootDisplay = "未配置数据源";
         ShowWelcome = true;
         StatusText = "未配置数据源";
+        RebuildLocalIndex();
     }
 
     private string? ValidateSourcePath(string path, out string full)

@@ -381,6 +381,12 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         }
     }
 
+    /// <summary>Re-checks every card against the local library index.</summary>
+    public void RefreshLocalState()
+    {
+        foreach (OnlineGalleryItemViewModel item in Items) item.RefreshLocalState();
+    }
+
     private void OpenUrl(string url)
     {
         try

@@ -222,6 +222,12 @@ public sealed partial class SearchPageViewModel : ObservableObject
         await Task.CompletedTask;
     }
 
+    /// <summary>Re-checks every result against the local library index.</summary>
+    public void RefreshLocalState()
+    {
+        foreach (OnlineGalleryItemViewModel item in Items) item.RefreshLocalState();
+    }
+
     [RelayCommand]
     private void ToggleAdvanced() => ShowAdvanced = !ShowAdvanced;
 

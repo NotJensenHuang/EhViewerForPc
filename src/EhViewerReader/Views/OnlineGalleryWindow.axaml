@@ -57,6 +57,15 @@
             </StackPanel>
           </Border>
 
+          <Border Classes="row" IsVisible="{Binding IsInLocalLibrary}"
+                  Background="#1A2E5A3F" BorderBrush="#4D7FE0B0">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding LocalStateText}" FontSize="12" Foreground="#7FE0B0" TextWrapping="Wrap" />
+              <Button Content="在本地库中打开" Command="{Binding OpenLocalCommand}"
+                      HorizontalAlignment="Left" />
+            </StackPanel>
+          </Border>
+
           <StackPanel Spacing="6">
             <Button Content="种子列表" Command="{Binding OpenTorrentsCommand}" IsEnabled="{Binding HasTorrents}"
                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />

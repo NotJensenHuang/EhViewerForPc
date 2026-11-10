@@ -56,18 +56,27 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Search = new SearchPageViewModel(services, this);
         Favorites = new OnlineFeedViewModel(services, this, OnlineFeedMode.Favorites, "收藏夹",
             "按 E-Hentai 收藏分类浏览，登录后可用");
-        History = new OnlineFeedViewModel(services, this, OnlineFeedMode.History, "浏览历史",
-            "账号在 E-Hentai 上的浏览记录");
+        History = new HistoryViewModel(services, Library);
+        History.OpenLibraryRequested += (_, _) => Navigate("library");
+        History.OpenSiteHistoryRequested += (_, _) =>
+            OpenExternal(EhUrls.Home(services.Online.Site) + "history.php");
         Downloads = new DownloadsViewModel(services, Library);
         Settings = new SettingsViewModel(services);
         Settings.AccountChanged += (_, _) => RaiseAccount();
+
+        // The local index drives the "已在本机" badges on every online listing.
+        Library.LocalIndexChanged += (_, _) =>
+        {
+            Online.RefreshLocalState();
+            Search.RefreshLocalState();
+        };
 
         NavItems =
         [
             new NavItem("online", "在线浏览", "◎", Online),
             new NavItem("search", "搜索", "⌕", Search),
             new NavItem("favorites", "收藏", "♥", Favorites),
-            new NavItem("history", "历史", "◷", History),
+            new NavItem("history", "阅读历史", "◷", History),
             new NavItem("downloads", "下载", "↓", Downloads),
             new NavItem("library", "本地库", "▤", Library),
             new NavItem("settings", "设置", "⚙", Settings),
@@ -94,7 +103,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     public OnlineFeedViewModel Online { get; }
     public SearchPageViewModel Search { get; }
     public OnlineFeedViewModel Favorites { get; }
-    public OnlineFeedViewModel History { get; }
+    public HistoryViewModel History { get; }
     public DownloadsViewModel Downloads { get; }
     public SettingsViewModel Settings { get; }
 
@@ -174,6 +183,9 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             case DownloadsViewModel downloads:
                 downloads.SyncAll();
                 break;
+            case HistoryViewModel history:
+                history.Reload();
+                break;
         }
     }
 
@@ -203,7 +215,6 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
         await Online.LoadAsync(reset: true).ConfigureAwait(true);
         if (Favorites.Items.Count > 0) await Favorites.LoadAsync(reset: true).ConfigureAwait(true);
-        if (History.Items.Count > 0) await History.LoadAsync(reset: true).ConfigureAwait(true);
     }
 
     [RelayCommand]
@@ -229,7 +240,6 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         RaiseAccount();
         Online.RefreshProgress();
         Favorites.RefreshProgress();
-        History.RefreshProgress();
         Notify(result.Message);
     }
 
@@ -239,6 +249,20 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     public EhSite Site => _services.Online.Site;
 
     public void OpenGallery(EhGallerySummary summary) => GalleryRequested?.Invoke(this, summary);
+
+    public bool HasLocalCopy(long gid) => Library.HasLocalCopy(gid);
+
+    public int GetLocalVersionCount(long gid) =>
+        Library.TryGetLocalCopy(gid, out GalleryItemViewModel? item) && item is not null
+            ? item.Versions.Count
+            : 0;
+
+    public bool OpenLocal(long gid)
+    {
+        if (!Library.TryGetLocalCopy(gid, out GalleryItemViewModel? item) || item is null) return false;
+        Library.OpenGalleryCommand.Execute(item);
+        return true;
+    }
 
     public void OpenExternal(string url)
     {
@@ -311,7 +335,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Online.RefreshProgress();
         Favorites.RefreshFavoriteNames();
         Favorites.RefreshProgress();
-        History.RefreshProgress();
+        History.Reload();
     }
 
     public void Dispose()
@@ -320,6 +344,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         _disposed = true;
         _toastTimer.Stop();
         Downloads.Dispose();
+        History.Dispose();
         Library.Dispose();
         Settings.Dispose();
     }

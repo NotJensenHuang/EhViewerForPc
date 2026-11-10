@@ -98,6 +98,8 @@ public partial class MainWindow : Window
                 return new OnlineFeedPage();
             case SearchPageViewModel:
                 return new SearchPage();
+            case HistoryViewModel:
+                return new HistoryPage();
             case DownloadsViewModel:
                 return new DownloadsPage();
             case SettingsViewModel:

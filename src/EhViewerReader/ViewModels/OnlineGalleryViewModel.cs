@@ -112,6 +112,13 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     public bool HasTorrents => _details is { TorrentCount: > 0 };
     public bool HasArchive => (_details?.ArchiveUrl.Length ?? 0) > 0;
     public string FavoriteCountText => _details is { Favorited.Length: > 0 } d ? d.Favorited : string.Empty;
+
+    /// <summary>True when the local library already holds this gallery id.</summary>
+    public bool IsInLocalLibrary => _host.HasLocalCopy(_summary.Gid);
+
+    public string LocalStateText => _host.GetLocalVersionCount(_summary.Gid) is int count and > 1
+        ? $"本地库已有此作品（{count} 个版本）"
+        : "本地库已有此作品";
     public bool HasFavoriteCount => FavoriteCountText.Length > 0;
 
     public string MetaLine
@@ -248,15 +255,21 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
 
             BuildTags(details);
 
-            int slot = details.FavoriteSlot;
-            if (IsSignedIn && slot < 0)
+            int slot = -1;
+            if (IsSignedIn && details.IsFavorited)
             {
-                slot = await _services.Online
-                    .GetFavoriteSlotAsync(_summary.Gid, _summary.Token, CancellationToken.None)
-                    .ConfigureAwait(true);
+                slot = ResolveFavoriteSlot(details);
+                if (slot < 0)
+                {
+                    // #favoritelink proves the state but not the slot; the popup
+                    // names the selected one.
+                    slot = await _services.Online
+                        .GetFavoriteSlotAsync(_summary.Gid, _summary.Token, CancellationToken.None)
+                        .ConfigureAwait(true);
+                }
             }
 
-            SetSlot(slot);
+            SetFavoriteState(details.IsFavorited, slot);
             RebuildComments(details.Comments);
             RaiseMetadata();
         }
@@ -315,26 +328,68 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         OnPropertyChanged(nameof(HasMoreComments));
     }
 
-    private void SetSlot(int slot)
+    /// <summary>
+    /// Applies the favourite state parsed from the detail page. A favourited
+    /// gallery whose slot could not be resolved is shown as "已收藏（分类未知）"
+    /// instead of pretending it is not favourited.
+    /// </summary>
+    private void SetFavoriteState(bool favorited, int slot)
     {
+        if (favorited && slot < 0) slot = -2;
+
         _favoriteSlot = slot;
-        IsFavorite = slot >= 0;
+        IsFavorite = favorited;
+
+        // The "unknown slot" pseudo-option only exists after a rebuild.
+        if (slot == -2 && FavoriteSlots.All(o => o.Key != "-2"))
+        {
+            RebuildFavoriteSlots();
+            return;
+        }
+
         _suppressSlotChange = true;
         try
         {
-            FeedOption? option = FavoriteSlots.FirstOrDefault(o => o.Key == slot.ToString());
-            if (option is not null)
-            {
-                if (_selectedSlot is not null) _selectedSlot.IsActive = false;
-                _selectedSlot = option;
-                option.IsActive = true;
-                OnPropertyChanged(nameof(SelectedSlot));
-            }
+            FeedOption? option = slot >= 0
+                ? FavoriteSlots.FirstOrDefault(o => o.Key == slot.ToString())
+                : slot == -2
+                    ? FavoriteSlots.FirstOrDefault(o => o.Key == "-2")
+                    : null;
+
+            if (_selectedSlot is not null) _selectedSlot.IsActive = false;
+            _selectedSlot = option;
+            if (option is not null) option.IsActive = true;
+            OnPropertyChanged(nameof(SelectedSlot));
         }
         finally
         {
             _suppressSlotChange = false;
         }
+    }
+
+    /// <summary>Maps the slot name shown on the detail page to its index.</summary>
+    private int ResolveFavoriteSlot(EhGalleryDetails details)
+    {
+        if (details.FavoriteSlot >= 0) return details.FavoriteSlot;
+
+        string name = details.FavoriteName.Trim();
+        if (name.Length == 0) return -1;
+
+        for (int index = 0; index < 10; index++)
+        {
+            if (string.Equals(_services.Settings.Account.FavoriteSlotName(index), name, StringComparison.OrdinalIgnoreCase))
+            {
+                return index;
+            }
+        }
+
+        if (name.StartsWith("Favorite ", StringComparison.OrdinalIgnoreCase) &&
+            int.TryParse(name["Favorite ".Length..], out int parsed) && parsed is >= 0 and <= 9)
+        {
+            return parsed;
+        }
+
+        return -1;
     }
 
     private async Task ApplySlotAsync(FeedOption option)
@@ -343,9 +398,12 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         if (!IsSignedIn)
         {
             _host.Notify("收藏需要先登录账号");
-            SetSlot(_favoriteSlot);
+            SetFavoriteState(IsFavorite, _favoriteSlot);
             return;
         }
+
+        // Pseudo-option: the gallery is favourited but the slot could not be read.
+        if (option.Key == "-2") return;
 
         bool add = int.TryParse(option.Key, out int slot) && slot >= 0;
         int target = add ? slot : _favoriteSlot;
@@ -360,38 +418,53 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
 
             if (ok)
             {
-                SetSlot(add ? target : -1);
+                SetFavoriteState(add, add ? target : -1);
                 StatusText = add ? "已收藏到 " + _services.Settings.Account.FavoriteSlotName(target) : "已取消收藏";
                 _host.Notify(StatusText);
             }
             else
             {
                 StatusText = "收藏操作未成功";
-                SetSlot(_favoriteSlot);
+                SetFavoriteState(IsFavorite, _favoriteSlot);
             }
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             StatusText = "收藏失败：" + ex.Message;
-            SetSlot(_favoriteSlot);
+            SetFavoriteState(IsFavorite, _favoriteSlot);
         }
     }
 
     /// <summary>Rebuilds the slot list so settings renames appear immediately.</summary>
     public void RebuildFavoriteSlots()
     {
-        int selected = _selectedSlot is not null && int.TryParse(_selectedSlot.Key, out int slot) ? slot : -1;
+        int selected = _favoriteSlot;
 
         FavoriteSlots.Clear();
         FavoriteSlots.Add(new FeedOption("-1", "未收藏"));
+        if (selected == -2) FavoriteSlots.Add(new FeedOption("-2", "已收藏（分类未知）"));
         for (int index = 0; index < 10; index++)
         {
             FavoriteSlots.Add(new FeedOption(index.ToString(), _services.Settings.Account.FavoriteSlotName(index)));
         }
 
-        FeedOption option = FavoriteSlots.FirstOrDefault(o => o.Key == selected.ToString()) ?? FavoriteSlots[0];
-        option.IsActive = true;
-        _selectedSlot = option;
+        FeedOption? option = selected >= 0
+            ? FavoriteSlots.FirstOrDefault(o => o.Key == selected.ToString())
+            : selected == -2
+                ? FavoriteSlots.FirstOrDefault(o => o.Key == "-2")
+                : FavoriteSlots[0];
+
+        _suppressSlotChange = true;
+        try
+        {
+            _selectedSlot = option;
+            if (option is not null) option.IsActive = true;
+            OnPropertyChanged(nameof(SelectedSlot));
+        }
+        finally
+        {
+            _suppressSlotChange = false;
+        }
     }
 
     [RelayCommand]
@@ -435,6 +508,12 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     private void OpenInBrowser()
     {
         _host.OpenExternal(Url);
+    }
+
+    [RelayCommand]
+    private void OpenLocal()
+    {
+        _host.Notify(_host.OpenLocal(_summary.Gid) ? "已在本地库中打开" : "本地库中没有该作品");
     }
 
     [RelayCommand]

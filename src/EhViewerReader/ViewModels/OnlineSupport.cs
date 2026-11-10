@@ -27,6 +27,15 @@ public interface IOnlineHost
     void Notify(string message);
 
     void OpenExternal(string url);
+
+    /// <summary>True when the local library already holds this gallery id.</summary>
+    bool HasLocalCopy(long gid);
+
+    /// <summary>Opens the local copy in the reader; false when there is none.</summary>
+    bool OpenLocal(long gid);
+
+    /// <summary>Number of local copies (versions) of this gallery id; 0 when absent.</summary>
+    int GetLocalVersionCount(long gid);
 }
 
 /// <summary>
@@ -50,6 +59,7 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
 {
     private readonly IOnlineHost _host;
     private ReadingProgress? _progress;
+    private bool _isLocal;
 
     public OnlineGalleryItemViewModel(EhGallerySummary summary, IImageRequest cover, IOnlineHost host)
     {
@@ -57,6 +67,8 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
         CoverRequest = cover;
         _host = host;
         CategoryBrush = new SolidColorBrush(Color.Parse(summary.CategoryColor));
+        _isLocal = host.HasLocalCopy(summary.Gid);
+        LanguageText = ResolveLanguage(summary);
     }
 
     public EhGallerySummary Summary { get; }
@@ -88,6 +100,43 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
     }
     public IBrush CategoryBrush { get; }
     public string PagesText => Summary.PagesText;
+
+    /// <summary>Language chip shown on the cover ("中文", "英文", …), from the list tags.</summary>
+    public string LanguageText { get; }
+
+    public bool HasLanguage => LanguageText.Length > 0;
+
+    /// <summary>True when the same gallery id exists in a local source.</summary>
+    public bool IsInLocalLibrary => _isLocal;
+
+    public string LocalBadgeText => "已在本机";
+
+    public void RefreshLocalState()
+    {
+        bool value = _host.HasLocalCopy(Gid);
+        if (_isLocal == value) return;
+        _isLocal = value;
+        OnPropertyChanged(nameof(IsInLocalLibrary));
+    }
+
+    private static string ResolveLanguage(EhGallerySummary summary)
+    {
+        foreach (string tag in summary.Tags)
+        {
+            const string prefix = "language:";
+            if (!tag.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            string name = tag[prefix.Length..].Trim();
+            if (name.Length == 0) continue;
+
+            // List tags are lower-case ("language:chinese"); the display table
+            // is keyed by the canonical name ("Chinese").
+            string canonical = GalleryTags.KnownLanguages
+                .FirstOrDefault(l => l.Equals(name, StringComparison.OrdinalIgnoreCase)) ?? name;
+            return GalleryTags.GetLanguageDisplayName(canonical);
+        }
+
+        return string.Empty;
+    }
     public string PostedText => Summary.Posted;
     public string RatingText => Summary.RatingText;
     public bool HasRating => Summary.HasRating;
@@ -122,6 +171,8 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
         get
         {
             var lines = new List<string> { Title, $"{CategoryText} · {PagesText}" };
+            if (HasLanguage) lines.Add("语言：" + LanguageText);
+            if (_isLocal) lines.Add("本地库中已有该作品");
             if (Summary.Uploader.Length > 0) lines.Add("上传者：" + Summary.Uploader);
             if (HasRating) lines.Add("评分：" + RatingText);
             if (HasProgress) lines.Add(ProgressText);

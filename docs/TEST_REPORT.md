@@ -465,3 +465,49 @@ Server: cloudflare
 
 - 真实账号的完整登录（输入密码 → 论坛跳转 → 读取 `.e-hentai.org` Cookie）需要人工执行；自动化只覆盖到「Cookie 出现 → 导入 → 站点验证」这一段（用注入 Cookie 模拟）。
 - 企业策略禁用 `--remote-debugging-port`、或未安装 Chromium 系浏览器时，走手动粘贴 Cookie 分支。
+
+---
+
+## 11. 阅读历史 / 收藏状态 / 本地副本标识 / 语言标签（2026-11-10 第四轮）
+
+### 11.1 历史改为本地记录
+
+`历史` 页不再请求站点的 `history.php`，改为 `HistoryViewModel`：
+
+- 数据源：`MainViewModel.SnapshotAllWorks()` + `ProgressStore`（不区分数据源是否在线）；
+- 过滤：`!IsUnread`（读过、读中或已读完），按 `LastReadUtc` 倒序；
+- 行内容：封面、标题、`第 N 页 / 共 M 页`、进度条、`最近阅读：今天 22:48`；
+- 操作：继续阅读（先切到本地库，确保阅读器窗口的处理器存在，再执行 `OpenGalleryCommand`）、移出历史（同时清除 `WorkId` 与旧 `StableId` 进度）；
+- 刷新：`LocalIndexChanged`、`GalleryListRebalanced`、导航进入、账号刷新时重建；
+- 站点历史保留为页头「站点历史」按钮（浏览器打开）。
+
+### 11.2 收藏状态
+
+之前 `GetFavoriteSlotAsync` 请求的是不存在的 `act=popup`，详情页也没有收藏字段，导致右上角永远是「未收藏」。修复：
+
+| 信号 | 用法 |
+| --- | --- |
+| `#favoritelink` 文本 | `Add to Favorites` 之外即已收藏；同时给出分类名（`Favorite 3` 或自定义名） |
+| `gallerypopups.php?act=addfav` | 解析 `<option selected>` 得到槽位；仅在上面判定为已收藏时才请求 |
+| 分类名匹配 | 先用设置里的 10 个自定义名 + `Favorite N` 匹配，失败才发请求 |
+| 修改收藏 | 统一 POST `act=addfav`，`favcat=0..9` 或 `favcat=favdel`（站点没有 deletefav 端点），`submit=Apply Changes` |
+
+槽位解析失败但确认已收藏时，下拉框显示「已收藏（分类未知）」，不再谎报未收藏。
+
+### 11.3 本地已有副本
+
+- `MainViewModel` 维护 `gid → GalleryItemViewModel` 索引（`RebuildLocalIndex`，在扫描完成、无数据源、清空视图时重建）。
+- 在线列表卡片：封面左上角增加绿色「已在本机」徽章；`LocalIndexChanged` 会刷新所有在线卡片（首页/搜索/收藏）。
+- 详情窗口：左栏出现「本地库已有此作品」+「在本地库中打开」按钮；点击后直接打开本地阅读器。
+
+### 11.4 语言标签
+
+在线列表的 `div.gt[title]` 已解析为 `language:japanese` 等标签。卡片封面右下角显示语言 chip（`中文/繁中/英文/日文/韩文…`），大小写不敏感映射到 `GalleryTags.GetLanguageDisplayName`。
+
+### 11.5 验证
+
+| 项目 | 结果 |
+| --- | --- |
+| 单元测试 | **76 passed / 0 failed**（新增 `DetailReadsFavoriteStateFromLinkText`、`FavoritePopupParsesSelectedSlot`） |
+| `--online-probe` | 首页 25 项、详情 `favorited=false`（匿名）、`favoriteSlot=-1`，其余字段不变 |
+| `--ui-smoke` | 新增 `page-history.png`（1 条本地记录，`第 5 页 / 共 9 页`、`今天 22:48`）、`online-local.png`（本地徽章 + 打开按钮）；`localHitCard = { inLocal: true, language: 中文 }`；6,315 项虚拟化仍为 21 个容器 |
