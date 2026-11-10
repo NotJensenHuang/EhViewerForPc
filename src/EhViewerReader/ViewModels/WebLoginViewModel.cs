@@ -245,7 +245,8 @@ public sealed partial class WebLoginViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             if (_disposed) return;
-            StatusText = "无法自动获取登录状态：" + ex.Message;
+            if (_session is null) BrowserText = "未找到可用的 Edge / Chrome";
+            StatusText = "无法自动获取登录状态：" + ex.Message + "（可展开下方手动粘贴 Cookie）";
             ShowManual = true;
         }
         finally
