@@ -682,7 +682,11 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         _showTagTranslations = online.ShowTagTranslations;
         _tagTranslationUrl = online.TagTranslationUrl;
         _readOriginalImages = online.ReadOriginalImages;
-        _tagTranslationStatus = _services.TagTranslation.StatusText;
+        // Do not parse the 2.5 MB database just to render the settings page; the
+        // stored summary is enough until the user opens a gallery or updates it.
+        _tagTranslationStatus = online.TagTranslationCount > 0
+            ? $"{online.TagTranslationCount:N0} 条 · v{online.TagTranslationVersion}"
+            : "未下载标签翻译库";
 
         Filters.Clear();
         foreach (FilterRule rule in online.Filters) Filters.Add(new FilterRuleViewModel(rule.Clone()));
