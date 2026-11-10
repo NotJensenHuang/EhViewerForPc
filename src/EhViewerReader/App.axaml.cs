@@ -42,6 +42,24 @@ public partial class App : Application
                 return;
             }
 
+            if (options.LoginProbe)
+            {
+                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                Dispatcher.UIThread.Post(async () =>
+                {
+                    AppPaths probePaths = string.IsNullOrWhiteSpace(options.DataDirectory)
+                        ? new AppPaths()
+                        : new AppPaths(options.DataDirectory);
+                    probePaths.EnsureCreated();
+                    AppServices probeServices = AppServices.Initialize(probePaths);
+                    int code = await LoginProbeService.RunAsync(probeServices, options.OutputPath);
+                    probeServices.Dispose();
+                    desktop.Shutdown(code);
+                });
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+
             if (options.OnlineProbe)
             {
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;

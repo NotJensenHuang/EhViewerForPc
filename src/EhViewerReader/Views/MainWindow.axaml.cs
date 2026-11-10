@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private OnlineGalleryWindow? _galleryWindow;
     private TorrentWindow? _torrentWindow;
     private ArchiveWindow? _archiveWindow;
+    private WebLoginWindow? _loginWindow;
     private bool _closing;
 
     public MainWindow()
@@ -47,6 +48,9 @@ public partial class MainWindow : Window
 
     public ShellViewModel? Shell => _shell;
 
+    /// <summary>Exposed for the UI smoke test (web login window, when open).</summary>
+    public Window? LoginWindow => _loginWindow;
+
     public void Attach(ShellViewModel shell)
     {
         _shell = shell;
@@ -59,6 +63,7 @@ public partial class MainWindow : Window
 
         shell.PropertyChanged += OnShellPropertyChanged;
         shell.GalleryRequested += OnGalleryRequested;
+        shell.WebLoginRequested += OnWebLoginRequested;
         ShowPage(shell.CurrentPage);
     }
 
@@ -98,6 +103,7 @@ public partial class MainWindow : Window
             case SettingsViewModel:
                 _settingsPage = new SettingsPage();
                 _settingsPage.SettingsApplied += OnSettingsApplied;
+                _settingsPage.WebLoginRequested += OnWebLoginRequested;
                 return _settingsPage;
             default:
                 return new TextBlock { Text = "未实现的页面", Margin = new Thickness(24) };
@@ -120,6 +126,37 @@ public partial class MainWindow : Window
         _shell.RaiseAccount();
     }
 
+    private void OnWebLoginRequested(object? sender, EventArgs e)
+    {
+        if (_shell is null) return;
+
+        if (_loginWindow is { IsVisible: true } existing)
+        {
+            existing.Activate();
+            return;
+        }
+
+        var viewModel = new WebLoginViewModel(AppServices.Current);
+        var window = new WebLoginWindow(viewModel)
+        {
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+
+        viewModel.Completed += (_, result) =>
+        {
+            _shell?.ApplyLoginResult(result);
+            window.Close();
+        };
+
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_loginWindow, window)) _loginWindow = null;
+        };
+
+        _loginWindow = window;
+        window.Show(this);
+    }
+
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
         _closing = true;
@@ -137,6 +174,7 @@ public partial class MainWindow : Window
         _torrentWindow?.Close();
         _archiveWindow?.Close();
         _galleryWindow?.Close();
+        _loginWindow?.Close();
     }
 
     private void OnNavClick(object? sender, RoutedEventArgs e)

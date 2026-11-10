@@ -287,6 +287,13 @@ public sealed class EhLoginResult
     public string Message { get; init; } = string.Empty;
     public bool ExAccess { get; init; }
     public bool ExAccessKnown { get; init; }
+
+    /// <summary>
+    /// The server answered with a Cloudflare challenge (or another bot check),
+    /// which no amount of HTTP tweaking can pass: the caller must log in through
+    /// a real browser window and hand the cookies back.
+    /// </summary>
+    public bool RequiresBrowserLogin { get; init; }
 }
 
 /// <summary>One .torrent offered on the gallerytorrents.php page.</summary>

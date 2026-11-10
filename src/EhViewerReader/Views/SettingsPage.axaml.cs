@@ -15,6 +15,12 @@ public partial class SettingsPage : UserControl
     /// <summary>Raised after "保存全部设置"; the shell reloads sources and theme.</summary>
     public event EventHandler<bool>? SettingsApplied;
 
+    /// <summary>Raised by the "网页登录" button; the shell owns the login window.</summary>
+    public event EventHandler? WebLoginRequested;
+
+    private void OnWebLogin(object? sender, RoutedEventArgs e) =>
+        WebLoginRequested?.Invoke(this, EventArgs.Empty);
+
     private void OnOpenDataDirectory(object? sender, RoutedEventArgs e)
     {
         if (DataContext is SettingsViewModel viewModel) viewModel.OpenDataDirectory();

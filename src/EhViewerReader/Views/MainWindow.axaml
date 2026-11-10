@@ -64,7 +64,7 @@
               <TextBlock Text="{Binding AccountDetail}" Classes="caption" FontSize="10" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
                 <Button Content="登录" Classes="ghost" FontSize="10" Padding="6,2" MinHeight="22"
-                        Command="{Binding OpenSettingsCommand}" />
+                        Command="{Binding OpenWebLoginCommand}" IsVisible="{Binding !IsSignedIn}" />
                 <Button Content="退出" Classes="ghost" FontSize="10" Padding="6,2" MinHeight="22"
                         Command="{Binding SignOutCommand}" IsVisible="{Binding IsSignedIn}" />
               </StackPanel>

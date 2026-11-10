@@ -21,6 +21,8 @@
 | 在线详情（评分 / 评论 / 标签翻译 / 种子 / 归档） | 设置（标签翻译 / 列表过滤 / 收藏分类命名） |
 | ![种子](docs/screenshots/torrents.png) | ![归档](docs/screenshots/archive.png) |
 | 种子列表（保存 .torrent / 复制链接） | 归档下载（Original / Resampled，H@H 检测） |
+| ![网页登录](docs/screenshots/web-login.png) | ![设置](docs/screenshots/settings.png) |
+| 网页登录（真实浏览器 + 自动读取 Cookie） | 设置（账号 / 网页登录入口） |
 
 更多截图：`docs/screenshots/`（阅读器单页/连续/横向、版本管理、收藏夹搜索）。截图由 `--ui-smoke` 用合成资料库生成，不含站点内容。
 
@@ -38,7 +40,7 @@
 | **本地库** | 原有离线资料库：封面网格、搜索排序筛选、多数据源合并、版本管理、阅读进度 |
 | **设置** | 账号、网络与代理、在线浏览（标签翻译 / 过滤 / 收藏命名）、下载引擎、阅读器默认值、本地数据源、缓存维护 |
 
-底部常驻站点切换（E-Hentai ⇄ ExHentai）与账号状态；登录入口直达设置页。
+底部常驻站点切换（E-Hentai ⇄ ExHentai）与账号状态；点击「登录」直接打开**网页登录**窗口（与 Android 版 EhViewer 的登录方式一致）。
 
 ## 功能
 
@@ -67,11 +69,19 @@
 | 种子 | 解析 `gallerytorrents.php` 的每个表单：名称、大小、做种/下载、上传者；保存 `.torrent` 或复制直链 |
 | 归档 | 解析 `archiver.php` 的 `or` 令牌与格式列表，POST `hathdl_xres` 请求归档；直接返回 `.zip` 时下载到下载目录的 `archives` 子目录，站点提示缺少 H@H 客户端时给出说明与入口 |
 
-### 账号
+### 账号与网页登录
 
-- 用户名 / 密码登录（`forums.e-hentai.org` 表单），登录后自动预热 `igneous` Cookie 并探测 ExHentai 访问权限。
-- Cookie 登录：粘贴浏览器 Cookie（至少 `ipb_member_id` + `ipb_pass_hash`），同时安装到 `e-hentai.org` 与 `exhentai.org`。
-- 登出、ExHentai 权限复检、站点切换；只持久化 Cookie，**不保存密码**。
+`forums.e-hentai.org` 的登录表单被 Cloudflare 托管挑战保护，普通 HTTP 客户端（包括本应用的密码登录）只会拿到 `403` + “Just a moment…”，无法用任何请求头绕过。因此登录走**真实浏览器**，这也是 Android 版 EhViewer 用 WebView 的原因：
+
+1. 应用启动 Edge（或 Chrome）的一次性配置窗口，打开论坛登录页；
+2. Cloudflare 校验约 10 秒自动通过，用户输入账号密码（密码只输入在浏览器里，应用不读取、不保存）；
+3. 应用通过 DevTools 协议读取 `.e-hentai.org` 的 `ipb_member_id` / `ipb_pass_hash`，导入 Cookie 罐；
+4. 请求 `home.php` 验证会话（匿名会被弹到 `bounce_login.php`），顺带取得 `igneous`，再探测 ExHentai 权限；
+5. 成功后关闭窗口并结束浏览器进程，删除临时配置目录。
+
+失败兜底：没有 Edge/Chrome、企业策略禁用调试端口时，可在同一窗口展开「手动粘贴 Cookie」，支持 `a=b; c=d`、`Cookie:` 头、DevTools 的 `Copy as cURL`、JSON 以及 DevTools 表格复制格式；导入后同样会向站点验证，不合法会被拒绝。
+
+设置页保留「密码登录」入口（万一某个网络环境没有被挑战），失败时会提示原因并自动转为网页登录。登出、ExHentai 权限复检、站点切换照旧；**只持久化 Cookie，不保存密码**。
 
 ### 网络与代理
 
@@ -157,6 +167,7 @@ VS 中的用法：
 | 参数 | 说明 |
 | --- | --- |
 | `--online-probe [--out <json>]` | 无人值守网络自检：首页 → 详情（评分/评论/种子/归档入口）→ 页面列表 → 图片地址 → 缩略图 → 种子文件 → 标签翻译库，输出 JSON（用于验证登录、代理与站点结构变化） |
+| `--login-probe [--out <json>]` | 浏览器登录链路自检：查找 Edge/Chrome → 无头启动 → 连接 DevTools → 读取 Cookie → 注入测试 Cookie 再读回 → 用假 Cookie 确认站点会拒绝，输出 JSON |
 | `--root <path>` | 把指定目录加入数据源并启用（不会清空已配置的其他数据源） |
 | `--gallery <gid\|stableId>` | 启动后直接打开匹配的本地画廊 |
 | `--data-dir <path>` | 覆盖应用数据目录（测试隔离用） |
@@ -218,7 +229,7 @@ logs/app.log             运行日志（不含 token/页面内容）
 ## 测试
 
 ```bash
-# 单元测试（70 项，含在线 HTML 解析、种子/评论/归档/标签库/过滤与下载持久化回归）
+# 单元测试（74 项，含在线 HTML 解析、Cookie 解析/登录、种子/评论/归档/标签库/过滤与下载持久化回归）
 dotnet test tests/EhViewerReader.Core.Tests
 
 # 真实库集成测试（34 项，只读）
@@ -256,6 +267,7 @@ docs/                              PLAN.md、FORMAT.md、TEST_REPORT.md、screen
 ## 已知限制
 
 - 在线功能依赖站点网页结构；站点改版会影响解析，`--online-probe` 可快速定位是网络、账号还是解析问题。
+- 网页登录需要本机安装 Microsoft Edge 或 Google Chrome；两者都没有时可手动粘贴 Cookie。Cloudflare 挑战本身无法绕过，只能由真实浏览器完成。
 - 归档下载与评论发布需要登录；归档是否可用还取决于账号的 H@H 客户端分配（应用会识别并提示）。
 - 评论投票与评分使用详情页内嵌的 `apiuid` / `apikey`；匿名访问时这些操作禁用。
 - 标签翻译库来自第三方社区项目，首次使用需手动「更新标签库」。

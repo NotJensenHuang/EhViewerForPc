@@ -85,6 +85,9 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public event EventHandler<EhGallerySummary>? GalleryRequested;
 
+    /// <summary>Raised by the sidebar or settings; the window opens the browser login.</summary>
+    public event EventHandler? WebLoginRequested;
+
     public event EventHandler<string>? ToastRequested;
 
     public MainViewModel Library { get; }
@@ -148,6 +151,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     public async Task InitializeAsync()
     {
         _ = Task.Run(() => _services.OnlineImages.PruneCache(TimeSpan.FromDays(14)));
+        _ = Task.Run(BrowserLoginSession.CleanupStaleProfiles);
         _services.EnsureDownloadSource();
         _services.Downloads.AutoStart();
         await Library.InitializeAsync().ConfigureAwait(true);
@@ -214,6 +218,20 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     [RelayCommand]
     public void ShowDownloads() => Navigate("downloads");
+
+    [RelayCommand]
+    private void OpenWebLogin() => WebLoginRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Applies a finished browser sign-in across the shell.</summary>
+    public void ApplyLoginResult(EhLoginResult result)
+    {
+        Settings.ApplyLoginResult(result);
+        RaiseAccount();
+        Online.RefreshProgress();
+        Favorites.RefreshProgress();
+        History.RefreshProgress();
+        Notify(result.Message);
+    }
 
     [RelayCommand]
     private void OpenSettings() => Navigate("settings");

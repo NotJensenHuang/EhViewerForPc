@@ -410,3 +410,58 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-extras
 
 - 账号登录后的评分、评论发布/投票、归档请求与 ZIP 下载需要真实账号；自动化只验证了匿名分支（禁用与登录提示）、解析 fixture 与请求构造。
 - H@H 归档队列依赖账号已分配 H@H 客户端，无法在测试环境复现，仅验证缺失提示与页面入口。
+
+---
+
+## 10. 登录修复：Cloudflare 拦截与网页登录（2026-11-10 第三轮）
+
+### 10.1 根因
+
+`forums.e-hentai.org` 的登录页对非浏览器客户端一律返回 Cloudflare 托管挑战：
+
+```
+GET https://forums.e-hentai.org/index.php?act=Login&CODE=00
+HTTP/1.1 403 Forbidden
+Cf-Mitigated: challenge
+Server: cloudflare
+
+<title>Just a moment...</title>
+```
+
+即使用完整浏览器头（UA / Accept / Accept-Language / Sec-CH-UA）也一样。原实现把用户名密码 POST 到 `act=Login&CODE=01`，只会得到 `HTTP 403`，因此界面上永远显示「登录失败：HTTP 403」。这与 Android 版 EhViewer 使用 WebView 登录的原因完全一致。
+
+### 10.2 实现
+
+| 组件 | 职责 |
+| --- | --- |
+| `Services/BrowserLogin.cs` | 查找 Edge/Chrome → 用一次性 `--user-data-dir` 启动 → 读取 `/json/list` → 连接 DevTools WebSocket → `Storage.getCookies` 轮询（1.2 s）→ 结束后杀进程、删配置 |
+| `ViewModels/WebLoginViewModel.cs` | 状态机（启动 / 等待 / 验证 / 完成 / 失败兜底），显示当前页面标题，手动 Cookie 导入 |
+| `Views/WebLoginWindow.axaml` | 独立的登录窗口：状态卡、三步说明、登录地址、Cookie 手动粘贴折叠区 |
+| `EhClient.CompleteBrowserSignInAsync` | 过滤出 `ipb_member_id` / `ipb_pass_hash` / `igneous` / `sk`，替换式导入 → `home.php` 验证 → 取 `igneous` → 探测 ExHentai → 落盘 |
+| `EhClient.VerifySignedInAsync` | `home.php` 未登录会被弹到 `bounce_login.php`（200 页面），据此判定；连续两次请求以覆盖 meta refresh 的情况 |
+| `EhSession.ParseCookieString` | 支持 `a=b; c=d`、`Cookie:` 头、`Copy as cURL`、JSON、DevTools 表格（`name<TAB>value<TAB>domain`） |
+| `SettingsViewModel` / `ShellViewModel` / `MainWindow` | 侧栏「登录」与设置页「网页登录」都打开同一窗口；成功后刷新账号状态、收藏/历史进度 |
+
+同时修正：密码登录遇到 Cloudflare 时会返回可操作的提示并自动打开网页登录；`cf_clearance` 等浏览器绑定 Cookie 不会被导入（只导入认证 Cookie，避免 UA 不匹配反而破坏站点访问）。
+
+### 10.3 验证
+
+**单元测试**：`dotnet test` → **74 passed / 0 failed**（新增 4 项：cURL、Cookie 头 + JSON、DevTools 表格、残缺 Cookie 被拒绝且标记 `RequiresBrowserLogin`）。
+
+**登录链路自检** `--login-probe`（无账号，验证管线本身）：
+
+| 项目 | 结果 |
+| --- | --- |
+| 浏览器发现 | `Microsoft Edge`（`C:/Program Files (x86)\Microsoft\Edge\Application\msedge.exe`） |
+| 启动 + DevTools 连接 | 576–968 ms |
+| 注入 `ipb_member_id` / `ipb_pass_hash`（`.e-hentai.org`）后读回 | 2 条，名称正确 |
+| 用假 Cookie 请求 `home.php` | 被站点判定无效，返回「登录状态无效或已过期」 |
+
+**UI 冒烟**：新增 `web-login.png`。窗口打开后真实 Edge 启动，状态显示「当前页面：请稍候… · 等待登录…」（Cloudflare 挑战页），关闭窗口后浏览器进程与临时配置目录均被清理（`Get-CimInstance` 确认无残留）。空 Cookie 导入被拒绝。
+
+**NativeAOT**：30.7 MB，`IL2026 / IL3050 = 0`；AOT 版 `--login-probe` 同样通过（注入读回 2 条、假 Cookie 被拒绝），确认 `ClientWebSocket` + `Utf8JsonWriter` 的 CDP 实现在裁剪后可用。
+
+### 10.4 未覆盖
+
+- 真实账号的完整登录（输入密码 → 论坛跳转 → 读取 `.e-hentai.org` Cookie）需要人工执行；自动化只覆盖到「Cookie 出现 → 导入 → 站点验证」这一段（用注入 Cookie 模拟）。
+- 企业策略禁用 `--remote-debugging-port`、或未安装 Chromium 系浏览器时，走手动粘贴 Cookie 分支。

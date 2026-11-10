@@ -136,6 +136,67 @@ public sealed class DownloadAndNetworkTests
     }
 
     [Fact]
+    public void CookieStringAcceptsCurlCommand()
+    {
+        const string curl = """
+            curl 'https://e-hentai.org/g/4319211/5c2103fb19/' \
+              -H 'accept: text/html' \
+              -H 'cookie: ipb_member_id=12345; ipb_pass_hash=abcdef; igneous=deadbeef' \
+              --compressed
+            """;
+
+        Dictionary<string, string> cookies = EhSession.ParseCookieString(curl);
+
+        Assert.Equal("12345", cookies["ipb_member_id"]);
+        Assert.Equal("abcdef", cookies["ipb_pass_hash"]);
+        Assert.Equal("deadbeef", cookies["igneous"]);
+        Assert.DoesNotContain("accept", cookies.Keys);
+    }
+
+    [Fact]
+    public void CookieStringAcceptsCookieHeaderAndJson()
+    {
+        Dictionary<string, string> header = EhSession.ParseCookieString(
+            "Cookie: ipb_member_id=42; ipb_pass_hash=ff00");
+        Assert.Equal("42", header["ipb_member_id"]);
+        Assert.Equal("ff00", header["ipb_pass_hash"]);
+
+        Dictionary<string, string> json = EhSession.ParseCookieString(
+            """{"ipb_member_id":"7","ipb_pass_hash":"c0ffee"}""");
+        Assert.Equal("7", json["ipb_member_id"]);
+        Assert.Equal("c0ffee", json["ipb_pass_hash"]);
+    }
+
+    [Fact]
+    public void CookieStringAcceptsDevToolsTable()
+    {
+        // DevTools "copy all" yields name<TAB>value<TAB>domain lines.
+        const string table = """
+            ipb_member_id	99	.e-hentai.org
+            ipb_pass_hash	abc123	.e-hentai.org
+            """;
+
+        Dictionary<string, string> cookies = EhSession.ParseCookieString(table);
+
+        Assert.Equal("99", cookies["ipb_member_id"]);
+        Assert.Equal("abc123", cookies["ipb_pass_hash"]);
+    }
+
+    [Fact]
+    public async Task BrowserSignInRejectsIncompleteCookies()
+    {
+        using var client = new EhClient(new AppSettings());
+
+        EhLoginResult result = await client.CompleteBrowserSignInAsync(
+            new Dictionary<string, string> { ["ipb_member_id"] = "1" },
+            CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.True(result.RequiresBrowserLogin);
+        Assert.Contains("ipb_pass_hash", result.Message);
+    }
+
+    [Fact]
     public void HostsFileAcceptsBothOrders()
     {
         Dictionary<string, System.Net.IPAddress[]> hosts = EhHttp.ParseHosts("""

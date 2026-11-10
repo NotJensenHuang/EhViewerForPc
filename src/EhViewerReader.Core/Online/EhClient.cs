@@ -146,24 +146,131 @@ public sealed class EhClient : IDisposable
         catch (Exception ex) when (ex is EhException or HttpRequestException or TaskCanceledException)
         {
             _log?.Invoke("Sign-in failed: " + ex.Message);
-            return new EhLoginResult { Success = false, Message = "登录失败：" + ex.Message };
+            bool challenge = ex.Message.Contains("Cloudflare", StringComparison.OrdinalIgnoreCase) ||
+                             ex.Message.Contains("人机验证", StringComparison.OrdinalIgnoreCase);
+            return new EhLoginResult
+            {
+                Success = false,
+                Message = challenge ? ex.Message : "登录失败：" + ex.Message,
+                RequiresBrowserLogin = challenge,
+            };
         }
     }
 
-    /// <summary>Installs cookies pasted from a browser ("Cookie login").</summary>
-    public bool ImportCookies(string cookieText)
+    /// <summary>
+    /// Finishes a browser (web-view style) sign-in: installs the cookies the
+    /// real browser received, proves they work by loading home.php, then probes
+    /// ExHentai. forums.e-hentai.org is behind a Cloudflare challenge that a
+    /// plain HTTP client cannot pass, so this is the only reliable way in.
+    /// </summary>
+    public async Task<EhLoginResult> CompleteBrowserSignInAsync(
+        IReadOnlyDictionary<string, string> cookies,
+        CancellationToken cancellationToken)
     {
-        Dictionary<string, string> cookies = EhSession.ParseCookieString(cookieText);
-        if (cookies.Count == 0) return false;
+        var auth = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (KeyValuePair<string, string> pair in cookies)
+        {
+            if (pair.Value.Length == 0) continue;
+            if (!EhSession.AuthCookieNames.Contains(pair.Key, StringComparer.OrdinalIgnoreCase)) continue;
+            auth[pair.Key] = pair.Value;
+        }
 
-        _session.Import(cookies);
+        if (!auth.ContainsKey("ipb_member_id") || !auth.ContainsKey("ipb_pass_hash"))
+        {
+            return new EhLoginResult
+            {
+                Success = false,
+                Message = "浏览器的登录 Cookie 不完整（缺少 ipb_member_id / ipb_pass_hash），请确认已在浏览器中登录成功",
+                RequiresBrowserLogin = true,
+            };
+        }
+
+        // Replace, do not merge: mixing two accounts produces impossible states
+        // (member id from one, pass hash from another).
+        _session.Clear();
+        _session.Import(auth);
         _session.MirrorAuthCookies();
-        if (!_session.HasCredentials) return false;
 
+        bool valid;
+        try
+        {
+            valid = await VerifySignedInAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException or TaskCanceledException)
+        {
+            _log?.Invoke("Browser sign-in verification failed: " + ex.Message);
+            return new EhLoginResult
+            {
+                Success = false,
+                Message = "无法验证登录状态：" + ex.Message,
+                RequiresBrowserLogin = true,
+            };
+        }
+
+        if (!valid)
+        {
+            _session.Clear();
+            return new EhLoginResult
+            {
+                Success = false,
+                Message = "浏览器中的登录状态无效或已过期，请在浏览器里重新登录",
+                RequiresBrowserLogin = true,
+            };
+        }
+
+        // home.php also hands out igneous on the way through bounce_login.
+        _session.MirrorAuthCookies();
         SaveSessionToSettings();
-        _settings.Account.LastUserName = cookies.GetValueOrDefault("ipb_member_id", string.Empty);
+        _settings.Account.LastUserName = auth.GetValueOrDefault("ipb_member_id", string.Empty);
         _settings.Account.LastSignInUtc = DateTime.UtcNow.ToString("O");
-        return true;
+
+        (bool exAccess, bool known) = await ProbeExAccessAsync(cancellationToken).ConfigureAwait(false);
+        _settings.Account.ExAccess = exAccess;
+        SaveSessionToSettings();
+
+        return new EhLoginResult
+        {
+            Success = true,
+            Message = known && !exAccess ? "登录成功，但当前账号无法访问 ExHentai" : "登录成功",
+            ExAccess = exAccess,
+            ExAccessKnown = known,
+        };
+    }
+
+    /// <summary>
+    /// True when the cookie jar carries a working session. An anonymous request
+    /// for home.php is bounced to <c>bounce_login.php</c>; a signed-in one is
+    /// served directly, so the redirect target is the proof.
+    /// </summary>
+    public async Task<bool> VerifySignedInAsync(CancellationToken cancellationToken)
+    {
+        // Two attempts on purpose: the first request to home.php is bounced to
+        // bounce_login.php, which hands out the igneous cookie. If that hop ends
+        // in a meta refresh instead of a 302 the first pass stops there, so the
+        // second pass (now carrying igneous) is the authoritative answer.
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, EhUrls.Home(EhSite.EHentai) + "home.php");
+            using HttpResponseMessage response = await _web
+                .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                .ConfigureAwait(false);
+
+            Uri? final = response.RequestMessage?.RequestUri;
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                throw new EhException("站点要求 Cloudflare 人机验证（HTTP 403），请稍后重试，或先在浏览器中打开一次 e-hentai.org");
+            }
+
+            if (!response.IsSuccessStatusCode || final is null) return false;
+
+            // Signed in: served at /home.php. Anonymous: /bounce_login.php?b=…
+            // (a 200 page that says "This page requires you to log on.").
+            if (final.AbsolutePath.EndsWith("/home.php", StringComparison.OrdinalIgnoreCase)) return true;
+
+            _session.MirrorAuthCookies();
+        }
+
+        return false;
     }
 
     public void SignOut()
@@ -814,7 +921,16 @@ public sealed class EhClient : IDisposable
             string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                throw new EhException($"HTTP {(int)response.StatusCode}");
+                // Cloudflare's managed challenge answers 403 with an HTML
+                // interstitial. Nothing in the request can satisfy it; only a
+                // real browser can, so surface that instead of a bare status.
+                bool challenge =
+                    response.Headers.Contains("CF-Mitigated") ||
+                    body.Contains("Just a moment", StringComparison.OrdinalIgnoreCase) ||
+                    body.Contains("challenges.cloudflare.com", StringComparison.OrdinalIgnoreCase);
+                throw new EhException(challenge
+                    ? "站点要求 Cloudflare 人机验证，无法直接提交表单；请使用「网页登录」，在弹出的浏览器中完成登录"
+                    : $"HTTP {(int)response.StatusCode}");
             }
 
             return body;

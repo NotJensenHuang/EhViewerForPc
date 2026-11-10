@@ -149,7 +149,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private string _userNameInput = string.Empty;
     private string _passwordInput = string.Empty;
     private string _cookieInput = string.Empty;
-    private string _accountStatus = string.Empty;
+    private string _accountStatus = "推荐使用网页登录：站点对普通 HTTP 登录启用了 Cloudflare 校验";
     private bool _accountBusy;
 
     private int _proxyModeIndex;
@@ -216,6 +216,9 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     }
 
     public event EventHandler? AccountChanged;
+
+    /// <summary>The shell opens the browser login window; settings never own windows.</summary>
+    public event EventHandler? WebLoginRequested;
 
     public string[] ThemeLabels { get; } = ["跟随系统", "深色", "浅色"];
     public string[] ModeLabels { get; } = ["单页", "纵向连续", "横向连续"];
@@ -388,6 +391,24 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
+    private void OpenWebLogin() => WebLoginRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>Called by the shell after a successful browser sign-in.</summary>
+    public void ApplyLoginResult(EhLoginResult result)
+    {
+        AccountStatus = result.Success && _services.Online.UserName.Length > 0
+            ? result.Message + " · 账号 ID " + _services.Online.UserName
+            : result.Message;
+        if (!result.Success) return;
+
+        PasswordInput = string.Empty;
+        CookieInput = string.Empty;
+        _services.TrySaveSettings(out _);
+        RefreshAccount();
+        AccountChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    [RelayCommand]
     private async Task LoginAsync()
     {
         if (AccountBusy) return;
@@ -399,13 +420,20 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
                 .SignInAsync(UserNameInput, PasswordInput, CancellationToken.None)
                 .ConfigureAwait(true);
 
-            AccountStatus = result.Message;
+            AccountStatus = result.RequiresBrowserLogin
+                ? result.Message + "（已为你切换到网页登录）"
+                : result.Message;
+
             if (result.Success)
             {
                 PasswordInput = string.Empty;
                 _services.TrySaveSettings(out _);
                 RefreshAccount();
                 AccountChanged?.Invoke(this, EventArgs.Empty);
+            }
+            else if (result.RequiresBrowserLogin)
+            {
+                WebLoginRequested?.Invoke(this, EventArgs.Empty);
             }
         }
         finally
@@ -415,19 +443,30 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void ImportCookies()
+    private async Task ImportCookiesAsync()
     {
-        if (_services.Online.ImportCookies(CookieInput))
+        if (AccountBusy) return;
+
+        var cookies = EhSession.ParseCookieString(CookieInput);
+        if (cookies.Count == 0)
         {
-            _services.TrySaveSettings(out _);
-            CookieInput = string.Empty;
-            AccountStatus = "Cookie 已导入";
-            RefreshAccount();
-            AccountChanged?.Invoke(this, EventArgs.Empty);
+            AccountStatus = "没有解析出 Cookie：至少需要 ipb_member_id 与 ipb_pass_hash";
+            return;
         }
-        else
+
+        AccountBusy = true;
+        AccountStatus = "正在验证 Cookie…";
+        try
         {
-            AccountStatus = "Cookie 不完整：至少需要 ipb_member_id 与 ipb_pass_hash";
+            EhLoginResult result = await _services.Online
+                .CompleteBrowserSignInAsync(cookies, CancellationToken.None)
+                .ConfigureAwait(true);
+
+            ApplyLoginResult(result);
+        }
+        finally
+        {
+            AccountBusy = false;
         }
     }
 

@@ -135,23 +135,124 @@ public sealed class EhSession
         }
     }
 
-    /// <summary>Parses "a=1; b=2" (or a full Cookie header) into a dictionary.</summary>
+    /// <summary>
+    /// Parses every shape a user can realistically paste: a bare
+    /// <c>a=1; b=2</c> pair list, a <c>Cookie:</c> request header, a browser
+    /// "Copy as cURL" command, a JSON object, or the multi-line table the
+    /// DevTools application panel copies.
+    /// </summary>
     public static Dictionary<string, string> ParseCookieString(string? text)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(text)) return result;
 
-        foreach (string part in text.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        string input = text.Trim();
+
+        // json: {"ipb_member_id":"123","ipb_pass_hash":"abc"} (optionally nested)
+        if (input.StartsWith('{'))
         {
-            int eq = part.IndexOf('=');
-            if (eq <= 0) continue;
-            string name = part[..eq].Trim();
-            string value = part[(eq + 1)..].Trim().Trim('"');
-            if (name.Length == 0 || value.Length == 0) continue;
-            result[name] = value;
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(input);
+                AddJsonCookies(document.RootElement, result);
+                if (result.Count > 0) return result;
+            }
+            catch (JsonException)
+            {
+                // Not JSON after all; fall through to the text parsers.
+            }
+        }
+
+        string payload = ExtractCookieHeader(input) ?? input;
+
+        foreach (string rawLine in payload.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            // DevTools copies one cookie per line as name<TAB>value<TAB>domain.
+            string line = rawLine.Trim();
+            if (line.Length == 0) continue;
+
+            if (line.Contains('\t') && !line.Contains('='))
+            {
+                string[] columns = line.Split('\t', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (columns.Length >= 2 && columns[1].Length > 0)
+                {
+                    result[columns[0]] = columns[1];
+                    continue;
+                }
+            }
+
+            foreach (string part in line.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                TryAddPair(part, result);
+            }
         }
 
         return result;
+    }
+
+    private static void AddJsonCookies(JsonElement element, Dictionary<string, string> result)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return;
+
+        if (element.TryGetProperty("cookies", out JsonElement nested) && nested.ValueKind == JsonValueKind.Object)
+        {
+            AddJsonCookies(nested, result);
+            if (result.Count > 0) return;
+        }
+
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String) continue;
+            string value = property.Value.GetString() ?? string.Empty;
+            if (value.Length > 0) result[property.Name] = value;
+        }
+    }
+
+    /// <summary>Pulls the value out of <c>-H 'cookie: …'</c> / <c>-b '…'</c> / <c>Cookie: …</c>.</summary>
+    private static string? ExtractCookieHeader(string text)
+    {
+        int index = text.IndexOf("cookie:", StringComparison.OrdinalIgnoreCase);
+        if (index >= 0) return TakeQuotedValue(text, index + "cookie:".Length);
+
+        index = text.IndexOf("-b ", StringComparison.OrdinalIgnoreCase);
+        if (index >= 0) return TakeQuotedValue(text, index + 3);
+
+        index = text.IndexOf("--cookie ", StringComparison.OrdinalIgnoreCase);
+        if (index >= 0) return TakeQuotedValue(text, index + "--cookie".Length);
+
+        return null;
+    }
+
+    private static string TakeQuotedValue(string text, int start)
+    {
+        int end = text.Length;
+        foreach (char quote in new[] { '"', '\'' })
+        {
+            int next = text.IndexOf(quote, start);
+            if (next >= 0 && next < end) end = next;
+        }
+
+        return text[start..end].Trim();
+    }
+
+    private static bool TryAddPair(string part, Dictionary<string, string> result)
+    {
+        int eq = part.IndexOf('=');
+        if (eq <= 0) return false;
+
+        string name = part[..eq].Trim();
+        string value = part[(eq + 1)..].Trim();
+
+        // DevTools' table copy adds a domain column after a tab.
+        int tab = value.IndexOf('\t');
+        if (tab >= 0) value = value[..tab].Trim();
+
+        value = value.Trim('"', '\'');
+        if (name.Length == 0 || value.Length == 0) return false;
+        if (name.Contains(' ') || name.Contains('\t')) return false;
+
+        result[name] = value;
+        return true;
     }
 }
 

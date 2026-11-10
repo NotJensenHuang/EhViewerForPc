@@ -1,0 +1,94 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerReader.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="660" d:DesignHeight="640"
+        x:Class="EhViewerReader.Views.WebLoginWindow"
+        x:DataType="vm:WebLoginViewModel"
+        Title="网页登录"
+        Width="660" Height="640" MinWidth="560" MinHeight="520"
+        Background="{DynamicResource AppBgBrush}"
+        WindowStartupLocation="CenterOwner">
+  <Grid Background="{DynamicResource AppBgBrush}" RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Padding="22,16,22,14" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="3">
+          <TextBlock Text="网页登录" Classes="h1" />
+          <TextBlock Text="在真实浏览器中登录，应用自动读取 Cookie；密码只输入在浏览器里"
+                     Classes="secondary" TextWrapping="Wrap" />
+        </StackPanel>
+        <Button Grid.Column="1" Content="关闭" Click="OnClose" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="22,16,22,16" Spacing="14">
+
+        <Border Classes="tile">
+          <StackPanel Spacing="10">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center"
+                      Background="{DynamicResource AppAccentBrush}" />
+              <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" FontWeight="Bold" MaxWidth="520" />
+            </StackPanel>
+            <TextBlock Text="{Binding BrowserText}" Classes="caption" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Classes="primary" Content="切换回浏览器" Command="{Binding OpenBrowserCommand}" />
+              <Button Content="重新启动浏览器" Command="{Binding RetryCommand}" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="tile">
+          <StackPanel Spacing="9">
+            <TextBlock Text="登录步骤" Classes="h2" />
+            <TextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="1. 在弹出的浏览器窗口中等待安全验证通过（“请稍候…”通常约 10 秒，期间不要关闭窗口）。" />
+            <TextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="2. 出现论坛登录表单后，输入 E-Hentai 账号与密码并提交。" />
+            <TextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="3. 回到本窗口，识别到登录凭据后会自动验证；成功后窗口关闭，浏览器一并退出。" />
+            <TextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="浏览器使用独立的一次性配置，不会读取或修改你日常浏览器的登录状态；关闭窗口即删除。" />
+
+            <Border Background="{DynamicResource AppBgAltBrush}" CornerRadius="8" Padding="10,8" Margin="0,2,0,0">
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding LoginUrl}" Classes="caption" TextWrapping="Wrap" />
+                <Button Content="复制登录地址" Classes="ghost" FontSize="11" Padding="0" MinHeight="0"
+                        HorizontalAlignment="Left" Click="OnCopyUrl" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Border>
+
+        <Expander Header="无法自动检测？手动粘贴 Cookie" IsExpanded="{Binding ShowManual, Mode=TwoWay}">
+          <StackPanel Spacing="8" Margin="0,8,0,0">
+            <TextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="浏览器里按 F12 → 应用/Application → Cookie → https://e-hentai.org，复制 ipb_member_id 与 ipb_pass_hash（HttpOnly 的 Cookie 无法用 document.cookie 读取）；也可以直接粘贴 DevTools 里 “Copy as cURL” 的整段内容。" />
+            <TextBox Text="{Binding ManualCookie}" AcceptsReturn="True" Height="96" TextWrapping="Wrap"
+                     PlaceholderText="ipb_member_id=…; ipb_pass_hash=…; igneous=…" />
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="验证并导入" Command="{Binding ImportManualCommand}" />
+              <TextBlock Text="{Binding ManualStatus}" Classes="caption" VerticalAlignment="Center"
+                         TextWrapping="Wrap" MaxWidth="380" />
+            </StackPanel>
+          </StackPanel>
+        </Expander>
+
+        <TextBlock Classes="caption" TextWrapping="Wrap"
+                   Text="Cookie 只保存在本机 settings.json（与 Android 版 EhViewer 的登录方式一致），不会上传到任何服务器。" />
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="2" Padding="22,9" MinHeight="38" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="{Binding SiteLabel, StringFormat='目标站点：{0}'}" Classes="secondary" FontSize="11"
+                   VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="取消" Click="OnClose" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

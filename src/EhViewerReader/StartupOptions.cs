@@ -23,6 +23,9 @@ public sealed class StartupOptions
 
     /// <summary>Network probe: front page → detail → page list → image URL.</summary>
     public bool OnlineProbe { get; private set; }
+
+    /// <summary>Browser/DevTools probe: launch a headless shell, read cookies.</summary>
+    public bool LoginProbe { get; private set; }
     public bool UiSmoke { get; private set; }
     public bool SkipSnapshot { get; private set; }
     public bool DeepProbe { get; private set; }
@@ -70,6 +73,9 @@ public sealed class StartupOptions
                     break;
                 case "--online-probe":
                     options.OnlineProbe = true;
+                    break;
+                case "--login-probe":
+                    options.LoginProbe = true;
                     break;
                 case "--ui-smoke":
                     options.UiSmoke = true;

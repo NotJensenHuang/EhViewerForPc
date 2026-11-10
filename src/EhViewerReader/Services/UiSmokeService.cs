@@ -720,6 +720,43 @@ public static class UiSmokeService
                 }
             }
 
+            // Browser login: goes through the shell command exactly like the
+            // sidebar button, launches (and closes) a real browser with a
+            // throwaway profile, so this also proves the lifecycle cleanup.
+            try
+            {
+                shell.OpenWebLoginCommand.Execute(null);
+                await Task.Delay(5000);
+
+                if (window.LoginWindow is { } loginWindow &&
+                    loginWindow.DataContext is WebLoginViewModel loginViewModel)
+                {
+                    SaveScreenshot(loginWindow, Path.Combine(output, "web-login.png"));
+                    pageShots.Add("web-login.png");
+                    report["webLogin"] = new Dictionary<string, object?>
+                    {
+                        ["browser"] = loginViewModel.BrowserText,
+                        ["status"] = loginViewModel.StatusText,
+                        ["waiting"] = loginViewModel.IsWaiting,
+                    };
+                    loginWindow.Close();
+                    await Task.Delay(300);
+                }
+                else
+                {
+                    report["webLogin"] = "window did not open";
+                }
+
+                // Incomplete cookies must be rejected without touching the session.
+                EhLoginResult bogus = await AppServices.Current.Online
+                    .CompleteBrowserSignInAsync(new Dictionary<string, string>(), CancellationToken.None);
+                report["webLoginRejectsEmpty"] = !bogus.Success && bogus.RequiresBrowserLogin;
+            }
+            catch (Exception ex)
+            {
+                report["webLoginError"] = ex.Message;
+            }
+
             shell.Navigate("library");
             await Task.Delay(400);
         }
