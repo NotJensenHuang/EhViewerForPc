@@ -37,6 +37,98 @@ public sealed class SourceRowViewModel : ObservableObject
     }
 }
 
+/// <summary>One editable list filter rule.</summary>
+public sealed partial class FilterRuleViewModel : ObservableObject
+{
+    private readonly FilterRule _rule;
+
+    public FilterRuleViewModel(FilterRule rule)
+    {
+        _rule = rule;
+    }
+
+    public FilterRule Rule => _rule;
+
+    public string Text
+    {
+        get => _rule.Text;
+        set
+        {
+            if (_rule.Text == value) return;
+            _rule.Text = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool Enabled
+    {
+        get => _rule.Enabled;
+        set
+        {
+            if (_rule.Enabled == value) return;
+            _rule.Enabled = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool Include
+    {
+        get => _rule.Include;
+        set
+        {
+            if (_rule.Include == value) return;
+            _rule.Include = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ModeText));
+        }
+    }
+
+    public int TargetIndex
+    {
+        get => (int)_rule.Target;
+        set
+        {
+            var target = (FilterTarget)Math.Clamp(value, 0, 2);
+            if (_rule.Target == target) return;
+            _rule.Target = target;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ModeText));
+        }
+    }
+
+    public string ModeText => _rule.Include ? "仅显示" : "隐藏";
+
+    public string[] TargetLabels { get; } = ["标签", "标题", "上传者"];
+    public string[] IncludeLabels { get; } = ["隐藏", "仅显示"];
+
+    public int IncludeIndex
+    {
+        get => _rule.Include ? 1 : 0;
+        set => Include = value == 1;
+    }
+}
+
+/// <summary>One editable favourite-slot name.</summary>
+public sealed partial class FavoriteSlotRowViewModel : ObservableObject
+{
+    private string _name;
+
+    public FavoriteSlotRowViewModel(int slot, string name)
+    {
+        Slot = slot;
+        _name = name;
+    }
+
+    public int Slot { get; }
+    public string SlotLabel => "分类 " + Slot;
+
+    public string Name
+    {
+        get => _name;
+        set => SetProperty(ref _name, value);
+    }
+}
+
 /// <summary>
 /// Settings for every subsystem: account, network (proxy / DoH / hosts),
 /// downloads, reader defaults and local sources.
@@ -86,6 +178,17 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private string _networkSnapshot;
     private readonly Dictionary<string, bool> _enabledSnapshot = new(StringComparer.OrdinalIgnoreCase);
 
+    private bool _showTagTranslations;
+    private string _tagTranslationUrl = string.Empty;
+    private string _tagTranslationStatus = string.Empty;
+    private bool _updatingTags;
+
+    private bool _readOriginalImages;
+    private string _filterStatus = string.Empty;
+
+    private string _favoriteSlotStatus = string.Empty;
+    private string _hathStatus = string.Empty;
+
     public SettingsViewModel(AppServices services)
     {
         _services = services;
@@ -108,6 +211,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         LoadAccountFields();
         LoadNetworkFields();
         LoadDownloadFields();
+        LoadOnlineFields();
         _networkSnapshot = NetworkSnapshot();
     }
 
@@ -119,8 +223,13 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public string[] BackgroundLabels { get; } = ["黑色", "深灰", "灰色", "白色"];
     public string[] SiteLabels { get; } = ["E-Hentai", "ExHentai"];
     public string[] ProxyModeLabels { get; } = ["不使用代理", "跟随系统", "HTTP 代理", "SOCKS5 代理"];
+    public string[] FilterTargetLabels { get; } = ["标签", "标题", "上传者"];
 
     public ObservableCollection<SourceRowViewModel> Sources { get; } = [];
+    public ObservableCollection<FilterRuleViewModel> Filters { get; } = [];
+    public ObservableCollection<FavoriteSlotRowViewModel> FavoriteSlots { get; } = [];
+
+    public bool HasFilters => Filters.Count > 0;
 
     public bool SourcesChanged { get; private set; }
 
@@ -517,6 +626,138 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         }
     }
 
+    // -------------------------------------------------------------- online
+
+    public bool ShowTagTranslations
+    {
+        get => _showTagTranslations;
+        set => SetProperty(ref _showTagTranslations, value);
+    }
+
+    public string TagTranslationUrl
+    {
+        get => _tagTranslationUrl;
+        set => SetProperty(ref _tagTranslationUrl, value);
+    }
+
+    public string TagTranslationStatus
+    {
+        get => _tagTranslationStatus;
+        private set => SetProperty(ref _tagTranslationStatus, value);
+    }
+
+    public bool UpdatingTags
+    {
+        get => _updatingTags;
+        private set => SetProperty(ref _updatingTags, value);
+    }
+
+    public bool ReadOriginalImages
+    {
+        get => _readOriginalImages;
+        set => SetProperty(ref _readOriginalImages, value);
+    }
+
+    public string FilterStatus
+    {
+        get => _filterStatus;
+        private set => SetProperty(ref _filterStatus, value);
+    }
+
+    public string FavoriteSlotStatus
+    {
+        get => _favoriteSlotStatus;
+        private set => SetProperty(ref _favoriteSlotStatus, value);
+    }
+
+    public string HathStatus
+    {
+        get => _hathStatus;
+        private set => SetProperty(ref _hathStatus, value);
+    }
+
+    private void LoadOnlineFields()
+    {
+        OnlineSettings online = _services.Settings.Online;
+        _showTagTranslations = online.ShowTagTranslations;
+        _tagTranslationUrl = online.TagTranslationUrl;
+        _readOriginalImages = online.ReadOriginalImages;
+        _tagTranslationStatus = _services.TagTranslation.StatusText;
+
+        Filters.Clear();
+        foreach (FilterRule rule in online.Filters) Filters.Add(new FilterRuleViewModel(rule.Clone()));
+        _filterStatus = Filters.Count == 0 ? "没有过滤规则" : $"{Filters.Count} 条规则";
+
+        FavoriteSlots.Clear();
+        for (int slot = 0; slot < 10; slot++)
+        {
+            FavoriteSlots.Add(new FavoriteSlotRowViewModel(slot, _services.Settings.Account.FavoriteSlotName(slot)));
+        }
+
+        _favoriteSlotStatus = "留空则显示默认名称（分类 0–9）";
+        _hathStatus = "归档下载由站点生成；大文件归档需要账号已分配 H@H 客户端。";
+    }
+
+    [RelayCommand]
+    private async Task UpdateTagTranslationsAsync()
+    {
+        if (UpdatingTags) return;
+        UpdatingTags = true;
+        TagTranslationStatus = "正在下载…";
+        try
+        {
+            bool ok = await _services.TagTranslation
+                .UpdateAsync(TagTranslationUrl, CancellationToken.None)
+                .ConfigureAwait(true);
+            TagTranslationStatus = _services.TagTranslation.StatusText;
+            if (ok)
+            {
+                _services.Settings.Online.ShowTagTranslations = ShowTagTranslations;
+                _services.TrySaveSettings(out _);
+                AccountChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+        finally
+        {
+            UpdatingTags = false;
+        }
+    }
+
+    [RelayCommand]
+    private void AddFilter()
+    {
+        var rule = new FilterRule { Text = string.Empty, Target = FilterTarget.Tag };
+        Filters.Add(new FilterRuleViewModel(rule));
+        OnPropertyChanged(nameof(HasFilters));
+        FilterStatus = "已添加规则，填写内容后保存";
+    }
+
+    [RelayCommand]
+    private void RemoveFilter(FilterRuleViewModel? row)
+    {
+        if (row is null) return;
+        Filters.Remove(row);
+        OnPropertyChanged(nameof(HasFilters));
+        FilterStatus = "已移除规则，保存后生效";
+    }
+
+    [RelayCommand]
+    private void OpenHathPage()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = EhUrls.HathClient(_services.Online.Site),
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            HathStatus = "无法打开页面：" + ex.Message;
+        }
+    }
+
     // ----------------------------------------------------------- download
 
     public string DownloadRoot
@@ -771,11 +1012,24 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         settings.PageCacheMegabytes = (int)_pageCacheMegabytes;
         settings.CoverDecodeWidth = (int)_coverDecodeWidth;
         settings.Account.Site = (EhSite)_siteIndex;
+        settings.Account.FavoriteSlotNames = FavoriteSlots.Select(f => f.Name.Trim()).ToList();
+        settings.Account.Normalize();
+
+        settings.Online.ShowTagTranslations = _showTagTranslations;
+        settings.Online.TagTranslationUrl = TagTranslationUrl.Trim();
+        settings.Online.ReadOriginalImages = _readOriginalImages;
+        settings.Online.Filters = Filters.Select(f => f.Rule.Clone()).ToList();
+        settings.Online.Normalize();
 
         ApplyNetworkSettings(save: false);
         ApplyDownloadSettings(save: false);
         _services.TrySaveSettings(out _);
         App.ApplyTheme(settings.Theme);
+
+        FilterStatus = settings.Online.Filters.Count == 0
+            ? "没有过滤规则"
+            : $"{settings.Online.Filters.Count} 条规则已保存";
+        FavoriteSlotStatus = "已保存，收藏页与详情窗口立即生效";
 
         // Saved state becomes the new baseline: a second "保存" without further
         // edits must not trigger another full library rescan.

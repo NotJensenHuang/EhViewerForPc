@@ -40,6 +40,30 @@ public static partial class EhParser
     [GeneratedRegex(@"<option[^>]*value\s*=\s*""(?<slot>[0-9]+)""[^>]*selected", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SelectedFavSlotRegex();
 
+    [GeneratedRegex(@"var\s+apiuid\s*=\s*(-?[0-9]+)", RegexOptions.CultureInvariant)]
+    private static partial Regex ApiUidRegex();
+
+    [GeneratedRegex(@"var\s+apikey\s*=\s*""([^""]*)""", RegexOptions.CultureInvariant)]
+    private static partial Regex ApiKeyRegex();
+
+    [GeneratedRegex(@"\bTorrent Download\s*\(\s*([0-9]+)\s*\)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TorrentCountRegex();
+
+    [GeneratedRegex(@"Posted on\s+(.+?)\s+by:", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CommentPostedRegex();
+
+    [GeneratedRegex(@"([+-]?[0-9]+)", RegexOptions.CultureInvariant)]
+    private static partial Regex SignedNumberRegex();
+
+    [GeneratedRegex(@"[?&]or=([^&""]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex ArchiveOrRegex();
+
+    [GeneratedRegex(@"do_hathdl\('([^']+)'\)", RegexOptions.CultureInvariant)]
+    private static partial Regex ArchiveKeyRegex();
+
+    [GeneratedRegex(@"You must have a H@H client assigned to your account to use this feature\.", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex HathClientRequiredRegex();
+
     // ------------------------------------------------------------- listings
 
     public static EhGalleryListPage ParseGalleryList(string html, EhSite site, int pageIndex)
@@ -73,6 +97,7 @@ public static partial class EhParser
             EhCategory? category = EhCategories.Parse(summary.Category);
             summary.CategoryKey = category?.ToString() ?? string.Empty;
             summary.CategoryColor = EhCategories.GetColor(category ?? EhCategory.Misc);
+            ExtractListTags(scope).ForEach(summary.Tags.Add);
             page.Items.Add(summary);
         }
 
@@ -191,6 +216,27 @@ public static partial class EhParser
         return string.Empty;
     }
 
+    /// <summary>
+    /// Reads the tag chips of a list row. Each chip carries
+    /// <c>title="namespace:tag"</c>; the visible text is only the tag name.
+    /// </summary>
+    private static List<string> ExtractListTags(HtmlNode scope)
+    {
+        var tags = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (HtmlNode node in scope.Descendants())
+        {
+            if (!node.HasClass("gt") && !node.HasClass("gtl")) continue;
+            string title = node.GetAttribute("title").Trim();
+            string value = title.Length > 0 ? title : Clean(node.InnerText);
+            if (value.Length > 0 && seen.Add(value)) tags.Add(value);
+            if (tags.Count >= 40) break;
+        }
+
+        return tags;
+    }
+
     // -------------------------------------------------------------- details
 
     public static EhGalleryDetails ParseGalleryDetail(string html, EhSite site, long gid, string token)
@@ -259,6 +305,17 @@ public static partial class EhParser
 
         HtmlNode? favoriteCount = document.FirstDescendantById("favcount");
         if (favoriteCount is not null) details.Favorited = Clean(favoriteCount.InnerText);
+
+        HtmlNode? ratingCount = document.FirstDescendantById("rating_count");
+        if (ratingCount is not null &&
+            int.TryParse(Clean(ratingCount.InnerText).Replace(",", string.Empty), out int votes))
+        {
+            details.RatingCount = votes;
+        }
+
+        ParseApiIdentity(html, details);
+        ParseDetailActions(document, site, details);
+        ParseComments(document, details);
 
         HtmlNode? thumb = document.FirstDescendantById("gd1");
         if (thumb is not null)
@@ -333,6 +390,283 @@ public static partial class EhParser
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// Reads <c>var apiuid/apikey</c> from the detail page. Rating and comment
+    /// voting sign their API calls with these values; anonymous pages send -1.
+    /// </summary>
+    private static void ParseApiIdentity(string html, EhGalleryDetails details)
+    {
+        Match uid = ApiUidRegex().Match(html);
+        if (uid.Success && long.TryParse(uid.Groups[1].Value, out long value)) details.ApiUid = value;
+
+        Match key = ApiKeyRegex().Match(html);
+        if (key.Success) details.ApiKey = key.Groups[1].Value;
+    }
+
+    /// <summary>
+    /// #gd5 carries two popup links: gallerytorrents.php and archiver.php. They
+    /// are only rendered for galleries that actually have one, so a missing link
+    /// means the action is unavailable rather than a parse failure.
+    /// </summary>
+    private static void ParseDetailActions(HtmlNode document, EhSite site, EhGalleryDetails details)
+    {
+        foreach (HtmlNode anchor in document.Descendants("a"))
+        {
+            string onclick = anchor.GetAttribute("onclick");
+            if (!onclick.Contains("popUp", StringComparison.OrdinalIgnoreCase)) continue;
+
+            int start = onclick.IndexOf("popUp('", StringComparison.Ordinal);
+            if (start < 0) continue;
+            start += "popUp('".Length;
+            int end = onclick.IndexOf('\'', start);
+            if (end <= start) continue;
+
+            string url = onclick[start..end].Replace("&amp;", "&", StringComparison.Ordinal);
+            if (url.Length == 0) continue;
+
+            if (url.Contains("gallerytorrents.php", StringComparison.OrdinalIgnoreCase))
+            {
+                details.TorrentUrl = EhUrls.Absolute(site, url);
+                Match count = TorrentCountRegex().Match(Clean(anchor.InnerText));
+                if (count.Success && int.TryParse(count.Groups[1].Value, out int torrents)) details.TorrentCount = torrents;
+            }
+            else if (url.Contains("archiver.php", StringComparison.OrdinalIgnoreCase))
+            {
+                details.ArchiveUrl = EhUrls.Absolute(site, url);
+            }
+        }
+    }
+
+    /// <summary>Comments on the detail page: #cdiv → div.c1 blocks.</summary>
+    public static void ParseComments(HtmlNode document, EhGalleryDetails details)
+    {
+        HtmlNode? container = document.FirstDescendantById("cdiv");
+        if (container is null) return;
+
+        foreach (HtmlNode block in container.DescendantsByClass("c1"))
+        {
+            HtmlNode? body = block.FirstDescendantByClass("c6");
+            if (body is null) continue;
+
+            var comment = new EhComment
+            {
+                Text = Clean(body.InnerText),
+                IsEdited = block.FirstDescendantByClass("c8") is not null,
+            };
+
+            string id = body.Id;
+            if (id.StartsWith("comment_", StringComparison.Ordinal) &&
+                long.TryParse(id["comment_".Length..], out long commentId))
+            {
+                comment.Id = commentId;
+            }
+
+            HtmlNode? meta = block.FirstDescendantByClass("c3");
+            if (meta is not null)
+            {
+                HtmlNode? user = meta.FirstDescendant("a");
+                comment.User = Clean(user?.InnerText ?? string.Empty);
+
+                Match posted = CommentPostedRegex().Match(Clean(meta.InnerText));
+                if (posted.Success) comment.Posted = posted.Groups[1].Value.Trim();
+            }
+
+            HtmlNode? score = block.FirstDescendantByClass("c5");
+            if (score is not null)
+            {
+                Match number = SignedNumberRegex().Match(Clean(score.InnerText));
+                if (number.Success && int.TryParse(number.Groups[1].Value.TrimStart('+'), out int points))
+                {
+                    comment.Score = points;
+                }
+            }
+
+            HtmlNode? votes = block.FirstDescendantByClass("c7");
+            if (votes is not null) comment.VoteDetail = Clean(votes.InnerText);
+
+            // .c4 only exists for signed-in users and carries Vote+ / Vote- / Edit.
+            HtmlNode? actions = block.FirstDescendantByClass("c4");
+            if (actions is not null)
+            {
+                foreach (HtmlNode action in actions.Descendants())
+                {
+                    string text = Clean(action.InnerText);
+                    if (text.Equals("Vote+", StringComparison.OrdinalIgnoreCase)) comment.CanVoteUp = true;
+                    else if (text.Equals("Vote-", StringComparison.OrdinalIgnoreCase)) comment.CanVoteDown = true;
+                    else if (text.Equals("Edit", StringComparison.OrdinalIgnoreCase)) comment.CanEdit = true;
+                }
+            }
+
+            details.Comments.Add(comment);
+        }
+
+        HtmlNode? header = container.FirstDescendantById("chd");
+        if (header is not null)
+        {
+            details.HasMoreComments = header.InnerText.Contains("click to show all", StringComparison.OrdinalIgnoreCase);
+        }
+
+        details.CanPostComment = container.InnerText.Contains("Post New Comment", StringComparison.OrdinalIgnoreCase) ||
+                                 document.InnerText.Contains("commenttext_new", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // --------------------------------------------------------------- torrents
+
+    /// <summary>Parses gallerytorrents.php: one &lt;form&gt; per torrent listing.</summary>
+    public static EhTorrentList ParseTorrents(string html, EhSite site)
+    {
+        var list = new EhTorrentList();
+        HtmlNode document = HtmlLite.Parse(html);
+
+        foreach (HtmlNode form in document.Descendants("form"))
+        {
+            HtmlNode? link = form.Descendants("a").FirstOrDefault(a =>
+                a.GetAttribute("href").Contains("/get/", StringComparison.OrdinalIgnoreCase));
+            if (link is null) continue;
+
+            string href = NormalizeUrl(link.GetAttribute("href"));
+            int query = href.IndexOf("?p=", StringComparison.Ordinal);
+            if (query > 0) href = href[..query];
+
+            var torrent = new EhTorrent
+            {
+                Name = Clean(link.InnerText),
+                Url = href,
+            };
+
+            foreach (HtmlNode cell in form.Descendants("td"))
+            {
+                string text = Clean(cell.InnerText);
+                if (text.Length == 0) continue;
+                if (text.StartsWith("Posted:", StringComparison.OrdinalIgnoreCase))
+                {
+                    torrent.Posted = text["Posted:".Length..].Trim();
+                }
+                else if (text.StartsWith("Size:", StringComparison.OrdinalIgnoreCase))
+                {
+                    torrent.Size = text["Size:".Length..].Trim();
+                }
+                else if (text.StartsWith("Seeds:", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(text["Seeds:".Length..].Trim(), out int seeds)) torrent.Seeds = seeds;
+                }
+                else if (text.StartsWith("Peers:", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(text["Peers:".Length..].Trim(), out int peers)) torrent.Peers = peers;
+                }
+                else if (text.StartsWith("Downloads:", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (int.TryParse(text["Downloads:".Length..].Trim(), out int downloads)) torrent.Downloads = downloads;
+                }
+                else if (text.StartsWith("Uploader:", StringComparison.OrdinalIgnoreCase))
+                {
+                    torrent.Uploader = text["Uploader:".Length..].Trim();
+                }
+            }
+
+            if (torrent.Url.Length > 0) list.Items.Add(torrent);
+        }
+
+        if (list.Items.Count == 0)
+        {
+            list.RequiresSignIn = html.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase);
+            list.Message = DetectMessage(html) ?? (list.RequiresSignIn ? "需要登录后查看种子" : "没有种子");
+        }
+
+        return list;
+    }
+
+    // --------------------------------------------------------------- archives
+
+    /// <summary>Parses archiver.php: the option list plus the <c>or</c> form token.</summary>
+    public static EhArchivePage ParseArchivePage(string html, EhSite site)
+    {
+        var page = new EhArchivePage();
+        HtmlNode document = HtmlLite.Parse(html);
+
+        if (html.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase))
+        {
+            page.RequiresSignIn = true;
+            page.Message = "归档下载需要登录 E-Hentai 账号";
+            return page;
+        }
+
+        HtmlNode? form = document.FirstDescendantById("hathdl_form");
+        if (form is null)
+        {
+            // The site answers a repeated request with the generated archive
+            // page instead of the form.
+            page.DownloadUrl = FindArchiveLink(document, site);
+            page.Generated = page.DownloadUrl.Length > 0;
+            page.Message = page.Generated
+                ? string.Empty
+                : DetectMessage(html) ?? Clean(document.FirstDescendantById("db")?.InnerText ?? string.Empty);
+            return page;
+        }
+
+        Match or = ArchiveOrRegex().Match(form.GetAttribute("action"));
+        if (or.Success) page.Or = or.Groups[1].Value;
+
+        foreach (HtmlNode anchor in form.Descendants("a"))
+        {
+            Match key = ArchiveKeyRegex().Match(anchor.GetAttribute("onclick"));
+            if (!key.Success) continue;
+
+            string label = Clean(anchor.InnerText);
+            if (label.Length == 0) continue;
+            page.Options.Add(new EhArchiveOption { Key = key.Groups[1].Value, Label = label });
+        }
+
+        if (page.Options.Count == 0) page.Message = DetectMessage(html) ?? "没有可用的归档格式";
+        return page;
+    }
+
+    /// <summary>Classifies the archiver POST response.</summary>
+    public static EhArchiveResult ParseArchiveResult(string html, EhSite site)
+    {
+        if (html.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase))
+        {
+            return new EhArchiveResult { Message = "归档下载需要登录" };
+        }
+
+        if (HathClientRequiredRegex().IsMatch(html))
+        {
+            return new EhArchiveResult
+            {
+                NeedsHathClient = true,
+                Message = "该归档需要 H@H 客户端：请先在站点分配 H@H 客户端，或改用普通下载",
+            };
+        }
+
+        HtmlNode document = HtmlLite.Parse(html);
+        string link = FindArchiveLink(document, site);
+        if (link.Length > 0)
+        {
+            return new EhArchiveResult { Success = true, DownloadUrl = link, Message = "归档已生成" };
+        }
+
+        string? message = DetectMessage(html);
+        if (message is not null)
+        {
+            return new EhArchiveResult { Message = message };
+        }
+
+        return new EhArchiveResult { Success = true, Queued = true, Message = "归档请求已提交，站点生成后可再次点击获取链接" };
+    }
+
+    private static string FindArchiveLink(HtmlNode document, EhSite site)
+    {
+        foreach (HtmlNode anchor in document.Descendants("a"))
+        {
+            string href = anchor.GetAttribute("href");
+            if (href.Length == 0) continue;
+            if (!href.Contains(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+            return EhUrls.Absolute(site, href);
+        }
+
+        return string.Empty;
     }
 
     // ------------------------------------------------------------ page list

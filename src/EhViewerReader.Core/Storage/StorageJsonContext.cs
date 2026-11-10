@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EhViewerReader.Core.Download;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Online;
 
 namespace EhViewerReader.Core.Storage;
 
@@ -21,4 +22,5 @@ namespace EhViewerReader.Core.Storage;
 [JsonSerializable(typeof(ProgressFile))]
 [JsonSerializable(typeof(LibraryCache))]
 [JsonSerializable(typeof(DownloadFile))]
-internal sealed partial class StorageJsonContext : JsonSerializerContext;
+[JsonSerializable(typeof(TagTranslationDatabase))]
+public sealed partial class StorageJsonContext : JsonSerializerContext;

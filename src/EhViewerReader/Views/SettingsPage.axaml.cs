@@ -64,6 +64,12 @@ public partial class SettingsPage : UserControl
         if (sender is Button { Tag: SourceRowViewModel row }) viewModel.RemoveSource(row);
     }
 
+    private void OnRemoveFilter(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not SettingsViewModel viewModel) return;
+        if (sender is Button { Tag: FilterRuleViewModel row }) viewModel.RemoveFilterCommand.Execute(row);
+    }
+
     private async Task<string?> PickFolderAsync(string title)
     {
         TopLevel? top = TopLevel.GetTopLevel(this);

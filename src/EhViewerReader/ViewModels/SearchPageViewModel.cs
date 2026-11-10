@@ -327,6 +327,7 @@ public sealed partial class SearchPageViewModel : ObservableObject
     {
         IsBusy = true;
         StatusText = "搜索中…";
+        int filtered = 0;
         try
         {
             EhGalleryListPage page = await _services.Online
@@ -347,6 +348,12 @@ public sealed partial class SearchPageViewModel : ObservableObject
 
             foreach (EhGallerySummary summary in page.Items)
             {
+                if (!EhFilter.IsVisible(summary, _services.Settings.Online.Filters))
+                {
+                    filtered++;
+                    continue;
+                }
+
                 var item = new OnlineGalleryItemViewModel(
                     summary,
                     _services.OnlineImages.CreateThumbnailRequest(summary.ThumbUrl),
@@ -360,7 +367,9 @@ public sealed partial class SearchPageViewModel : ObservableObject
             PageLabel = $"第 {_urlIndex + 1} 页";
             StatusText = page.Items.Count == 0
                 ? page.StatusMessage ?? "没有匹配结果"
-                : page.StatusMessage ?? $"{page.Items.Count} 项结果";
+                : page.StatusMessage ?? (filtered > 0
+                    ? $"{page.Items.Count} 项结果 · 已过滤 {filtered} 项"
+                    : $"{page.Items.Count} 项结果");
             OnPropertyChanged(nameof(ShowEmpty));
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException)

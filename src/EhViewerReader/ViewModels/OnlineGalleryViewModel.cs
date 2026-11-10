@@ -4,13 +4,14 @@ using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerReader.Core.Online;
+using EhViewerReader.Core.Models;
 using EhViewerReader.Services;
 
 namespace EhViewerReader.ViewModels;
 
 /// <summary>
-/// Online gallery detail: metadata, tags, favourite slot and the two entry
-/// points that matter — read online and download.
+/// Online gallery detail: metadata, tags, favourite slot, rating, comments and
+/// the entry points that matter — read online, download, torrents and archive.
 /// </summary>
 public sealed partial class OnlineGalleryViewModel : ObservableObject
 {
@@ -26,20 +27,21 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     private FeedOption? _selectedSlot;
     private bool _suppressSlotChange;
 
+    private int _myRating;
+    private string _ratingStatus = string.Empty;
+    private string _commentText = string.Empty;
+    private string _commentStatus = string.Empty;
+    private bool _postingComment;
+    private bool _loadingComments;
+    private long? _editingCommentId;
+
     public OnlineGalleryViewModel(AppServices services, IOnlineHost host, EhGallerySummary summary)
     {
         _services = services;
         _host = host;
         _summary = summary;
 
-        FavoriteSlots.Add(new FeedOption("-1", "未收藏"));
-        for (int slot = 0; slot < 10; slot++)
-        {
-            FavoriteSlots.Add(new FeedOption(slot.ToString(), "分类 " + slot));
-        }
-
-        _selectedSlot = FavoriteSlots[0];
-        _selectedSlot.IsActive = true;
+        RebuildFavoriteSlots();
 
         Title = summary.Title;
         if (summary.ThumbUrl.Length > 0)
@@ -52,10 +54,18 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
 
     public event EventHandler<string>? TagSearchRequested;
 
+    public event EventHandler<EhGalleryDetails>? TorrentsRequested;
+
+    public event EventHandler<EhGalleryDetails>? ArchiveRequested;
+
     public ObservableCollection<TagChip> Tags { get; } = [];
     public ObservableCollection<FeedOption> FavoriteSlots { get; } = [];
+    public ObservableCollection<CommentItemViewModel> Comments { get; } = [];
 
     public EhGallerySummary Summary => _summary;
+
+    /// <summary>Loaded detail page; null until <see cref="InitializeAsync"/> finishes.</summary>
+    public EhGalleryDetails? Details => _details;
     public long Gid => _summary.Gid;
     public string GidText => "#" + _summary.Gid;
     public string Url => EhUrls.Detail(_services.Online.Site, _summary.Gid, _summary.Token);
@@ -84,16 +94,25 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
 
     public bool IsSignedIn => _services.Online.IsSignedIn;
 
+    /// <summary>API identity is only present for signed-in users.</summary>
+    public bool CanInteract => _details?.CanUseApi == true;
+
     public string CategoryText => _details?.Category ?? _summary.CategoryDisplay;
     public IBrush CategoryBrush => new SolidColorBrush(Color.Parse(_details?.CategoryColor ?? _summary.CategoryColor));
     public string PagesText => (_details?.Pages ?? _summary.Pages) is int pages and > 0 ? $"{pages} 页" : "—";
     public string RatingText => _details is { Rating: > 0 } d ? d.Rating.ToString("F2") : _summary.RatingText;
+    public string RatingCountText => _details is { RatingCount: > 0 } d ? $"{d.RatingCount} 人评分" : string.Empty;
     public string PostedText => _details?.Posted ?? _summary.Posted;
     public string UploaderText => _details?.Uploader ?? _summary.Uploader;
     public string FileSizeText => _details?.FileSize ?? "—";
     public string LanguageText => _details?.Language ?? "—";
     public string VisibleText => _details?.Visible ?? "—";
     public string ParentText => _details?.Parent ?? "—";
+    public string TorrentText => _details is { TorrentCount: > 0 } d ? $"种子 ({d.TorrentCount})" : "种子";
+    public bool HasTorrents => _details is { TorrentCount: > 0 };
+    public bool HasArchive => (_details?.ArchiveUrl.Length ?? 0) > 0;
+    public string FavoriteCountText => _details is { Favorited.Length: > 0 } d ? d.Favorited : string.Empty;
+    public bool HasFavoriteCount => FavoriteCountText.Length > 0;
 
     public string MetaLine
     {
@@ -133,6 +152,78 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         }
     }
 
+    /// <summary>The rating this window submitted (0 = not rated here).</summary>
+    public int MyRating
+    {
+        get => _myRating;
+        private set
+        {
+            if (!SetProperty(ref _myRating, value))
+            {
+                return;
+            }
+
+            OnPropertyChanged(nameof(MyRatingText));
+        }
+    }
+
+    public string MyRatingText => _myRating <= 0
+        ? "未评分"
+        : new string('★', _myRating) + new string('☆', 5 - _myRating);
+
+    public string RatingStatus
+    {
+        get => _ratingStatus;
+        private set
+        {
+            if (SetProperty(ref _ratingStatus, value)) OnPropertyChanged(nameof(HasRatingStatus));
+        }
+    }
+
+    public bool HasRatingStatus => _ratingStatus.Length > 0;
+
+    public string CommentText
+    {
+        get => _commentText;
+        set => SetProperty(ref _commentText, value);
+    }
+
+    public string CommentStatus
+    {
+        get => _commentStatus;
+        private set => SetProperty(ref _commentStatus, value);
+    }
+
+    public bool PostingComment
+    {
+        get => _postingComment;
+        private set
+        {
+            if (SetProperty(ref _postingComment, value)) OnPropertyChanged(nameof(CanPostComment));
+        }
+    }
+
+    public bool LoadingComments
+    {
+        get => _loadingComments;
+        private set
+        {
+            if (SetProperty(ref _loadingComments, value)) OnPropertyChanged(nameof(CanPostComment));
+        }
+    }
+
+    public bool CanPostComment => IsSignedIn && !PostingComment && !LoadingComments;
+
+    public string CommentHeader => Comments.Count > 0 ? $"评论（{Comments.Count}）" : "评论";
+
+    public bool IsEditingComment => _editingCommentId is not null;
+
+    public string CommentSubmitText => IsEditingComment ? "保存修改" : "发布评论";
+
+    public bool HasComments => Comments.Count > 0;
+
+    public bool HasMoreComments => _details?.HasMoreComments == true;
+
     public async Task InitializeAsync()
     {
         IsLoading = true;
@@ -146,24 +237,16 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
             _details = details;
             Title = details.DisplayTitle.Length > 0 ? details.DisplayTitle : _summary.Title;
             StatusText = string.Empty;
+            MyRating = 0;
+            RatingStatus = string.Empty;
+            CommentStatus = string.Empty;
 
             if (details.ThumbUrl.Length > 0)
             {
                 CoverRequest = _services.OnlineImages.CreateThumbnailRequest(details.ThumbUrl);
             }
 
-            Tags.Clear();
-            foreach (EhTag tag in details.Tags)
-            {
-                string term = tag.SearchTerm;
-                Tags.Add(new TagChip
-                {
-                    Display = (tag.Namespace.Length > 0 ? tag.Namespace + ":" : string.Empty) + tag.Name,
-                    Term = term,
-                    NamespaceLabel = tag.Namespace,
-                    Command = new RelayCommand(() => TagSearchRequested?.Invoke(this, term)),
-                });
-            }
+            BuildTags(details);
 
             int slot = details.FavoriteSlot;
             if (IsSignedIn && slot < 0)
@@ -174,6 +257,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
             }
 
             SetSlot(slot);
+            RebuildComments(details.Comments);
             RaiseMetadata();
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
@@ -184,6 +268,51 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         {
             IsLoading = false;
         }
+    }
+
+    private void BuildTags(EhGalleryDetails details)
+    {
+        Tags.Clear();
+        bool translate = _services.Settings.Online.ShowTagTranslations;
+
+        foreach (EhTag tag in details.Tags)
+        {
+            string term = tag.SearchTerm;
+            string? translated = translate ? _services.TagTranslation.Translate(tag.Namespace, tag.Name) : null;
+            string display;
+            if (translated is null)
+            {
+                display = tag.Namespace.Length > 0 ? tag.Namespace + ":" + tag.Name : tag.Name;
+            }
+            else
+            {
+                string ns = _services.TagTranslation.Namespace(tag.Namespace);
+                display = ns.Length > 0 ? ns + ":" + translated : translated;
+            }
+
+            Tags.Add(new TagChip
+            {
+                Display = display,
+                Term = term,
+                NamespaceLabel = tag.Namespace,
+                Command = new RelayCommand(() => TagSearchRequested?.Invoke(this, term)),
+            });
+        }
+    }
+
+    private void RebuildComments(IEnumerable<EhComment> comments)
+    {
+        Comments.Clear();
+        foreach (EhComment comment in comments)
+        {
+            comment.IsUploader = comment.User.Length > 0 &&
+                                 string.Equals(comment.User, _details?.Uploader, StringComparison.OrdinalIgnoreCase);
+            Comments.Add(new CommentItemViewModel(comment, this));
+        }
+
+        OnPropertyChanged(nameof(HasComments));
+        OnPropertyChanged(nameof(CommentHeader));
+        OnPropertyChanged(nameof(HasMoreComments));
     }
 
     private void SetSlot(int slot)
@@ -232,7 +361,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
             if (ok)
             {
                 SetSlot(add ? target : -1);
-                StatusText = add ? "已收藏到分类 " + target : "已取消收藏";
+                StatusText = add ? "已收藏到 " + _services.Settings.Account.FavoriteSlotName(target) : "已取消收藏";
                 _host.Notify(StatusText);
             }
             else
@@ -246,6 +375,23 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
             StatusText = "收藏失败：" + ex.Message;
             SetSlot(_favoriteSlot);
         }
+    }
+
+    /// <summary>Rebuilds the slot list so settings renames appear immediately.</summary>
+    public void RebuildFavoriteSlots()
+    {
+        int selected = _selectedSlot is not null && int.TryParse(_selectedSlot.Key, out int slot) ? slot : -1;
+
+        FavoriteSlots.Clear();
+        FavoriteSlots.Add(new FeedOption("-1", "未收藏"));
+        for (int index = 0; index < 10; index++)
+        {
+            FavoriteSlots.Add(new FeedOption(index.ToString(), _services.Settings.Account.FavoriteSlotName(index)));
+        }
+
+        FeedOption option = FavoriteSlots.FirstOrDefault(o => o.Key == selected.ToString()) ?? FavoriteSlots[0];
+        option.IsActive = true;
+        _selectedSlot = option;
     }
 
     [RelayCommand]
@@ -266,17 +412,33 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void OpenTorrents()
+    {
+        if (_details is null) return;
+        TorrentsRequested?.Invoke(this, _details);
+    }
+
+    [RelayCommand]
+    private void OpenArchive()
+    {
+        if (_details is null) return;
+        if (!IsSignedIn)
+        {
+            _host.Notify("归档下载需要登录 E-Hentai 账号");
+            return;
+        }
+
+        ArchiveRequested?.Invoke(this, _details);
+    }
+
+    [RelayCommand]
     private void OpenInBrowser()
     {
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = Url, UseShellExecute = true });
-        }
-        catch (Exception ex)
-        {
-            _host.Notify("无法打开浏览器：" + ex.Message);
-        }
+        _host.OpenExternal(Url);
     }
+
+    [RelayCommand]
+    private void OpenHathPage() => _host.OpenExternal(EhUrls.HathClient(_host.Site));
 
     [RelayCommand]
     private void SearchTag(TagChip? chip)
@@ -294,14 +456,168 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         _ = ApplySlotAsync(target);
     }
 
+    [RelayCommand]
+    private async Task RateAsync(string? stars)
+    {
+        if (_details is null) return;
+        if (!CanInteract)
+        {
+            RatingStatus = "评分需要登录（匿名页面没有 API 身份）";
+            return;
+        }
+
+        if (!int.TryParse(stars, out int value) || value is < 1 or > 5) return;
+
+        RatingStatus = "正在提交评分…";
+        try
+        {
+            (double average, int count, string? error) = await _services.Online
+                .RateGalleryAsync(_details, value, CancellationToken.None)
+                .ConfigureAwait(true);
+
+            if (error is not null)
+            {
+                RatingStatus = "评分失败：" + error;
+                return;
+            }
+
+            _details.Rating = average;
+            _details.RatingCount = count;
+            MyRating = value;
+            RatingStatus = "已评分";
+            RaiseMetadata();
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException)
+        {
+            RatingStatus = "评分失败：" + ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private async Task PostCommentAsync()
+    {
+        if (_details is null) return;
+        if (!IsSignedIn)
+        {
+            CommentStatus = "需要登录后才能评论";
+            return;
+        }
+
+        string text = CommentText.Trim();
+        if (text.Length == 0)
+        {
+            CommentStatus = "评论内容不能为空";
+            return;
+        }
+
+        PostingComment = true;
+        CommentStatus = _editingCommentId is null ? "正在发布…" : "正在保存修改…";
+        try
+        {
+            EhCommentActionResult result = await _services.Online
+                .PostCommentAsync(_details.Gid, _details.Token, text, _editingCommentId, CancellationToken.None)
+                .ConfigureAwait(true);
+
+            CommentStatus = result.Message;
+            if (result.Success)
+            {
+                CommentText = string.Empty;
+                ClearEdit();
+                await ReloadCommentsAsync().ConfigureAwait(true);
+            }
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException)
+        {
+            CommentStatus = "发布失败：" + ex.Message;
+        }
+        finally
+        {
+            PostingComment = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ReloadCommentsAsync()
+    {
+        if (_details is null) return;
+
+        LoadingComments = true;
+        try
+        {
+            EhCommentList list = await _services.Online
+                .GetCommentsAsync(_details.Gid, _details.Token, CancellationToken.None)
+                .ConfigureAwait(true);
+            _details.HasMoreComments = list.HasMore;
+            RebuildComments(list.Comments);
+            OnPropertyChanged(nameof(HasMoreComments));
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException)
+        {
+            CommentStatus = "评论加载失败：" + ex.Message;
+        }
+        finally
+        {
+            LoadingComments = false;
+        }
+    }
+
+    /// <summary>Loads an editable comment into the box; save reuses the same command.</summary>
+    public void StartEditComment(CommentItemViewModel item)
+    {
+        if (!item.CanEdit) return;
+        _editingCommentId = item.Id;
+        CommentText = item.Text;
+        CommentStatus = "正在编辑评论，保存后立即生效";
+        OnPropertyChanged(nameof(IsEditingComment));
+        OnPropertyChanged(nameof(CommentSubmitText));
+    }
+
+    public void ClearEdit()
+    {
+        if (_editingCommentId is null) return;
+        _editingCommentId = null;
+        CommentText = string.Empty;
+        CommentStatus = string.Empty;
+        OnPropertyChanged(nameof(IsEditingComment));
+        OnPropertyChanged(nameof(CommentSubmitText));
+    }
+
+    [RelayCommand]
+    private void CancelEdit() => ClearEdit();
+
+    public async Task VoteCommentAsync(CommentItemViewModel item, int vote)
+    {
+        if (_details is null) return;
+        if (!CanInteract)
+        {
+            CommentStatus = "投票需要登录";
+            return;
+        }
+
+        try
+        {
+            EhCommentActionResult result = await _services.Online
+                .VoteCommentAsync(_details, item.Id, vote, CancellationToken.None)
+                .ConfigureAwait(true);
+
+            CommentStatus = result.Message;
+            if (result.Success) item.ApplyScore(result.Score);
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException)
+        {
+            CommentStatus = "投票失败：" + ex.Message;
+        }
+    }
+
     private void RaiseMetadata()
     {
         foreach (string property in new[]
                  {
                      nameof(JapaneseTitle), nameof(HasJapaneseTitle), nameof(CategoryText), nameof(CategoryBrush),
-                     nameof(PagesText), nameof(RatingText), nameof(PostedText), nameof(UploaderText),
-                     nameof(FileSizeText), nameof(LanguageText), nameof(VisibleText), nameof(ParentText),
-                     nameof(MetaLine), nameof(Title),
+                     nameof(PagesText), nameof(RatingText), nameof(RatingCountText), nameof(PostedText),
+                     nameof(UploaderText), nameof(FileSizeText), nameof(LanguageText), nameof(VisibleText),
+                     nameof(ParentText), nameof(MetaLine), nameof(Title), nameof(TorrentText), nameof(HasTorrents),
+                     nameof(HasArchive), nameof(FavoriteCountText), nameof(CanInteract), nameof(CanPostComment),
                  })
         {
             OnPropertyChanged(property);

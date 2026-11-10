@@ -143,15 +143,21 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
 public sealed partial class FeedOption : ObservableObject
 {
     private bool _isActive;
+    private string _label;
 
     public FeedOption(string key, string label)
     {
         Key = key;
-        Label = label;
+        _label = label;
     }
 
     public string Key { get; }
-    public string Label { get; }
+
+    public string Label
+    {
+        get => _label;
+        set => SetProperty(ref _label, value);
+    }
 
     public bool IsActive
     {
@@ -191,6 +197,47 @@ public sealed class TagChip
     public bool IsNamespace { get; init; }
     public string NamespaceLabel { get; init; } = string.Empty;
     public System.Windows.Input.ICommand? Command { get; init; }
+}
+
+/// <summary>One comment row; voting is delegated to the detail view model.</summary>
+public sealed partial class CommentItemViewModel : ObservableObject
+{
+    private readonly OnlineGalleryViewModel _owner;
+
+    public CommentItemViewModel(EhComment comment, OnlineGalleryViewModel owner)
+    {
+        Comment = comment;
+        _owner = owner;
+    }
+
+    public EhComment Comment { get; }
+    public long Id => Comment.Id;
+    public string User => Comment.User.Length > 0 ? Comment.User : "匿名";
+    public string PostedText => Comment.PostedText;
+    public string ScoreText => Comment.ScoreText;
+    public string Text => Comment.Text;
+    public bool IsUploader => Comment.IsUploader;
+    public bool IsEdited => Comment.IsEdited;
+    public string VoteDetail => Comment.VoteDetail;
+    public bool HasVoteDetail => Comment.VoteDetail.Length > 0;
+    public bool CanVote => _owner.CanInteract && Comment.Id > 0;
+    public bool CanEdit => _owner.CanInteract && Comment.CanEdit;
+    public string UploaderBadge => Comment.IsUploader ? "上传者" : string.Empty;
+
+    [RelayCommand]
+    private Task VoteUp() => _owner.VoteCommentAsync(this, 1);
+
+    [RelayCommand]
+    private Task VoteDown() => _owner.VoteCommentAsync(this, -1);
+
+    [RelayCommand]
+    private void Edit() => _owner.StartEditComment(this);
+
+    public void ApplyScore(int score)
+    {
+        Comment.Score = score;
+        OnPropertyChanged(nameof(ScoreText));
+    }
 }
 
 /// <summary>Live view over one queued download (the engine raises change events).</summary>

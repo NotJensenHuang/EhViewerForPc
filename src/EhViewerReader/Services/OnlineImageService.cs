@@ -47,7 +47,8 @@ public sealed class OnlineImageService
         bool original,
         Action<int, int>? resolved)
     {
-        string key = $"{page.Gid}-{page.Page:D5}";
+        // Original and resampled files differ, so they must not share a cache entry.
+        string key = $"{page.Gid}-{page.Page:D5}" + (original ? "-orig" : string.Empty);
         string path = Path.Combine(_paths.OnlineCacheDirectory, key + ".img");
         return new RemoteImageRequest(
             this,

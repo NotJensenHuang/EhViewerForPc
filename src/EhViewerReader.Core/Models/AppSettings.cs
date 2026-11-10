@@ -73,6 +73,8 @@ public sealed class AppSettings
 
     public NetworkSettings Network { get; set; } = new();
 
+    public OnlineSettings Online { get; set; } = new();
+
     public DownloadSettings Download { get; set; } = new();
 
     /// <summary>
@@ -125,6 +127,8 @@ public sealed class AppSettings
         Account.Normalize();
         Network ??= new NetworkSettings();
         Network.Normalize();
+        Online ??= new OnlineSettings();
+        Online.Normalize();
         Download ??= new DownloadSettings();
         Download.Normalize();
         SearchHistory ??= [];
@@ -256,12 +260,33 @@ public sealed class AccountSettings
 
     public string LastSignInUtc { get; set; } = string.Empty;
 
+    /// <summary>User-defined names for the ten favourite slots (index 0–9).</summary>
+    public List<string> FavoriteSlotNames { get; set; } = [];
+
     public void Normalize()
     {
         Cookies ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Cookies = new Dictionary<string, string>(Cookies, StringComparer.OrdinalIgnoreCase);
         if (!Enum.IsDefined(Site)) Site = EhSite.EHentai;
+
+        FavoriteSlotNames ??= [];
+        for (int slot = 0; slot < 10; slot++)
+        {
+            string name = slot < FavoriteSlotNames.Count ? FavoriteSlotNames[slot]?.Trim() ?? string.Empty : string.Empty;
+            if (name.Length == 0) name = "分类 " + slot;
+            if (name.Length > 32) name = name[..32];
+
+            if (slot < FavoriteSlotNames.Count) FavoriteSlotNames[slot] = name;
+            else FavoriteSlotNames.Add(name);
+        }
+
+        if (FavoriteSlotNames.Count > 10) FavoriteSlotNames.RemoveRange(10, FavoriteSlotNames.Count - 10);
     }
+
+    public string FavoriteSlotName(int slot) =>
+        slot >= 0 && slot < FavoriteSlotNames.Count && FavoriteSlotNames[slot].Length > 0
+            ? FavoriteSlotNames[slot]
+            : "分类 " + slot;
 
     [JsonIgnore]
     public bool HasCredentials =>
@@ -309,6 +334,48 @@ public sealed class NetworkSettings
 
     public bool HasProxy =>
         ProxyMode is ProxyMode.Http or ProxyMode.Socks5 && ProxyHost.Length > 0 && ProxyPort > 0;
+}
+
+/// <summary>
+/// Online browsing preferences: tag translation, list filters and the quality
+/// used by the online reader.
+/// </summary>
+public sealed class OnlineSettings
+{
+    /// <summary>Community translation database (compressed JSON, ~1.3 MB).</summary>
+    public const string DefaultTagTranslationUrl =
+        "https://github.com/EhTagTranslation/Database/releases/latest/download/db.text.json.gz";
+
+    public bool ShowTagTranslations { get; set; } = true;
+
+    public string TagTranslationUrl { get; set; } = DefaultTagTranslationUrl;
+
+    public string TagTranslationVersion { get; set; } = string.Empty;
+    public string TagTranslationUpdatedUtc { get; set; } = string.Empty;
+    public int TagTranslationCount { get; set; }
+
+    /// <summary>Read the original (full-size) image instead of the resampled one.</summary>
+    public bool ReadOriginalImages { get; set; }
+
+    /// <summary>Include/exclude rules applied to every online listing.</summary>
+    public List<FilterRule> Filters { get; set; } = [];
+
+    public void Normalize()
+    {
+        if (string.IsNullOrWhiteSpace(TagTranslationUrl)) TagTranslationUrl = DefaultTagTranslationUrl;
+        TagTranslationUrl = TagTranslationUrl.Trim();
+        Filters ??= [];
+        Filters.RemoveAll(f => f is null);
+        foreach (FilterRule rule in Filters)
+        {
+            rule.Text = rule.Text?.Trim() ?? string.Empty;
+            if (!Enum.IsDefined(rule.Target)) rule.Target = FilterTarget.Tag;
+        }
+
+        Filters.RemoveAll(f => f.Text.Length == 0);
+    }
+
+    public bool HasFilters => Filters.Any(f => f.Enabled && f.Text.Length > 0);
 }
 
 /// <summary>

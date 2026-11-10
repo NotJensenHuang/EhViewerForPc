@@ -12,6 +12,14 @@
         <TextBlock Text="{Binding Subtitle}" Classes="caption" />
       </StackPanel>
 
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="16,0" VerticalAlignment="Center"
+                  IsVisible="{Binding ShowFavoriteSearch}">
+        <TextBox Width="240" Text="{Binding FavoriteQuery}" PlaceholderText="在收藏夹中搜索标签或关键词…"
+                 KeyDown="OnFavoriteSearchKeyDown" />
+        <Button Content="搜索" Command="{Binding SearchFavoritesCommand}" />
+        <Button Content="清除" Classes="ghost" Command="{Binding ClearFavoriteSearchCommand}" />
+      </StackPanel>
+
       <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
         <ComboBox Width="104" ItemsSource="{Binding ToplistOptions}" SelectedItem="{Binding SelectedToplistOption}"
                   IsVisible="{Binding ShowToplistSelector}" VerticalAlignment="Center">
@@ -57,7 +65,7 @@
 
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
                   IsVisible="{Binding ShowEmpty}">
-        <TextBlock Text="{Binding StatusText}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
+        <TextBlock Text="{Binding StatusText}" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" />
         <TextBlock Classes="secondary" Text="{Binding EmptyText}" HorizontalAlignment="Center" />
         <Button Content="刷新" Command="{Binding RefreshCommand}" HorizontalAlignment="Center" Margin="0,6,0,0" />
       </StackPanel>

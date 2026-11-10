@@ -345,3 +345,68 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-test
 - **IL2026 / IL3050 = 0**。首轮发布曾在 `SearchPage.axaml` 的搜索历史/保存搜索模板上出现反射绑定警告（`x:CompileBindings="False"`），已改为强类型 `TextItem` + 编译绑定；二轮发布无任何裁剪/AOT 警告。
 - AOT 版本运行 `--online-probe`：首页 25 项、详情（211 页 / 评分 2.43 / 515.5 MiB / 3 标签）、页列表 20 项、图片直链、缩略图 23,192 bytes，全部成功。
 - 说明：本机安全策略禁止 `reg.exe`，发布末尾的后置步骤被拦截，但 `dotnet publish` 退出码为 0 且产物完整可运行。
+
+---
+
+## 9. 完整实现补齐（2026-11-10 第二轮）
+
+上一轮标注为「未迁移」的能力已全部落地：种子下载、评论、标签翻译、归档下载、H@H 识别、收藏分类命名，并补充了评分、列表过滤与收藏夹搜索。
+
+### 9.1 单元测试
+
+命令：`dotnet test tests/EhViewerReader.Core.Tests`
+
+结果：**70 passed / 0 failed**（新增 10 项 `OnlineExtrasTests`）：
+
+| 用例 | 断言要点 |
+| --- | --- |
+| 详情扩展 | `#gd5` 的 `archive.php` / `gallerytorrents.php` popUp 链接、`Torrent Download (2)` 计数、`apiuid`/`apikey`、`#rating_count` |
+| 评论解析 | `.c1` 块 → id（`comment_<id>`）、用户、发布时间、`+35` 分数、正文、`.c7` 投票明细、`#chd` 发帖入口 |
+| 种子列表 | 每个 `<form>` 一条：名称、`.torrent` 直链、`?p=` 去除、大小/做种/下载/上传者 |
+| 归档页 | `hathdl_form` 的 `or` 令牌与 `do_hathdl('org'/'res')` 选项；未登录页识别 |
+| 归档结果 | H@H 缺失文案、`.zip` 直链、排队中三种结果分类 |
+| 标签库 | `rows` 命名空间与 `namespace:tag` 映射、缺失键返回 null |
+| 过滤器 | 排除命中隐藏、包含规则白名单、上传者/标题目标、停用规则 |
+| 列表标签 | 紧凑布局 `div.gt[title]` 提取 `language:chinese` 等标签，供过滤器使用 |
+
+### 9.2 在线链路自检（`--online-probe`，未登录）
+
+| 阶段 | 结果 |
+| --- | --- |
+| 首页 | 25 项；首项 7 个标签（`parody:`/`character:`/`female:`），缩略图 `ehgt.org` |
+| 详情 | 66 页、评分 2.5、70.19 MiB、26 个标签、1 条评论（用户 `branday`、`10 November 2026, 10:49`） |
+| 种子 | 1 个种子（70.17 MiB、4 做种、0 下载、`ehtracker.org`） |
+| 种子文件 | 5,997 字节，首字节 `d`（bencode 合法） |
+| 归档 | 未登录时正确返回 `requiresSignIn=true` |
+| 标签翻译 | 下载 + gzip 解压 + 解析 44,873 条，`female:sole female` → 「单女主」 |
+
+### 9.3 UI 冒烟（`--ui-smoke`）
+
+- 新增 `page-settings-online.png`（标签翻译 / 过滤 / 收藏命名）、`online-torrents.png`、`online-archive.png`。
+- 在线详情断言：标签翻译生效（`角色:卡娜莉` 等）、评论区、评分行、种子/归档入口；`hasTorrents=true`、`hasArchive=true`。
+- 种子窗口：实时解析 1 个种子并渲染；归档窗口：未登录提示与禁用「请求归档」。
+- 原有本地库断言保持：6,315 项 / 21 个容器、阅读器 `4 / 9`、逐页截图全部通过。
+
+### 9.4 字体与截图
+
+冒烟截图曾出现两类「重影/糊字」，都已定位并修复：
+
+1. `Microsoft YaHei UI` 没有 SemiBold 字重，Skia 用合成加粗（双重描边）绘制 → 全项目 `FontWeight="SemiBold"` 改为 `Bold`，使用真实粗体字形。
+2. 详情/种子/归档三个子窗口的根 `Grid` 没有背景，`RenderTargetBitmap.Render(window.Content)` 不包含 Window 背景 → 文字在透明像素上抗锯齿，导出 PNG 后出现深色描边。给三个窗口的根面板加上 `Background="{DynamicResource AppBgBrush}"` 后，文字与背景都完整不透明（同时消除了标题被裁切的错觉）。
+
+`SaveScreenshot` 也改为两次渲染（预热 + 正式），避免捕获到异步刷新中的半成品图层。
+
+### 9.5 NativeAOT
+
+```
+dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-extras
+```
+
+- 原生 exe **30.3 MB**，`IL2026 / IL3050 = 0`（`reg.exe` 后置步骤被安全策略拦截，publish 退出码仍为 0，产物完整）。
+- AOT 版 `--online-probe`：首页 25 项、详情（2000 页 / 评分 1.75 / 2 人评分）、种子入口、归档登录检测、标签库 **44,873 条**（下载 + gzip 解压 + 解析 + 落盘）全部通过。
+- 顺带修复了诊断报告在 AOT 下的降级：`OnlineProbeService` 改用字典构造报告，`DiagnosticReport.SerializeFlat` 现在输出完整嵌套结构（此前匿名对象会退化成 `"{ items = 25, ... }"` 字符串）。
+
+### 9.6 未覆盖
+
+- 账号登录后的评分、评论发布/投票、归档请求与 ZIP 下载需要真实账号；自动化只验证了匿名分支（禁用与登录提示）、解析 fixture 与请求构造。
+- H@H 归档队列依赖账号已分配 H@H 客户端，无法在测试环境复现，仅验证缺失提示与页面入口。

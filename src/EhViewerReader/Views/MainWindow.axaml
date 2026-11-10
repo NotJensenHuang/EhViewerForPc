@@ -21,7 +21,7 @@
                        HorizontalAlignment="Center" VerticalAlignment="Center" />
           </Border>
           <StackPanel VerticalAlignment="Center" Spacing="1">
-            <TextBlock Text="EhViewer Reader" FontSize="13" FontWeight="SemiBold" />
+            <TextBlock Text="EhViewer Reader" FontSize="13" FontWeight="Bold" />
             <TextBlock Text="在线 + 本地 + 下载" Classes="caption" FontSize="10" />
           </StackPanel>
         </StackPanel>
@@ -60,7 +60,7 @@
         <StackPanel Grid.Row="3" Spacing="6">
           <Border Background="{DynamicResource AppBgAltBrush}" CornerRadius="10" Padding="10,8">
             <StackPanel Spacing="3">
-              <TextBlock Text="{Binding AccountLabel}" FontSize="12" FontWeight="SemiBold" />
+              <TextBlock Text="{Binding AccountLabel}" FontSize="12" FontWeight="Bold" />
               <TextBlock Text="{Binding AccountDetail}" Classes="caption" FontSize="10" TextWrapping="Wrap" />
               <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
                 <Button Content="登录" Classes="ghost" FontSize="10" Padding="6,2" MinHeight="22"

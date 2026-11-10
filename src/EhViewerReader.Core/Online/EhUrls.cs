@@ -91,6 +91,19 @@ public static class EhUrls
     public static string GalleryPopup(EhSite site, long gid, string token, string action) =>
         $"{Base(site)}/gallerypopups.php?gid={gid}&t={token}&act={action}";
 
+    public static string Torrents(EhSite site, long gid, string token) =>
+        $"{Base(site)}/gallerytorrents.php?gid={gid}&t={token}";
+
+    public static string Archiver(EhSite site, long gid, string token) =>
+        $"{Base(site)}/archiver.php?gid={gid}&token={token}";
+
+    /// <summary>Archiver endpoint for one option; the option key is echoed as <c>or</c>.</summary>
+    public static string ArchiveRequest(EhSite site, long gid, string token, string or) =>
+        $"{Base(site)}/archiver.php?gid={gid}&token={token}&or={Uri.EscapeDataString(or)}";
+
+    /// <summary>The site's H@H client management page.</summary>
+    public static string HathClient(EhSite site) => Base(site) + "/hathdler.php";
+
     public static string Api(EhSite site) => Base(site) + "/api.php";
 
     /// <summary>Absolute URL for a possibly protocol-relative or relative href.</summary>

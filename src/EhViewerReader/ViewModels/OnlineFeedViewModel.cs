@@ -37,6 +37,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     private FeedOption? _selectedTab;
     private int _toplistIndex = 15;
     private int _favoriteSlot;
+    private string _favoriteQuery = string.Empty;
     private CancellationTokenSource? _cancellation;
 
     public OnlineFeedViewModel(AppServices services, IOnlineHost host, OnlineFeedMode mode, string title, string subtitle)
@@ -58,7 +59,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
             case OnlineFeedMode.Favorites:
                 for (int slot = 0; slot < 10; slot++)
                 {
-                    Tabs.Add(new FeedOption(slot.ToString(), "分类 " + slot));
+                    Tabs.Add(new FeedOption(slot.ToString(), _services.Settings.Account.FavoriteSlotName(slot)));
                 }
 
                 Tabs.Add(new FeedOption("all", "全部"));
@@ -85,6 +86,15 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     public bool IsHistory => _mode == OnlineFeedMode.History;
 
     public bool ShowToplistSelector => IsFront && _selectedTab?.Key == "toplist";
+
+    public bool ShowFavoriteSearch => IsFavorites;
+
+    /// <summary>Keyword searched inside the current favourite slot.</summary>
+    public string FavoriteQuery
+    {
+        get => _favoriteQuery;
+        set => SetProperty(ref _favoriteQuery, value);
+    }
 
     public string EmptyText => _mode switch
     {
@@ -206,6 +216,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
         IsBusy = true;
         StatusText = "载入中…";
+        int filtered = 0;
 
         try
         {
@@ -226,6 +237,12 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
             foreach (EhGallerySummary summary in page.Items)
             {
+                if (!EhFilter.IsVisible(summary, _services.Settings.Online.Filters))
+                {
+                    filtered++;
+                    continue;
+                }
+
                 Items.Add(CreateItem(summary));
             }
 
@@ -234,7 +251,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
             PageLabel = $"第 {_urlIndex + 1} 页";
             StatusText = page.Items.Count == 0
                 ? page.StatusMessage ?? EmptyText
-                : page.StatusMessage ?? $"本页 {page.Items.Count} 项";
+                : page.StatusMessage ?? StatusTextFor(page.Items.Count, filtered);
             OnPropertyChanged(nameof(ShowEmpty));
         }
         catch (OperationCanceledException)
@@ -259,6 +276,16 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
     [RelayCommand]
     private async Task RefreshAsync() => await LoadAsync(reset: true);
+
+    [RelayCommand]
+    private async Task SearchFavoritesAsync() => await LoadAsync(reset: true);
+
+    [RelayCommand]
+    private async Task ClearFavoriteSearchAsync()
+    {
+        FavoriteQuery = string.Empty;
+        await LoadAsync(reset: true);
+    }
 
     [RelayCommand]
     private async Task NextPageAsync()
@@ -287,6 +314,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         // Re-fetch the URL that was already visited without touching the stack.
         IsBusy = true;
         StatusText = "载入中…";
+        int filtered = 0;
         try
         {
             EhGalleryListPage page = await _services.Online
@@ -294,11 +322,23 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
                 .ConfigureAwait(true);
 
             Items.Clear();
-            foreach (EhGallerySummary summary in page.Items) Items.Add(CreateItem(summary));
+            foreach (EhGallerySummary summary in page.Items)
+            {
+                if (!EhFilter.IsVisible(summary, _services.Settings.Online.Filters))
+                {
+                    filtered++;
+                    continue;
+                }
+
+                Items.Add(CreateItem(summary));
+            }
+
             _nextUrl = page.NextUrl;
             HasMore = page.HasMore;
             PageLabel = $"第 {_urlIndex + 1} 页";
-            StatusText = page.Items.Count == 0 ? page.StatusMessage ?? EmptyText : $"本页 {page.Items.Count} 项";
+            StatusText = page.Items.Count == 0
+                ? page.StatusMessage ?? EmptyText
+                : page.StatusMessage ?? StatusTextFor(page.Items.Count, filtered);
             OnPropertyChanged(nameof(ShowEmpty));
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
@@ -363,12 +403,29 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         return item;
     }
 
+    private static string StatusTextFor(int total, int filtered) =>
+        filtered > 0 ? $"本页 {total} 项 · 已过滤 {filtered} 项" : $"本页 {total} 项";
+
+    /// <summary>Re-reads custom favourite slot names after settings were saved.</summary>
+    public void RefreshFavoriteNames()
+    {
+        if (!IsFavorites) return;
+        foreach (FeedOption tab in Tabs)
+        {
+            if (int.TryParse(tab.Key, out int slot)) tab.Label = _services.Settings.Account.FavoriteSlotName(slot);
+        }
+    }
+
     private string BuildUrl(int page)
     {
         EhSite site = _services.Online.Site;
         return _mode switch
         {
-            OnlineFeedMode.Favorites => EhUrls.Favorites(site, _favoriteSlot, null, page),
+            OnlineFeedMode.Favorites => EhUrls.Favorites(
+                site,
+                _favoriteSlot,
+                _favoriteQuery.Trim().Length == 0 ? null : new EhSearchRequest { Query = _favoriteQuery.Trim() },
+                page),
             OnlineFeedMode.History => EhUrls.History(site, page),
             _ => _selectedTab?.Key switch
             {

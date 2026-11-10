@@ -326,6 +326,226 @@ public sealed class EhClient : IDisposable
                body.Contains("favorites.php", StringComparison.OrdinalIgnoreCase);
     }
 
+    // -------------------------------------------------- comments & rating
+
+    /// <summary>Loads every comment (the site only renders a few by default, ?hc=1 shows all).</summary>
+    public async Task<EhCommentList> GetCommentsAsync(long gid, string token, CancellationToken cancellationToken)
+    {
+        string url = EhUrls.Detail(Site, gid, token) + "?hc=1";
+        string html = await GetStringAsync(url, null, cancellationToken).ConfigureAwait(false);
+
+        var details = new EhGalleryDetails { Gid = gid, Token = token };
+        EhParser.ParseComments(HtmlLite.Parse(html), details);
+
+        var list = new EhCommentList
+        {
+            HasMore = details.HasMoreComments,
+            CanPost = details.CanPostComment,
+        };
+        list.Comments.AddRange(details.Comments);
+        return list;
+    }
+
+    /// <summary>Posts a new comment, or edits one when <paramref name="editId"/> is set.</summary>
+    public async Task<EhCommentActionResult> PostCommentAsync(
+        long gid,
+        string token,
+        string text,
+        long? editId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsSignedIn) return new EhCommentActionResult { Message = "需要登录后才能评论" };
+        if (string.IsNullOrWhiteSpace(text)) return new EhCommentActionResult { Message = "评论内容不能为空" };
+
+        string detailUrl = EhUrls.Detail(Site, gid, token);
+        var form = new Dictionary<string, string>();
+        if (editId is null)
+        {
+            form["commenttext_new"] = text;
+        }
+        else
+        {
+            form["commenttext_edit"] = text;
+            form["edit_comment"] = editId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        string body = await PostFormAsync(detailUrl, form, detailUrl, cancellationToken).ConfigureAwait(false);
+        if (body.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase))
+        {
+            return new EhCommentActionResult { Message = "登录已失效，请重新登录" };
+        }
+
+        HtmlNode document = HtmlLite.Parse(body);
+        string? error = ExtractCommentError(document);
+        if (error is not null) return new EhCommentActionResult { Message = error };
+
+        return new EhCommentActionResult { Success = true, Message = editId is null ? "评论已发布" : "评论已更新" };
+    }
+
+    /// <summary>Reads the site's inline error (the paragraph right after #chd).</summary>
+    private static string? ExtractCommentError(HtmlNode document)
+    {
+        HtmlNode? header = document.FirstDescendantById("chd");
+        if (header?.Parent is not { } parent) return null;
+
+        int index = parent.Children.IndexOf(header);
+        if (index < 0) return null;
+
+        for (int i = index + 1; i < parent.Children.Count; i++)
+        {
+            HtmlNode sibling = parent.Children[i];
+            if (sibling.IsText) continue;
+            if (!string.Equals(sibling.Name, "p", StringComparison.OrdinalIgnoreCase)) continue;
+            string text = sibling.InnerText.Trim();
+            return text.Length > 0 ? text : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>Votes a comment (+1 / -1 / 0 clears) through the site's JSON API.</summary>
+    public async Task<EhCommentActionResult> VoteCommentAsync(
+        EhGalleryDetails details,
+        long commentId,
+        int vote,
+        CancellationToken cancellationToken)
+    {
+        if (!details.CanUseApi) return new EhCommentActionResult { Message = "需要登录后才能投票" };
+
+        var json = new System.Text.Json.Nodes.JsonObject
+        {
+            ["method"] = "votecomment",
+            ["apiuid"] = details.ApiUid,
+            ["apikey"] = details.ApiKey,
+            ["gid"] = details.Gid,
+            ["token"] = details.Token,
+            ["comment_id"] = commentId,
+            ["comment_vote"] = vote,
+        };
+
+        string body = await PostJsonAsync(
+                EhUrls.Api(Site), json.ToJsonString(), EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+            .ConfigureAwait(false);
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            System.Text.Json.JsonElement root = document.RootElement;
+            if (root.TryGetProperty("error", out System.Text.Json.JsonElement error))
+            {
+                return new EhCommentActionResult { Message = error.ToString() };
+            }
+
+            int score = root.TryGetProperty("comment_score", out System.Text.Json.JsonElement s) ? s.GetInt32() : 0;
+            return new EhCommentActionResult { Success = true, Score = score, Message = "投票已记录" };
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return new EhCommentActionResult { Message = "投票失败：站点返回了无法识别的内容" };
+        }
+    }
+
+    /// <summary>Rates the gallery 1–5 stars (the API takes 2–10).</summary>
+    public async Task<(double Average, int Count, string? Error)> RateGalleryAsync(
+        EhGalleryDetails details,
+        int stars,
+        CancellationToken cancellationToken)
+    {
+        if (!details.CanUseApi) return (0, 0, "需要登录后才能评分");
+
+        var json = new System.Text.Json.Nodes.JsonObject
+        {
+            ["method"] = "rategallery",
+            ["apiuid"] = details.ApiUid,
+            ["apikey"] = details.ApiKey,
+            ["gid"] = details.Gid,
+            ["token"] = details.Token,
+            ["rating"] = Math.Clamp(stars, 1, 5) * 2,
+        };
+
+        string body = await PostJsonAsync(
+                EhUrls.Api(Site), json.ToJsonString(), EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+            .ConfigureAwait(false);
+
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(body);
+            System.Text.Json.JsonElement root = document.RootElement;
+            if (root.TryGetProperty("error", out System.Text.Json.JsonElement error))
+            {
+                return (0, 0, error.ToString());
+            }
+
+            double average = root.TryGetProperty("rating_avg", out System.Text.Json.JsonElement avg) ? avg.GetDouble() : 0;
+            int count = root.TryGetProperty("rating_cnt", out System.Text.Json.JsonElement cnt) ? cnt.GetInt32() : 0;
+            return (average, count, null);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return (0, 0, "评分失败：站点返回了无法识别的内容");
+        }
+    }
+
+    // ------------------------------------------------- torrents & archive
+
+    public async Task<EhTorrentList> GetTorrentsAsync(EhGalleryDetails details, CancellationToken cancellationToken)
+    {
+        string url = details.TorrentUrl.Length > 0
+            ? details.TorrentUrl
+            : EhUrls.Torrents(Site, details.Gid, details.Token);
+        string html = await GetStringAsync(url, EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+            .ConfigureAwait(false);
+        return EhParser.ParseTorrents(html, Site);
+    }
+
+    /// <summary>Fetches the .torrent file itself (ehtracker.org answers with the raw bencoded file).</summary>
+    public async Task<byte[]> DownloadTorrentAsync(string url, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Referrer = new Uri(EhUrls.Base(Site) + "/");
+
+        using HttpResponseMessage response = await _web.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new EhException($"种子下载失败：HTTP {(int)response.StatusCode}");
+        }
+
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<EhArchivePage> GetArchivePageAsync(EhGalleryDetails details, CancellationToken cancellationToken)
+    {
+        string url = details.ArchiveUrl.Length > 0
+            ? details.ArchiveUrl
+            : EhUrls.Archiver(Site, details.Gid, details.Token);
+        string html = await GetStringAsync(url, EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+            .ConfigureAwait(false);
+        return EhParser.ParseArchivePage(html, Site);
+    }
+
+    /// <summary>Asks the site to build an archive; <paramref name="resource"/> is an option key.</summary>
+    public async Task<EhArchiveResult> RequestArchiveAsync(
+        EhGalleryDetails details,
+        string or,
+        string resource,
+        CancellationToken cancellationToken)
+    {
+        if (!IsSignedIn) return new EhArchiveResult { Message = "归档下载需要登录 E-Hentai 账号" };
+
+        string url = EhUrls.ArchiveRequest(Site, details.Gid, details.Token, or);
+        var form = new Dictionary<string, string> { ["hathdl_xres"] = resource };
+        string body = await PostFormAsync(url, form, EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+            .ConfigureAwait(false);
+        return EhParser.ParseArchiveResult(body, Site);
+    }
+
+    public Task DownloadArchiveToFileAsync(
+        string url,
+        string targetPath,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken) =>
+        DownloadToFileCoreAsync(_web, url, EhUrls.Base(Site) + "/", targetPath, progress, cancellationToken);
+
     // ------------------------------------------------------------ page list
 
     public async Task<EhPageList> GetPageListAsync(long gid, string token, int pageIndex, CancellationToken cancellationToken)
@@ -452,12 +672,22 @@ public sealed class EhClient : IDisposable
         url.Contains(".gif", StringComparison.OrdinalIgnoreCase) ||
         url.Contains(".webp", StringComparison.OrdinalIgnoreCase);
 
-    public async Task DownloadToFileAsync(
+    public Task DownloadToFileAsync(
         string url,
         string referer,
         string targetPath,
         IProgress<long>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken) =>
+        DownloadToFileCoreAsync(_images, url, referer, targetPath, progress, cancellationToken, imageAccept: true);
+
+    private static async Task DownloadToFileCoreAsync(
+        HttpClient client,
+        string url,
+        string referer,
+        string targetPath,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken,
+        bool imageAccept = false)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         if (referer.Length > 0 && Uri.TryCreate(referer, UriKind.Absolute, out Uri? refererUri))
@@ -465,15 +695,17 @@ public sealed class EhClient : IDisposable
             request.Headers.Referrer = refererUri;
         }
 
-        request.Headers.TryAddWithoutValidation("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8");
+        request.Headers.TryAddWithoutValidation(
+            "Accept",
+            imageAccept ? "image/avif,image/webp,image/apng,image/*,*/*;q=0.8" : "*/*");
 
-        using HttpResponseMessage response = await _images
+        using HttpResponseMessage response = await client
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new EhException($"图片下载失败：HTTP {(int)response.StatusCode}");
+            throw new EhException($"下载失败：HTTP {(int)response.StatusCode}");
         }
 
         string tempPath = targetPath + ".part";
@@ -591,6 +823,58 @@ public sealed class EhClient : IDisposable
         {
             throw new EhException("网络请求失败：" + ex.Message, inner: ex);
         }
+    }
+
+    private async Task<string> PostJsonAsync(
+        string url,
+        string json,
+        string? referer,
+        CancellationToken cancellationToken)
+    {
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = content };
+        if (Uri.TryCreate(url, UriKind.Absolute, out Uri? target))
+        {
+            request.Headers.TryAddWithoutValidation("Origin", target.GetLeftPart(UriPartial.Authority));
+        }
+
+        if (!string.IsNullOrEmpty(referer)) request.Headers.Referrer = new Uri(referer);
+
+        try
+        {
+            using HttpResponseMessage response = await _web.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new EhException($"HTTP {(int)response.StatusCode}");
+            }
+
+            return body;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new EhException("网络请求失败：" + ex.Message, inner: ex);
+        }
+    }
+
+    /// <summary>
+    /// Downloads an arbitrary URL through the configured proxy stack (used by the
+    /// tag-translation database, which lives on a third-party host).
+    /// </summary>
+    public async Task<byte[]> DownloadExternalAsync(string url, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.TryAddWithoutValidation("Accept", "application/json,application/gzip,*/*;q=0.8");
+
+        using HttpResponseMessage response = await _web
+            .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+            .ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new EhException($"下载失败：HTTP {(int)response.StatusCode}");
+        }
+
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public void Dispose()

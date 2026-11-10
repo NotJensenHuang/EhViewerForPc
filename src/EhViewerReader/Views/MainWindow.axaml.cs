@@ -22,6 +22,8 @@ public partial class MainWindow : Window
     private LibraryPage? _libraryPage;
     private SettingsPage? _settingsPage;
     private OnlineGalleryWindow? _galleryWindow;
+    private TorrentWindow? _torrentWindow;
+    private ArchiveWindow? _archiveWindow;
     private bool _closing;
 
     public MainWindow()
@@ -132,6 +134,8 @@ public partial class MainWindow : Window
         AppServices.Current.Progress.Save(out _);
 
         foreach (ReaderWindow reader in _readers.ToArray()) reader.Close();
+        _torrentWindow?.Close();
+        _archiveWindow?.Close();
         _galleryWindow?.Close();
     }
 
@@ -208,10 +212,14 @@ public partial class MainWindow : Window
 
             viewModel.ReadRequested += OnOnlineReadRequested;
             viewModel.TagSearchRequested += OnTagSearchRequested;
+            viewModel.TorrentsRequested += OnTorrentsRequested;
+            viewModel.ArchiveRequested += OnArchiveRequested;
             window.Closed += (_, _) =>
             {
                 viewModel.ReadRequested -= OnOnlineReadRequested;
                 viewModel.TagSearchRequested -= OnTagSearchRequested;
+                viewModel.TorrentsRequested -= OnTorrentsRequested;
+                viewModel.ArchiveRequested -= OnArchiveRequested;
                 if (ReferenceEquals(_galleryWindow, window)) _galleryWindow = null;
             };
 
@@ -276,5 +284,37 @@ public partial class MainWindow : Window
     {
         _galleryWindow?.Close();
         _shell?.SearchTag(term);
+    }
+
+    private void OnTorrentsRequested(object? sender, EhGalleryDetails details)
+    {
+        if (_shell is null) return;
+        _torrentWindow?.Close();
+
+        var viewModel = new TorrentViewModel(AppServices.Current, details);
+        var window = new TorrentWindow(viewModel) { WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_torrentWindow, window)) _torrentWindow = null;
+        };
+
+        _torrentWindow = window;
+        window.Show(this);
+    }
+
+    private void OnArchiveRequested(object? sender, EhGalleryDetails details)
+    {
+        if (_shell is null) return;
+        _archiveWindow?.Close();
+
+        var viewModel = new ArchiveViewModel(AppServices.Current, _shell, details);
+        var window = new ArchiveWindow(viewModel) { WindowStartupLocation = WindowStartupLocation.CenterOwner };
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_archiveWindow, window)) _archiveWindow = null;
+        };
+
+        _archiveWindow = window;
+        window.Show(this);
     }
 }

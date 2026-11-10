@@ -29,6 +29,7 @@ public sealed class AppServices : IDisposable
         Dimensions = new PageDimensionService(paths, Decoder, Log);
         Online = new EhClient(settings, message => Log.Warn(message));
         OnlineImages = new OnlineImageService(paths, Online, Images, Log);
+        TagTranslation = new TagTranslationService(paths, settings, Online, Log);
         Downloads = new DownloadManager(paths, settings, Online, message => Log.Warn(message));
         ApplySettings(settings);
     }
@@ -52,6 +53,9 @@ public sealed class AppServices : IDisposable
 
     /// <summary>Thumbnail and page cache for online content.</summary>
     public OnlineImageService OnlineImages { get; }
+
+    /// <summary>EhTagTranslation database (lazy, updatable from settings).</summary>
+    public TagTranslationService TagTranslation { get; }
 
     /// <summary>Independent download engine.</summary>
     public DownloadManager Downloads { get; }

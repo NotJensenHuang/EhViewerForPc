@@ -123,6 +123,10 @@ public sealed class EhGallerySummary
     public string TokenUrl => $"/g/{Gid}/{Token}/";
     public string PagesText => Pages > 0 ? $"{Pages} 页" : "—";
     public string CategoryDisplay => Category.Length > 0 ? Category : "—";
+
+    /// <summary>Tag chips rendered inside the list row ("female:sole female").</summary>
+    public List<string> Tags { get; } = [];
+    public string TagsText => string.Join(" ", Tags);
 }
 
 /// <summary>A gallery's full detail page.</summary>
@@ -149,7 +153,30 @@ public sealed class EhGalleryDetails
     /// <summary>Favourite count text from #favcount ("28 times").</summary>
     public string Favorited { get; set; } = string.Empty;
     public bool IsFavorite => FavoriteSlot >= 0;
-    public string Torrents { get; set; } = string.Empty;
+
+    /// <summary>Number of votes behind <see cref="Rating"/> (#rating_count).</summary>
+    public int RatingCount { get; set; }
+
+    /// <summary>Absolute gallerytorrents.php URL taken from #gd5 (empty when absent).</summary>
+    public string TorrentUrl { get; set; } = string.Empty;
+    public int TorrentCount { get; set; }
+
+    /// <summary>Absolute archiver.php URL taken from #gd5 (empty when absent).</summary>
+    public string ArchiveUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// API identity embedded in the detail page. Rating and comment voting are
+    /// signed with it; anonymous pages carry <c>apiuid = -1</c>.
+    /// </summary>
+    public long ApiUid { get; set; } = -1;
+    public string ApiKey { get; set; } = string.Empty;
+    public bool CanUseApi => ApiUid > 0 && ApiKey.Length > 0;
+
+    /// <summary>Comments visible on the detail page (newest first).</summary>
+    public List<EhComment> Comments { get; } = [];
+    public bool HasMoreComments { get; set; }
+    public bool CanPostComment { get; set; }
+
     public List<EhTag> Tags { get; } = [];
     public DateTime FetchedUtc { get; set; } = DateTime.UtcNow;
 
@@ -260,4 +287,95 @@ public sealed class EhLoginResult
     public string Message { get; init; } = string.Empty;
     public bool ExAccess { get; init; }
     public bool ExAccessKnown { get; init; }
+}
+
+/// <summary>One .torrent offered on the gallerytorrents.php page.</summary>
+public sealed class EhTorrent
+{
+    public string Name { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string Posted { get; set; } = string.Empty;
+    public string Size { get; set; } = string.Empty;
+    public string Uploader { get; set; } = string.Empty;
+    public int Seeds { get; set; }
+    public int Peers { get; set; }
+    public int Downloads { get; set; }
+
+    public string HealthText => $"{Seeds} 做种 / {Peers} 下载";
+    public string StatsText => string.Join(" · ",
+        new[] { Size, HealthText, Downloads > 0 ? Downloads + " 次下载" : string.Empty }
+            .Where(s => s.Length > 0));
+}
+
+public sealed class EhTorrentList
+{
+    public List<EhTorrent> Items { get; } = [];
+    public string Message { get; set; } = string.Empty;
+    public bool RequiresSignIn { get; set; }
+}
+
+/// <summary>One comment on the detail page.</summary>
+public sealed class EhComment
+{
+    public long Id { get; set; }
+    public string User { get; set; } = string.Empty;
+    public string Posted { get; set; } = string.Empty;
+    public int Score { get; set; }
+    public string Text { get; set; } = string.Empty;
+    public bool IsUploader { get; set; }
+    public bool IsEdited { get; set; }
+
+    /// <summary>Vote breakdown from .c7 ("Base +23, Epherion +12").</summary>
+    public string VoteDetail { get; set; } = string.Empty;
+    public bool CanVoteUp { get; set; }
+    public bool CanVoteDown { get; set; }
+    public bool CanEdit { get; set; }
+
+    public string ScoreText => Score > 0 ? "+" + Score : Score.ToString();
+    public string PostedText => Posted.Length > 0 ? Posted : "—";
+}
+
+/// <summary>Result of a comment post / vote.</summary>
+public sealed class EhCommentActionResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public int Score { get; init; }
+    public string VoteDetail { get; init; } = string.Empty;
+}
+
+/// <summary>Comments loaded from the detail page (optionally ?hc=1 = all).</summary>
+public sealed class EhCommentList
+{
+    public List<EhComment> Comments { get; } = [];
+    public bool HasMore { get; set; }
+    public bool CanPost { get; set; }
+}
+
+/// <summary>One archive flavour offered by archiver.php.</summary>
+public sealed class EhArchiveOption
+{
+    public required string Key { get; init; }
+    public required string Label { get; init; }
+}
+
+/// <summary>Parsed archiver.php form (login required by the site).</summary>
+public sealed class EhArchivePage
+{
+    public string Or { get; set; } = string.Empty;
+    public List<EhArchiveOption> Options { get; } = [];
+    public string Message { get; set; } = string.Empty;
+    public bool RequiresSignIn { get; set; }
+    public bool Generated { get; set; }
+    public string DownloadUrl { get; set; } = string.Empty;
+}
+
+/// <summary>Outcome of asking the site to build an archive.</summary>
+public sealed class EhArchiveResult
+{
+    public bool Success { get; init; }
+    public bool NeedsHathClient { get; init; }
+    public bool Queued { get; init; }
+    public string DownloadUrl { get; init; } = string.Empty;
+    public string Message { get; init; } = string.Empty;
 }

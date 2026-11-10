@@ -130,7 +130,7 @@
       <Border Classes="panel" Width="580" Padding="30" HorizontalAlignment="Center" VerticalAlignment="Center"
               IsVisible="{Binding ShowWelcome}">
         <StackPanel Spacing="12">
-          <TextBlock Text="选择 EhViewer 下载目录" FontSize="20" FontWeight="SemiBold" />
+          <TextBlock Text="选择 EhViewer 下载目录" FontSize="20" FontWeight="Bold" />
           <TextBlock Classes="secondary" TextWrapping="Wrap"
                      Text="支持 EhViewer / Ehviewer_CN_SXJ 的下载目录结构：gid-标题 文件夹、.ehviewer 元数据、.thumb 封面与 8 位数字页文件。也可以直接使用本应用「下载」页产出的目录。目录只会被读取，不会修改。" />
           <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap"
@@ -146,7 +146,7 @@
       <Border Classes="panel" Width="380" Padding="24,18" HorizontalAlignment="Center" VerticalAlignment="Center"
               IsVisible="{Binding ShowInitialScan}">
         <StackPanel Spacing="10">
-          <TextBlock Text="正在扫描资料库…" FontWeight="SemiBold" />
+          <TextBlock Text="正在扫描资料库…" FontWeight="Bold" />
           <ProgressBar IsIndeterminate="True" Height="4" />
           <TextBlock Text="{Binding StatusText}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
           <TextBlock Classes="muted" FontSize="11"
@@ -157,7 +157,7 @@
       <!-- No results -->
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6"
                   IsVisible="{Binding ShowNoResults}">
-        <TextBlock Text="没有可显示的画廊" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
+        <TextBlock Text="没有可显示的画廊" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" />
         <TextBlock Classes="secondary" Text="资料库为空，或调整搜索词/筛选条件" HorizontalAlignment="Center" />
       </StackPanel>
     </Grid>

@@ -20,7 +20,7 @@
         <Button Grid.Column="0" Content="← 返回" Classes="ghost" Click="OnBack" />
 
         <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="1">
-          <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="SemiBold"
+          <TextBlock Text="{Binding Title}" FontSize="13" FontWeight="Bold"
                      HorizontalAlignment="Left" TextTrimming="CharacterEllipsis" MaxWidth="560" />
           <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="{Binding PageLabel}" Classes="caption" FontFamily="{DynamicResource AppMonoFont}" />
@@ -105,7 +105,7 @@
       <Border Classes="panel" Padding="22,16" HorizontalAlignment="Center" VerticalAlignment="Center"
               IsVisible="{Binding IsLoadingDimensions}" Width="380">
         <StackPanel Spacing="10">
-          <TextBlock Text="正在测量页面尺寸" FontWeight="SemiBold" />
+          <TextBlock Text="正在测量页面尺寸" FontWeight="Bold" />
           <ProgressBar Minimum="0" Maximum="100" Value="{Binding DimensionProgress}" Height="6" />
           <TextBlock Classes="muted" FontSize="11"
                      Text="连续阅读需要页面高度，首次打开会缓存到本地。" />

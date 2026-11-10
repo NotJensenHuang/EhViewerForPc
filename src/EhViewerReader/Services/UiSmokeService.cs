@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using EhViewerReader.Controls;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Online;
 using EhViewerReader.ViewModels;
 using EhViewerReader.Views;
 using SkiaSharp;
@@ -593,6 +594,19 @@ public static class UiSmokeService
             await Task.Delay(700);
             SaveScreenshot(window, Path.Combine(output, "page-search-advanced.png"));
             pageShots.Add("page-search-advanced.png");
+
+            // The online settings live below the fold; scroll there so the
+            // translation / filter / favourite-slot editors are captured too.
+            shell.Navigate("settings");
+            await Task.Delay(400);
+            if (window.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault() is { } settingsScroll)
+            {
+                settingsScroll.Offset = new Vector(0, 470);
+                await Task.Delay(500);
+                SaveScreenshot(window, Path.Combine(output, "page-settings-online.png"));
+                pageShots.Add("page-settings-online.png");
+                settingsScroll.Offset = new Vector(0, 0);
+            }
             shell.Search.ShowAdvanced = false;
 
             // Online gallery detail (network dependent): validates the XAML and
@@ -609,6 +623,14 @@ public static class UiSmokeService
                     };
                     detailWindow.Show();
                     await Task.Delay(4000);
+                    // The comment box can take focus and scroll the body; capture
+                    // the header state instead.
+                    if (detailWindow.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault() is { } detailScroll)
+                    {
+                        detailScroll.Offset = new Vector(0, 0);
+                        await Task.Delay(300);
+                    }
+
                     SaveScreenshot(detailWindow, Path.Combine(output, "online-detail.png"));
                     pageShots.Add("online-detail.png");
                     report["onlineDetail"] = new
@@ -617,7 +639,78 @@ public static class UiSmokeService
                         tags = detailViewModel.Tags.Count,
                         status = detailViewModel.StatusText,
                         pages = detailViewModel.PagesText,
+                        comments = detailViewModel.Comments.Count,
+                        canInteract = detailViewModel.CanInteract,
+                        hasTorrents = detailViewModel.HasTorrents,
+                        hasArchive = detailViewModel.HasArchive,
+                        translatedTags = detailViewModel.Tags.Take(3).Select(t => t.Display).ToArray(),
                     };
+
+                    // Prefer the opened gallery; otherwise look a few cards ahead
+                    // so the torrent window still exercises a populated list.
+                    EhGalleryDetails? torrentDetails = detailViewModel.Details is { TorrentCount: > 0 } loaded ? loaded : null;
+                    if (torrentDetails is null)
+                    {
+                        foreach (var candidate in shell.Online.Items.Skip(1).Take(3))
+                        {
+                            try
+                            {
+                                EhGalleryDetails candidateDetails = await AppServices.Current.Online
+                                    .GetDetailsAsync(candidate.Summary.Gid, candidate.Summary.Token, CancellationToken.None);
+                                if (candidateDetails.TorrentCount > 0)
+                                {
+                                    torrentDetails = candidateDetails;
+                                    break;
+                                }
+                            }
+                            catch (Exception ex) when (ex is EhException or HttpRequestException)
+                            {
+                                // Network hiccup: skip this candidate.
+                            }
+                        }
+                    }
+
+                    if (torrentDetails is not null)
+                    {
+                        var torrentViewModel = new TorrentViewModel(AppServices.Current, torrentDetails!);
+                        var torrentWindow = new TorrentWindow(torrentViewModel)
+                        {
+                            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                        };
+                        torrentWindow.Show();
+                        await Task.Delay(3000);
+                        SaveScreenshot(torrentWindow, Path.Combine(output, "online-torrents.png"));
+                        pageShots.Add("online-torrents.png");
+                        report["onlineTorrents"] = new
+                        {
+                            count = torrentViewModel.Items.Count,
+                            status = torrentViewModel.StatusText,
+                        };
+                        torrentWindow.Close();
+                        await Task.Delay(200);
+                    }
+
+                    if (detailViewModel.Details is { } archiveDetails && archiveDetails.ArchiveUrl.Length > 0)
+                    {
+                        var archiveViewModel = new ArchiveViewModel(AppServices.Current, shell, archiveDetails);
+                        var archiveWindow = new ArchiveWindow(archiveViewModel)
+                        {
+                            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                        };
+                        archiveWindow.Show();
+                        await Task.Delay(2500);
+                        SaveScreenshot(archiveWindow, Path.Combine(output, "online-archive.png"));
+                        pageShots.Add("online-archive.png");
+                        report["onlineArchive"] = new
+                        {
+                            options = archiveViewModel.Options.Count,
+                            needsSignIn = archiveViewModel.NeedsSignIn,
+                            status = archiveViewModel.StatusText,
+                        };
+                        archiveWindow.Close();
+                        await Task.Delay(200);
+                    }
+
                     detailWindow.Close();
                     await Task.Delay(200);
                 }
@@ -679,6 +772,14 @@ public static class UiSmokeService
         var pixelSize = new PixelSize(
             Math.Max(1, (int)Math.Ceiling(size.Width * scaling)),
             Math.Max(1, (int)Math.Ceiling(size.Height * scaling)));
+        // Warm-up render: the first pass can capture partially composed layers
+        // (text runs added by an async refresh show up as doubled glyphs), so the
+        // saved frame is always the second, settled pass.
+        using (var warmup = new RenderTargetBitmap(pixelSize, new Vector(96 * scaling, 96 * scaling)))
+        {
+            warmup.Render(visual);
+        }
+
         using var bitmap = new RenderTargetBitmap(pixelSize, new Vector(96 * scaling, 96 * scaling));
         bitmap.Render(visual);
         bitmap.Save(path, new PngBitmapEncoderOptions());

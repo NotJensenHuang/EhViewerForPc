@@ -291,6 +291,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         OnPropertyChanged(nameof(IsExSite));
         Settings.RefreshAccount();
         Online.RefreshProgress();
+        Favorites.RefreshFavoriteNames();
         Favorites.RefreshProgress();
         History.RefreshProgress();
     }

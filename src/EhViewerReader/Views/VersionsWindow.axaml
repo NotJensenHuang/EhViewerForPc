@@ -13,7 +13,7 @@
     <Border Grid.Row="0" Padding="22,18,22,14" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,0,0,1">
       <StackPanel Spacing="5">
-        <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding Title}" FontSize="16" FontWeight="Bold" TextWrapping="Wrap" />
         <StackPanel Orientation="Horizontal" Spacing="10">
           <TextBlock Text="{Binding GidText}" Classes="caption" FontFamily="{DynamicResource AppMonoFont}" />
           <TextBlock Text="{Binding SummaryText}" Classes="caption" />
@@ -40,7 +40,7 @@
                           IsVisible="{Binding IsPrimary}">
                     <TextBlock Text="默认" FontSize="10" Foreground="{DynamicResource AppAccentBrush}" />
                   </Border>
-                  <TextBlock Text="{Binding SourceName}" FontWeight="SemiBold" FontSize="12"
+                  <TextBlock Text="{Binding SourceName}" FontWeight="Bold" FontSize="12"
                              VerticalAlignment="Center" MaxWidth="320" TextWrapping="NoWrap"
                              TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SourceName}" />
                   <TextBlock Text="{Binding PageCountText}" Classes="caption" VerticalAlignment="Center" />

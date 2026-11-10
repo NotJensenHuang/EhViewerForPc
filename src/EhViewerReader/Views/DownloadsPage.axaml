@@ -52,7 +52,7 @@
                   </Border.ContextMenu>
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                     <StackPanel Spacing="5">
-                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding Title}" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
                       <StackPanel Orientation="Horizontal" Spacing="10">
                         <TextBlock Classes="caption" Text="{Binding GidText}" />
                         <TextBlock Classes="caption" Text="{Binding StateText}" Foreground="{Binding StateBadgeColor}" />

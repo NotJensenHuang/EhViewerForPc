@@ -32,6 +32,9 @@ public sealed class AppPaths
 
     public string DownloadTasksFile => Path.Combine(BaseDirectory, "downloads.json");
 
+    /// <summary>Cached EhTagTranslation database (compact JSON).</summary>
+    public string TagTranslationFile => Path.Combine(BaseDirectory, "tag-translations.json");
+
     /// <summary>
     /// Default download root when the user has not configured one. Kept outside
     /// the app data directory so downloads survive a reinstall and can be added

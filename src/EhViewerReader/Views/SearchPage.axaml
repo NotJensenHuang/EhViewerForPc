@@ -129,7 +129,7 @@
 
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
                   IsVisible="{Binding ShowEmpty}">
-        <TextBlock Text="{Binding StatusText}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
+        <TextBlock Text="{Binding StatusText}" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" />
         <TextBlock Classes="secondary" Text="试试标签语法：female:sole female、language:chinese、gid:123456" />
       </StackPanel>
 

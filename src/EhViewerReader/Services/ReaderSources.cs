@@ -123,7 +123,7 @@ public sealed class OnlineReaderSource : IReaderSource
         int captured = index;
         return _services.OnlineImages.CreatePageRequest(
             _refs[index],
-            original: false,
+            original: _services.Settings.Online.ReadOriginalImages,
             (width, height) => DimensionResolved?.Invoke(captured, width, height));
     }
 
