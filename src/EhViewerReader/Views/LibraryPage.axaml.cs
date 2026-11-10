@@ -1,0 +1,331 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Avalonia.Threading;
+using EhViewerReader.Core.Models;
+using EhViewerReader.ViewModels;
+
+namespace EhViewerReader.Views;
+
+/// <summary>
+/// Local library page (offline, read-only). Owns the reader/detail/version
+/// windows it opens; the shell only hosts it.
+/// </summary>
+public partial class LibraryPage : UserControl
+{
+    private readonly List<ReaderWindow> _readers = [];
+    private MainViewModel? _viewModel;
+    private Vector _libraryOffset;
+    private bool _restoringScroll;
+
+    public LibraryPage()
+    {
+        InitializeComponent();
+    }
+
+    public event EventHandler? SettingsRequested;
+
+    public ScrollViewer Scroller => LibraryScroll;
+
+    /// <summary>Exposed for the UI smoke test.</summary>
+    public Control StatusBarControl => StatusBar;
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        Attach(DataContext as MainViewModel);
+    }
+
+    private void Attach(MainViewModel? viewModel)
+    {
+        if (ReferenceEquals(_viewModel, viewModel)) return;
+        if (_viewModel is not null)
+        {
+            _viewModel.GalleryListReplaced -= OnGalleryListReplaced;
+            _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+            _viewModel.GalleryListRebalanced -= OnGalleryListRebalanced;
+            _viewModel.OpenGalleryRequested -= OnOpenGalleryRequested;
+            _viewModel.OpenDetailsRequested -= OnOpenDetailsRequested;
+            _viewModel.OpenVersionsRequested -= OnOpenVersionsRequested;
+            _viewModel.ChooseFolderRequested -= OnChooseFolderRequested;
+        }
+
+        _viewModel = viewModel;
+        if (viewModel is null) return;
+
+        viewModel.GalleryListReplaced += OnGalleryListReplaced;
+        viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        viewModel.GalleryListRebalanced += OnGalleryListRebalanced;
+        viewModel.OpenGalleryRequested += OnOpenGalleryRequested;
+        viewModel.OpenDetailsRequested += OnOpenDetailsRequested;
+        viewModel.OpenVersionsRequested += OnOpenVersionsRequested;
+        viewModel.ChooseFolderRequested += OnChooseFolderRequested;
+    }
+
+    // -------------------------------------------------------------- paging
+
+    private void OnGalleryListReplaced(object? sender, EventArgs e)
+    {
+        _libraryOffset = default;
+        LibraryScroll.Offset = default;
+        InvalidateRepeaterMeasure();
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.Galleries)) InvalidateRepeaterMeasure();
+    }
+
+    private void InvalidateRepeaterMeasure()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (TopLevel.GetTopLevel(this) is null) return;
+            LibraryRepeater.InvalidateMeasure();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void OnGalleryListRebalanced(object? sender, EventArgs e)
+    {
+        Vector target = _libraryOffset;
+        if (target.Y <= 0.5) return;
+
+        RestoreLibraryOffset(target, DispatcherPriority.Loaded);
+        RestoreLibraryOffset(target, DispatcherPriority.Background);
+    }
+
+    private void RestoreLibraryOffset(Vector target, DispatcherPriority priority)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (Math.Abs(LibraryScroll.Offset.Y - target.Y) < 0.5) return;
+            _restoringScroll = true;
+            LibraryScroll.Offset = target;
+            _restoringScroll = false;
+        }, priority);
+    }
+
+    private void OnLibraryScrollChanged(object? sender, ScrollChangedEventArgs e)
+    {
+        if (_restoringScroll) return;
+        _libraryOffset = LibraryScroll.Offset;
+    }
+
+    // ----------------------------------------------------------- commands
+
+    public void FocusSearch()
+    {
+        SearchBox.Focus();
+        SearchBox.SelectAll();
+    }
+
+    public void ClearSearch()
+    {
+        if (_viewModel is null) return;
+        _viewModel.SearchText = string.Empty;
+    }
+
+    public void Refresh() => _viewModel?.RefreshCommand.Execute(null);
+
+    private void OnClearSearch(object? sender, RoutedEventArgs e)
+    {
+        ClearSearch();
+        SearchBox.Focus();
+    }
+
+    private void OnFilterClick(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        if (sender is Button { Tag: FilterOption option })
+        {
+            _viewModel.SelectFilter(option);
+        }
+    }
+
+    private void OnCardTapped(object? sender, TappedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        if (sender is Control { DataContext: GalleryItemViewModel item })
+        {
+            _viewModel.OpenGalleryCommand.Execute(item);
+            e.Handled = true;
+        }
+    }
+
+    private void OnCardKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (_viewModel is null || e.Key is not (Key.Enter or Key.Space)) return;
+        if (sender is Control { DataContext: GalleryItemViewModel item })
+        {
+            _viewModel.OpenGalleryCommand.Execute(item);
+            e.Handled = true;
+        }
+    }
+
+    private void OnCardContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        if (sender is not Control { DataContext: GalleryItemViewModel item } control) return;
+
+        var menu = new ContextMenu();
+        menu.Items.Add(CreateMenuItem("阅读", () => _viewModel.OpenGalleryCommand.Execute(item)));
+        menu.Items.Add(CreateMenuItem("查看详情", () => _viewModel.OpenDetailsCommand.Execute(item)));
+        if (item.HasMultipleVersions)
+        {
+            menu.Items.Add(CreateMenuItem($"版本管理（{item.Versions.Count}）",
+                () => _viewModel.OpenVersionsCommand.Execute(item)));
+        }
+
+        menu.Items.Add(new Separator());
+        menu.Items.Add(CreateMenuItem(item.IsFavorite ? "取消收藏" : "收藏",
+            () => _viewModel.ToggleFavoriteCommand.Execute(item)));
+        menu.Items.Add(CreateMenuItem("标记已读", () => _viewModel.MarkReadCommand.Execute(item)));
+        menu.Items.Add(CreateMenuItem("标记未读", () => _viewModel.MarkUnreadCommand.Execute(item)));
+        menu.Items.Add(CreateMenuItem("清除进度", () => _viewModel.ClearProgressCommand.Execute(item)));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(CreateMenuItem("打开文件夹", () => _viewModel.OpenFolderCommand.Execute(item)));
+
+        control.ContextMenu = menu;
+        menu.Open(control);
+        e.Handled = true;
+    }
+
+    private static MenuItem CreateMenuItem(string header, Action action)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => action();
+        return item;
+    }
+
+    private void OnOpenSettings(object? sender, RoutedEventArgs e) =>
+        SettingsRequested?.Invoke(this, EventArgs.Empty);
+
+    private async void OnChooseFolderRequested(object? sender, EventArgs e) => await PickFolderAsync();
+
+    private async void OnChooseFolder(object? sender, RoutedEventArgs e) => await PickFolderAsync();
+
+    private async Task PickFolderAsync()
+    {
+        if (_viewModel is null) return;
+        try
+        {
+            TopLevel? top = TopLevel.GetTopLevel(this);
+            if (top is null) return;
+
+            IReadOnlyList<IStorageFolder> folders = await top.StorageProvider.OpenFolderPickerAsync(
+                new FolderPickerOpenOptions
+                {
+                    Title = "选择 EhViewer 下载目录",
+                    AllowMultiple = false,
+                });
+
+            if (folders.Count == 0) return;
+            string? path = folders[0].TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path)) return;
+
+            string? error = await _viewModel.SetRootAsync(path);
+            if (error is not null)
+            {
+                _viewModel.ReportError("切换资料库失败：" + error);
+            }
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ReportError("选择目录失败：" + ex.Message);
+        }
+    }
+
+    private void OnVersionsClick(object? sender, TappedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        if (sender is Control { DataContext: GalleryItemViewModel item })
+        {
+            _viewModel.OpenVersionsCommand.Execute(item);
+            e.Handled = true;
+        }
+    }
+
+    private void OnOpenGalleryRequested(object? sender, GalleryItemViewModel item)
+    {
+        if (_viewModel is null) return;
+        try
+        {
+            ReaderWindow? existing = _readers.FirstOrDefault(r =>
+                string.Equals(r.GalleryId, item.StableId, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
+                existing.Activate();
+                return;
+            }
+
+            var readerViewModel = new ReaderViewModel(_viewModel.Services, item.Info);
+            var window = new ReaderWindow(readerViewModel)
+            {
+                GalleryId = item.StableId,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            };
+
+            _readers.Add(window);
+            window.Closed += (_, _) =>
+            {
+                _readers.Remove(window);
+                _viewModel?.RefreshItemProgress(item);
+            };
+
+            if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner);
+            else window.Show();
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ReportError("打开阅读器失败：" + ex.Message);
+        }
+    }
+
+    private async void OnOpenVersionsRequested(object? sender, GalleryItemViewModel item)
+    {
+        if (_viewModel is null) return;
+        try
+        {
+            var window = new VersionsWindow(new VersionsViewModel(item, _viewModel.Services))
+            {
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            };
+
+            if (TopLevel.GetTopLevel(this) is Window owner) await window.ShowDialog(owner);
+            else window.Show();
+
+            if (window.ReadVersion is { } read)
+            {
+                _viewModel.SetPreferredSource(item, read);
+                _viewModel.OpenGalleryCommand.Execute(item);
+            }
+            else if (window.DefaultVersion is { } preferred)
+            {
+                _viewModel.SetPreferredSource(item, preferred);
+            }
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ReportError("打开版本管理失败：" + ex.Message);
+        }
+    }
+
+    private async void OnOpenDetailsRequested(object? sender, GalleryItemViewModel item)
+    {
+        if (_viewModel is null) return;
+        try
+        {
+            var window = new GalleryDetailsWindow(item, _viewModel.Services);
+            if (TopLevel.GetTopLevel(this) is Window owner) await window.ShowDialog(owner);
+            else window.Show();
+            _viewModel.RefreshItemProgress(item);
+        }
+        catch (Exception ex)
+        {
+            _viewModel.ReportError("打开详情失败：" + ex.Message);
+        }
+    }
+}

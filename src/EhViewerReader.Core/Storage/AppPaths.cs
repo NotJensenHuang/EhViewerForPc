@@ -24,6 +24,22 @@ public sealed class AppPaths
     public string DimensionCacheDirectory => Path.Combine(BaseDirectory, "dimensions");
     public string ExportDirectory => Path.Combine(BaseDirectory, "exports");
 
+    /// <summary>On-demand page cache used by the online reader.</summary>
+    public string OnlineCacheDirectory => Path.Combine(BaseDirectory, "online-cache");
+
+    /// <summary>Thumbnail cache for online listings.</summary>
+    public string ThumbnailCacheDirectory => Path.Combine(BaseDirectory, "thumbnails");
+
+    public string DownloadTasksFile => Path.Combine(BaseDirectory, "downloads.json");
+
+    /// <summary>
+    /// Default download root when the user has not configured one. Kept outside
+    /// the app data directory so downloads survive a reinstall and can be added
+    /// as an ordinary library source.
+    /// </summary>
+    public string DefaultDownloadDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "EhViewerDownloads");
+
     public void EnsureCreated()
     {
         Directory.CreateDirectory(BaseDirectory);
@@ -31,6 +47,8 @@ public sealed class AppPaths
         Directory.CreateDirectory(CoverCacheDirectory);
         Directory.CreateDirectory(DimensionCacheDirectory);
         Directory.CreateDirectory(ExportDirectory);
+        Directory.CreateDirectory(OnlineCacheDirectory);
+        Directory.CreateDirectory(ThumbnailCacheDirectory);
     }
 
     public string GetDimensionCacheFile(string stableId) =>

@@ -20,6 +20,9 @@ public sealed class StartupOptions
     /// <summary>Optional directory the animation probe writes sample frames to.</summary>
     public string? DumpFrames { get; private set; }
     public bool SelfTest { get; private set; }
+
+    /// <summary>Network probe: front page → detail → page list → image URL.</summary>
+    public bool OnlineProbe { get; private set; }
     public bool UiSmoke { get; private set; }
     public bool SkipSnapshot { get; private set; }
     public bool DeepProbe { get; private set; }
@@ -64,6 +67,9 @@ public sealed class StartupOptions
                     break;
                 case "--self-test":
                     options.SelfTest = true;
+                    break;
+                case "--online-probe":
+                    options.OnlineProbe = true;
                     break;
                 case "--ui-smoke":
                     options.UiSmoke = true;

@@ -1,0 +1,78 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerReader.ViewModels"
+             xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
+             xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
+             x:Class="EhViewerReader.Views.OnlineFeedPage"
+             x:DataType="vm:OnlineFeedViewModel">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="22,16,22,8">
+      <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
+        <TextBlock Text="{Binding Title}" Classes="h1" />
+        <TextBlock Text="{Binding Subtitle}" Classes="caption" />
+      </StackPanel>
+
+      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <ComboBox Width="104" ItemsSource="{Binding ToplistOptions}" SelectedItem="{Binding SelectedToplistOption}"
+                  IsVisible="{Binding ShowToplistSelector}" VerticalAlignment="Center">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:FeedOption">
+              <TextBlock Text="{Binding Label}" />
+            </DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <Button Content="刷新" Command="{Binding RefreshCommand}" />
+        <Button Content="上一页" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoBack}" />
+        <Button Content="下一页" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" />
+        <TextBlock Text="{Binding PageLabel}" Classes="caption" VerticalAlignment="Center" MinWidth="52" />
+      </StackPanel>
+    </Grid>
+
+    <ItemsControl Grid.Row="1" ItemsSource="{Binding Tabs}" Margin="22,0,22,10" IsVisible="{Binding HasTabs}">
+      <ItemsControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <StackPanel Orientation="Horizontal" Spacing="8" />
+        </ItemsPanelTemplate>
+      </ItemsControl.ItemsPanel>
+      <ItemsControl.ItemTemplate>
+        <DataTemplate x:DataType="vm:FeedOption">
+          <Button Classes="chip" Classes.active="{Binding IsActive}" Content="{Binding Label}"
+                  Tag="{Binding}" Click="OnTabClick" />
+        </DataTemplate>
+      </ItemsControl.ItemTemplate>
+    </ItemsControl>
+
+    <Grid Grid.Row="2">
+      <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Border Padding="22,0,22,20">
+          <ir:ItemsRepeater ItemsSource="{Binding Items}" ItemTemplate="{StaticResource OnlineGalleryCard}">
+            <ir:ItemsRepeater.Layout>
+              <layout:UniformGridLayout MinItemWidth="196" MinItemHeight="352"
+                                        MinColumnSpacing="14" MinRowSpacing="14"
+                                        ItemsStretch="Fill" />
+            </ir:ItemsRepeater.Layout>
+          </ir:ItemsRepeater>
+        </Border>
+      </ScrollViewer>
+
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8"
+                  IsVisible="{Binding ShowEmpty}">
+        <TextBlock Text="{Binding StatusText}" FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
+        <TextBlock Classes="secondary" Text="{Binding EmptyText}" HorizontalAlignment="Center" />
+        <Button Content="刷新" Command="{Binding RefreshCommand}" HorizontalAlignment="Center" Margin="0,6,0,0" />
+      </StackPanel>
+
+      <ProgressBar IsIndeterminate="True" Height="3" VerticalAlignment="Top" IsVisible="{Binding IsBusy}" />
+    </Grid>
+
+    <Border Grid.Row="3" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="11"
+                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1" Classes="muted" FontSize="11"
+                   Text="{Binding Items.Count, StringFormat='{}{0} 项'}" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

@@ -11,6 +11,9 @@
       <Color x:Key="SystemAccentColorDark1">#E2556B</Color>
       <Color x:Key="SystemAccentColorDark2">#C2465B</Color>
       <Color x:Key="SystemAccentColorDark3">#A2384B</Color>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://EhViewerReader/Styles/OnlineCardTemplates.axaml" />
+      </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Application.Resources>
   <Application.Styles>

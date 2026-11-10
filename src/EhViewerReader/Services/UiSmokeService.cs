@@ -60,10 +60,10 @@ public static class UiSmokeService
         };
         report["windowIcon"] = window.Icon is not null;
         report["libraryLayout"] = DescribeLayout(window);
-        report["statusBar"] = window.FindControl<Control>("StatusBar") is { } statusBar
+        report["statusBar"] = window.LibraryStatusBar is { } statusBar
             ? DescribeBounds(statusBar)
             : "missing";
-        report["libraryScroll"] = window.FindControl<Control>("LibraryScroll") is { } scroll
+        report["libraryScroll"] = window.LibraryScroll is { } scroll
             ? DescribeBounds(scroll)
             : "missing";
 
@@ -455,7 +455,7 @@ public static class UiSmokeService
 
         // Reader window behaviour: must be non-modal (library stays usable) and
         // must not disturb the library viewport or its ordering when it closes.
-        var libraryScroll = window.FindControl<ScrollViewer>("LibraryScroll");
+        var libraryScroll = window.LibraryScroll;
         object? readerWindowReport = null;
         if (libraryScroll is not null)
         {
@@ -572,6 +572,66 @@ public static class UiSmokeService
             error = stressError,
         };
 
+        // Shell navigation: every page must instantiate and lay out. Network
+        // loads are fire-and-forget, so the capture happens while they are in
+        // flight and a missing page shows up as an empty content host.
+        var pageShots = new List<string>();
+        if (window.Shell is { } shell)
+        {
+            foreach (string key in new[] { "online", "search", "favorites", "history", "downloads", "settings" })
+            {
+                shell.Navigate(key);
+                await Task.Delay(900);
+                string name = "page-" + key + ".png";
+                SaveScreenshot(window, Path.Combine(output, name));
+                pageShots.Add(name);
+            }
+
+            shell.Navigate("search");
+            shell.Search.ShowAdvanced = true;
+            shell.Search.ShowHistory = true;
+            await Task.Delay(700);
+            SaveScreenshot(window, Path.Combine(output, "page-search-advanced.png"));
+            pageShots.Add("page-search-advanced.png");
+            shell.Search.ShowAdvanced = false;
+
+            // Online gallery detail (network dependent): validates the XAML and
+            // the scrape → view model path. A failure is recorded, not fatal.
+            if (shell.Online.Items.FirstOrDefault() is { } first)
+            {
+                try
+                {
+                    var detailViewModel = new OnlineGalleryViewModel(AppServices.Current, shell, first.Summary);
+                    var detailWindow = new OnlineGalleryWindow(detailViewModel)
+                    {
+                        WindowStartupLocation = WindowStartupLocation.Manual,
+                        Position = new PixelPoint(60, 60),
+                    };
+                    detailWindow.Show();
+                    await Task.Delay(4000);
+                    SaveScreenshot(detailWindow, Path.Combine(output, "online-detail.png"));
+                    pageShots.Add("online-detail.png");
+                    report["onlineDetail"] = new
+                    {
+                        title = detailViewModel.Title,
+                        tags = detailViewModel.Tags.Count,
+                        status = detailViewModel.StatusText,
+                        pages = detailViewModel.PagesText,
+                    };
+                    detailWindow.Close();
+                    await Task.Delay(200);
+                }
+                catch (Exception ex)
+                {
+                    report["onlineDetailError"] = ex.Message;
+                }
+            }
+
+            shell.Navigate("library");
+            await Task.Delay(400);
+        }
+
+        report["pageScreenshots"] = pageShots;
         report["elapsedSeconds"] = Math.Round(stopwatch.Elapsed.TotalSeconds, 2);
 
         // Restore the user's reading mode: the mode-persistence assertions in

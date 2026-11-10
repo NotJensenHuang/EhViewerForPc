@@ -1,0 +1,226 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerReader.ViewModels"
+             x:Class="EhViewerReader.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel">
+  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="22,16,22,10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="设置" Classes="h1" />
+        <TextBlock Classes="caption" Text="账号、网络代理、下载引擎与阅读器默认值" />
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <Button Content="打开数据目录" Click="OnOpenDataDirectory" />
+        <Button Content="清除扫描缓存" Click="OnClearCache" />
+        <Button Classes="primary" Content="保存全部设置" Click="OnApplyAll" />
+      </StackPanel>
+    </Grid>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="22,0,22,24" Spacing="14">
+
+        <!-- Account -->
+        <Border Classes="tile">
+          <StackPanel Spacing="12">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="账号" Classes="h2" />
+              <TextBlock Grid.Column="1" Classes="caption" Text="{Binding AccountUserText}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="Auto,10,Auto,10,*,10,Auto" ColumnSpacing="0">
+              <TextBlock Text="站点" Classes="secondary" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="2" Width="132" ItemsSource="{Binding SiteLabels}" SelectedIndex="{Binding SiteIndex}" />
+              <TextBlock Grid.Column="4" Classes="caption" VerticalAlignment="Center"
+                         Text="{Binding ExAccessText, StringFormat='ExHentai：{0}'}" />
+              <TextBlock Grid.Column="6" Classes="caption" VerticalAlignment="Center"
+                         Text="{Binding LastSignInText, StringFormat='最近登录：{0}'}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="*,10,*" ColumnSpacing="0">
+              <TextBox Grid.Column="0" Text="{Binding UserNameInput}" PlaceholderText="用户名" />
+              <TextBox Grid.Column="2" Text="{Binding PasswordInput}" PasswordChar="●" PlaceholderText="密码（不会保存）" />
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Classes="primary" Content="登录" Command="{Binding LoginCommand}" />
+              <Button Content="退出登录" Command="{Binding SignOutCommand}" />
+              <Button Content="检测 ExHentai" Command="{Binding CheckExAccessCommand}" />
+              <Button Content="注册账号" Classes="ghost" Command="{Binding OpenRegisterPageCommand}" />
+            </StackPanel>
+
+            <StackPanel Spacing="6">
+              <TextBlock Text="或用浏览器 Cookie 登录（ipb_member_id=…; ipb_pass_hash=…; igneous=…）" Classes="caption" />
+              <Grid ColumnDefinitions="*,10,Auto" ColumnSpacing="0">
+                <TextBox Grid.Column="0" Text="{Binding CookieInput}" AcceptsReturn="True" Height="58"
+                         TextWrapping="Wrap" PlaceholderText="粘贴完整 Cookie 字符串" />
+                <Button Grid.Column="2" Content="导入 Cookie" Command="{Binding ImportCookiesCommand}"
+                        VerticalAlignment="Bottom" />
+              </Grid>
+            </StackPanel>
+
+            <TextBlock Text="{Binding AccountStatus}" Classes="caption" Foreground="{DynamicResource AppAccentBrush}" />
+          </StackPanel>
+        </Border>
+
+        <!-- Network -->
+        <Border Classes="tile">
+          <StackPanel Spacing="12">
+            <TextBlock Text="网络与代理" Classes="h2" />
+
+            <Grid ColumnDefinitions="Auto,10,160,10,Auto" ColumnSpacing="0">
+              <TextBlock Text="代理模式" Classes="secondary" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="2" ItemsSource="{Binding ProxyModeLabels}" SelectedIndex="{Binding ProxyModeIndex}" />
+              <CheckBox Grid.Column="4" Content="图片也走代理" IsChecked="{Binding ProxyForImages}" VerticalAlignment="Center" />
+            </Grid>
+
+            <Grid ColumnDefinitions="*,10,110,10,*,10,*" ColumnSpacing="0" IsVisible="{Binding IsManualProxy}">
+              <TextBox Grid.Column="0" Text="{Binding ProxyHost}" PlaceholderText="代理主机" />
+              <TextBox Grid.Column="2" Text="{Binding ProxyPort}" PlaceholderText="端口" />
+              <TextBox Grid.Column="4" Text="{Binding ProxyUserName}" PlaceholderText="用户名（可选）" />
+              <TextBox Grid.Column="6" Text="{Binding ProxyPassword}" PasswordChar="●" PlaceholderText="密码（可选）" />
+            </Grid>
+
+            <CheckBox Content="使用 DNS over HTTPS 解析域名" IsChecked="{Binding UseDoh}" />
+            <Grid ColumnDefinitions="*,10,*" ColumnSpacing="0" IsVisible="{Binding UseDoh}">
+              <TextBox Grid.Column="0" Text="{Binding DohEndpoint}" PlaceholderText="DoH 端点" />
+              <TextBox Grid.Column="2" Text="{Binding HostsOverride}" PlaceholderText="自定义 hosts（每行：host ip）" />
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="应用网络设置" Command="{Binding ApplyNetworkCommand}" />
+              <Button Content="测试连接" Command="{Binding TestNetworkCommand}" />
+              <TextBlock Text="{Binding NetworkStatus}" Classes="caption" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="提示：镜像站/代理仅影响应用的 HTTP 请求；图片主机可单独直连以节省代理流量。" />
+          </StackPanel>
+        </Border>
+
+        <!-- Downloads -->
+        <Border Classes="tile">
+          <StackPanel Spacing="12">
+            <TextBlock Text="下载（独立数据源）" Classes="h2" />
+
+            <Grid ColumnDefinitions="*,10,Auto,8,Auto" ColumnSpacing="0">
+              <TextBox Grid.Column="0" Text="{Binding DownloadRoot}" PlaceholderText="下载根目录" />
+              <Button Grid.Column="2" Content="浏览…" Click="OnPickDownloadRoot" />
+              <Button Grid.Column="4" Content="打开目录" Command="{Binding OpenDownloadFolderCommand}" />
+            </Grid>
+
+            <WrapPanel Orientation="Horizontal">
+              <CheckBox Content="注册为本地库数据源" IsChecked="{Binding DownloadAddAsSource}" Margin="0,0,18,0" />
+              <CheckBox Content="下载原图" IsChecked="{Binding DownloadOriginal}" Margin="0,0,18,0" />
+              <CheckBox Content="写入 .thumb 封面" IsChecked="{Binding WriteThumb}" Margin="0,0,18,0" />
+              <CheckBox Content="写入 .ehviewer 元数据" IsChecked="{Binding WriteHeader}" />
+            </WrapPanel>
+
+            <WrapPanel Orientation="Horizontal">
+              <CheckBox Content="启动时自动继续" IsChecked="{Binding AutoStart}" Margin="0,0,18,0" />
+              <CheckBox Content="完成后刷新本地库" IsChecked="{Binding RefreshAfterDownload}" Margin="0,0,18,0" />
+            </WrapPanel>
+
+            <Grid ColumnDefinitions="Auto,10,220,10,Auto,10,Auto,10,220" ColumnSpacing="0">
+              <TextBlock Text="并发画廊" Classes="secondary" VerticalAlignment="Center" />
+              <Slider Grid.Column="2" Minimum="1" Maximum="8" TickFrequency="1" IsSnapToTickEnabled="True"
+                      Value="{Binding MaxConcurrentTasks}" />
+              <TextBlock Grid.Column="4" Classes="caption" Text="{Binding MaxTasksLabel}" VerticalAlignment="Center" MinWidth="80" />
+              <TextBlock Grid.Column="6" Text="并发页面" Classes="secondary" VerticalAlignment="Center" />
+              <Slider Grid.Column="8" Minimum="1" Maximum="8" TickFrequency="1" IsSnapToTickEnabled="True"
+                      Value="{Binding MaxConcurrentPages}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="Auto,10,*" ColumnSpacing="0">
+              <TextBlock Text="默认标签" Classes="secondary" VerticalAlignment="Center" />
+              <TextBox Grid.Column="2" Text="{Binding DefaultDownloadLabel}" PlaceholderText="可选：下载到该子目录" />
+            </Grid>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="保存下载设置" Command="{Binding ApplyDownloadCommand}" />
+              <TextBlock Text="{Binding DownloadStatus}" Classes="caption" VerticalAlignment="Center" />
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- Reader -->
+        <Border Classes="tile">
+          <StackPanel Spacing="12">
+            <TextBlock Text="阅读器" Classes="h2" />
+            <Grid ColumnDefinitions="Auto,10,140,10,Auto,10,140,10,Auto,10,140" ColumnSpacing="0">
+              <TextBlock Text="主题" Classes="secondary" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="2" ItemsSource="{Binding ThemeLabels}" SelectedIndex="{Binding ThemeIndex}" />
+              <TextBlock Grid.Column="4" Text="默认模式" Classes="secondary" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="6" ItemsSource="{Binding ModeLabels}" SelectedIndex="{Binding ModeIndex}" />
+              <TextBlock Grid.Column="8" Text="背景" Classes="secondary" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="10" ItemsSource="{Binding BackgroundLabels}" SelectedIndex="{Binding BackgroundIndex}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="Auto,10,140,10,Auto" ColumnSpacing="0">
+              <TextBlock Text="适应方式" Classes="secondary" VerticalAlignment="Center" />
+              <ComboBox Grid.Column="2" ItemsSource="{Binding FitLabels}" SelectedIndex="{Binding FitIndex}" />
+              <CheckBox Grid.Column="4" Content="日漫方向（右→左）" IsChecked="{Binding RightToLeft}" VerticalAlignment="Center" />
+            </Grid>
+
+            <Grid ColumnDefinitions="Auto,10,220,10,Auto,10,Auto,10,220" ColumnSpacing="0">
+              <TextBlock Text="解码上限" Classes="secondary" VerticalAlignment="Center" />
+              <Slider Grid.Column="2" Minimum="4" Maximum="96" Value="{Binding MaxMegapixels}" />
+              <TextBlock Grid.Column="4" Classes="caption" Text="{Binding MaxMegapixelsLabel}" VerticalAlignment="Center" MinWidth="70" />
+              <TextBlock Grid.Column="6" Text="封面宽度" Classes="secondary" VerticalAlignment="Center" />
+              <Slider Grid.Column="8" Minimum="160" Maximum="1024" Value="{Binding CoverDecodeWidth}" />
+            </Grid>
+          </StackPanel>
+        </Border>
+
+        <!-- Sources -->
+        <Border Classes="tile">
+          <StackPanel Spacing="10">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="本地数据源" Classes="h2" />
+              <Button Grid.Column="1" Content="添加目录…" Click="OnAddSource" />
+            </Grid>
+            <TextBlock Classes="caption" Text="支持多个下载目录（设备备份）。应用只读取这些目录，不会修改任何文件。" />
+
+            <ItemsControl ItemsSource="{Binding Sources}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:SourceRowViewModel">
+                  <Border Classes="row" Margin="0,0,0,6">
+                    <Grid ColumnDefinitions="Auto,12,*,Auto,Auto" ColumnSpacing="0">
+                      <CheckBox Grid.Column="0" IsChecked="{Binding Enabled}" VerticalAlignment="Center" />
+                      <StackPanel Grid.Column="2" Spacing="2">
+                        <TextBlock Text="{Binding DisplayName}" />
+                        <TextBlock Classes="caption" Text="{Binding RootPath}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Classes="caption" Text="{Binding StatusText}"
+                                   Foreground="{DynamicResource AppWarningBrush}" />
+                      </StackPanel>
+                      <Button Grid.Column="3" Content="打开" Classes="ghost" Tag="{Binding}" Click="OnOpenSource" />
+                      <Button Grid.Column="4" Content="移除" Classes="ghost" Tag="{Binding}" Click="OnRemoveSource" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+        <!-- About -->
+        <Border Classes="tile">
+          <StackPanel Spacing="6">
+            <TextBlock Text="关于" Classes="h2" />
+            <TextBlock Classes="secondary" Text="{Binding DataDirectory, StringFormat='数据目录：{0}'}" TextWrapping="Wrap" />
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,4,0,0">
+              <Button Content="清除在线缓存" Click="OnClearOnlineCache" />
+              <TextBlock Text="{Binding DownloadStatus}" Classes="caption" VerticalAlignment="Center" />
+            </StackPanel>
+            <TextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="在线功能基于 E-Hentai / ExHentai 网页接口；请遵守站点条款，仅下载你有权访问的内容。应用的离线资料库仍保持只读。" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,1,0,0">
+      <TextBlock Classes="muted" FontSize="11"
+                 Text="更改网络设置后需要「应用网络设置」才会重建连接；下载目录变更对进行中的任务不生效。" />
+    </Border>
+  </Grid>
+</UserControl>

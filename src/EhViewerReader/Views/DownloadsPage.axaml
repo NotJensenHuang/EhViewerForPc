@@ -1,0 +1,123 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerReader.ViewModels"
+             x:Class="EhViewerReader.Views.DownloadsPage"
+             x:DataType="vm:DownloadsViewModel">
+  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="22,16,22,10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="下载" Classes="h1" />
+        <TextBlock Text="{Binding RootPathDisplay}" Classes="caption" TextTrimming="CharacterEllipsis" MaxWidth="560" />
+      </StackPanel>
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <Button Content="全部开始" Classes="primary" Command="{Binding StartAllCommand}" />
+        <Button Content="全部暂停" Command="{Binding PauseAllCommand}" />
+        <Button Content="清除已完成" Command="{Binding ClearFinishedCommand}" />
+        <Button Content="打开目录" Command="{Binding OpenRootCommand}" />
+      </StackPanel>
+    </Grid>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="22,0,22,20" Spacing="18">
+        <!-- Queue -->
+        <StackPanel Spacing="8">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Text="下载队列" Classes="h2" />
+            <TextBlock Grid.Column="1" Classes="caption" Text="{Binding StatusText}" />
+          </Grid>
+
+          <StackPanel Spacing="8" IsVisible="{Binding !HasTasks}">
+            <Border Classes="tile" Padding="18">
+              <StackPanel Spacing="6">
+                <TextBlock Text="队列为空" Classes="h2" />
+                <TextBlock Classes="secondary" TextWrapping="Wrap"
+                           Text="在「在线浏览」「搜索」「收藏」中打开任意画廊，点「下载」即可加入队列。下载目录是独立可配置的数据源：可在设置中指定路径并自动注册到本地库。" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+
+          <ItemsControl ItemsSource="{Binding Tasks}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:DownloadTaskViewModel">
+                <Border Classes="row" Margin="0,0,0,8">
+                  <Border.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="暂停" Command="{Binding PauseCommand}" IsEnabled="{Binding CanPause}" />
+                      <MenuItem Header="继续 / 重试" Command="{Binding ResumeCommand}" IsEnabled="{Binding CanResume}" />
+                      <MenuItem Header="打开目录" Command="{Binding OpenFolderCommand}" />
+                      <Separator />
+                      <MenuItem Header="移除任务（保留文件）" Command="{Binding RemoveCommand}" />
+                      <MenuItem Header="移除任务并删除文件" Command="{Binding DeleteFilesCommand}" />
+                    </ContextMenu>
+                  </Border.ContextMenu>
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                    <StackPanel Spacing="5">
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="caption" Text="{Binding GidText}" />
+                        <TextBlock Classes="caption" Text="{Binding StateText}" Foreground="{Binding StateBadgeColor}" />
+                        <TextBlock Classes="caption" Text="{Binding Label}" />
+                        <TextBlock Classes="caption" Text="{Binding Message}" IsVisible="{Binding HasMessage}" />
+                      </StackPanel>
+                      <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}" />
+                      <StackPanel Orientation="Horizontal" Spacing="12">
+                        <TextBlock Classes="caption" Text="{Binding ProgressText}" />
+                        <TextBlock Classes="caption" Text="{Binding SizeText}" />
+                      </StackPanel>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                      <Button Content="暂停" Command="{Binding PauseCommand}" IsVisible="{Binding CanPause}" />
+                      <Button Content="继续" Command="{Binding ResumeCommand}" IsVisible="{Binding CanResume}" />
+                      <Button Content="重试" Command="{Binding ResumeCommand}" IsVisible="{Binding IsFailed}" />
+                      <Button Content="目录" Command="{Binding OpenFolderCommand}" />
+                      <Button Content="移除" Command="{Binding RemoveCommand}" IsVisible="{Binding !IsCompleted}" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+        <!-- Archive -->
+        <StackPanel Spacing="8">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Text="下载归档" Classes="h2" />
+            <Button Grid.Column="1" Content="清空归档" Classes="ghost" FontSize="11"
+                    Command="{Binding ClearArchiveCommand}" IsVisible="{Binding HasArchive}" />
+          </Grid>
+
+          <TextBlock Classes="caption" Text="已完成的画廊记录（文件始终保留在下载目录）。" IsVisible="{Binding HasArchive}" />
+
+          <ItemsControl ItemsSource="{Binding Archive}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:DownloadArchiveViewModel">
+                <Border Classes="row" Margin="0,0,0,6">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <StackPanel Spacing="3">
+                      <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                      <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="caption" Text="{Binding GidText}" />
+                        <TextBlock Classes="caption" Text="{Binding PagesText}" />
+                        <TextBlock Classes="caption" Text="{Binding SizeText}" />
+                        <TextBlock Classes="caption" Text="{Binding FinishedText}" />
+                      </StackPanel>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="打开目录" Command="{Binding OpenFolderCommand}"
+                            VerticalAlignment="Center" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,1,0,0">
+      <TextBlock Text="{Binding ActiveText}" Classes="secondary" FontSize="11" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

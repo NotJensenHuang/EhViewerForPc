@@ -1,4 +1,6 @@
+using EhViewerReader.Core.Download;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Online;
 using EhViewerReader.Core.Scanning;
 using EhViewerReader.Core.Storage;
 
@@ -25,6 +27,9 @@ public sealed class AppServices : IDisposable
         Images = new ImageLoader(Decoder, Log);
         Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
+        Online = new EhClient(settings, message => Log.Warn(message));
+        OnlineImages = new OnlineImageService(paths, Online, Images, Log);
+        Downloads = new DownloadManager(paths, settings, Online, message => Log.Warn(message));
         ApplySettings(settings);
     }
 
@@ -41,6 +46,15 @@ public sealed class AppServices : IDisposable
     public ImageLoader Images { get; }
     public CoverService Covers { get; }
     public PageDimensionService Dimensions { get; }
+
+    /// <summary>E-Hentai / ExHentai client (browsing, search, account).</summary>
+    public EhClient Online { get; }
+
+    /// <summary>Thumbnail and page cache for online content.</summary>
+    public OnlineImageService OnlineImages { get; }
+
+    /// <summary>Independent download engine.</summary>
+    public DownloadManager Downloads { get; }
 
     public static AppServices Initialize(AppPaths? paths = null)
     {
@@ -71,6 +85,36 @@ public sealed class AppServices : IDisposable
         return SettingsStore.Save(Settings, out error);
     }
 
+    /// <summary>Rebuilds the HTTP stacks after proxy/DNS/hosts changes.</summary>
+    public void ReloadNetwork()
+    {
+        Online.ReloadNetwork();
+    }
+
+    /// <summary>
+    /// Registers the download root as a library source so finished downloads
+    /// appear in the local library without any extra setup.
+    /// </summary>
+    public LibrarySource? EnsureDownloadSource()
+    {
+        if (!Settings.Download.AddAsSource) return null;
+
+        string root = Downloads.RootPath;
+        try
+        {
+            Directory.CreateDirectory(root);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn("Create download root failed: " + root + " | " + ex.Message);
+            return null;
+        }
+
+        LibrarySource source = Settings.AddSource(root, "下载目录");
+        TrySaveSettings(out _);
+        return source;
+    }
+
     public bool TrySaveProgress(out string? error) => Progress.Save(out error);
 
     public void Dispose()
@@ -86,6 +130,8 @@ public sealed class AppServices : IDisposable
             // Best effort on shutdown.
         }
 
+        Downloads.Dispose();
+        Online.Dispose();
         Covers.Dispose();
         Decoder.Dispose();
     }

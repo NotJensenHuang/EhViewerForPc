@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EhViewerReader.Core.Download;
 using EhViewerReader.Core.Models;
 
 namespace EhViewerReader.Core.Storage;
@@ -19,4 +20,5 @@ namespace EhViewerReader.Core.Storage;
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(ProgressFile))]
 [JsonSerializable(typeof(LibraryCache))]
+[JsonSerializable(typeof(DownloadFile))]
 internal sealed partial class StorageJsonContext : JsonSerializerContext;

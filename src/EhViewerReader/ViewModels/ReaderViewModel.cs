@@ -13,7 +13,7 @@ public sealed record FitOption(FitMode Value, string Label);
 public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 {
     private readonly AppServices _services;
-    private readonly GalleryInfo _gallery;
+    private readonly IReaderSource _source;
     private readonly List<GalleryPage> _pages;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly DispatcherTimer _saveTimer;
@@ -53,16 +53,15 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private bool _suppressScrollSync;
 
     public ReaderViewModel(AppServices services, GalleryInfo gallery)
+        : this(services, new LocalReaderSource(services, gallery))
+    {
+    }
+
+    public ReaderViewModel(AppServices services, IReaderSource source)
     {
         _services = services;
-        _gallery = gallery;
-        _pages = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError)
-            .Pages
-            .ToList();
-        if (scanError is not null)
-        {
-            services.Log.Warn("Reader page scan failed: " + gallery.FolderPath + " | " + scanError);
-        }
+        _source = source;
+        _pages = source.Pages.ToList();
 
         _fitOptions =
         [
@@ -92,6 +91,13 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         RestoreProgress();
         UpdateCurrentRequests();
         UpdateLabels();
+
+        if (source is OnlineReaderSource online)
+        {
+            // Continuous mode starts with estimated slots; once a page decodes,
+            // its real aspect ratio replaces the estimate.
+            online.DimensionResolved = OnOnlineDimensionResolved;
+        }
     }
 
     public event EventHandler<double>? ScrollToRequested;
@@ -99,13 +105,13 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     /// <summary>Raised in horizontal mode: the target X offset the view should scroll to.</summary>
     public event EventHandler<double>? HorizontalScrollToRequested;
 
-    public GalleryInfo Gallery => _gallery;
     public AppServices Services => _services;
-    public string Title => _gallery.DisplayTitle;
+    public IReaderSource Source => _source;
+    public string Title => _source.Title;
 
     /// <summary>Source label shown in the toolbar; empty for a single source.</summary>
-    public string SourceText => _gallery.SourceName;
-    public bool HasSourceText => !string.IsNullOrEmpty(_gallery.SourceName);
+    public string SourceText => _source.SourceLabel;
+    public bool HasSourceText => !string.IsNullOrEmpty(_source.SourceLabel);
     public int PageCount => _pages.Count;
     public bool HasPages => _pages.Count > 0;
     public ReadingMode Mode => _mode;
@@ -229,23 +235,15 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     public int SliderMaximum => Math.Max(1, _pages.Count);
     public int CurrentPageNumber => _pages.Count == 0 ? 0 : _pages[Math.Clamp(_index, 0, _pages.Count - 1)].Number;
 
-    public string MissingSummary
-    {
-        get
-        {
-            if (_gallery.MissingRanges.Count == 0) return string.Empty;
-            return "缺页 " + string.Join(", ", _gallery.MissingRanges.Select(r => r.ToString()));
-        }
-    }
+    public string MissingSummary => _source.MissingSummary;
 
-    public string DebugStatus =>
-        $"{_gallery.StableId} · {_pages.Count} 页 · {_gallery.ExtensionSummary}";
+    public string DebugStatus => _source.DebugInfo;
 
     private void RestoreProgress()
     {
         if (_pages.Count == 0) return;
         ReadingProgress? progress =
-            _services.Progress.Get(_gallery.WorkId) ?? _services.Progress.Get(_gallery.StableId);
+            _services.Progress.Get(_source.ProgressKey) ?? _services.Progress.Get(_source.StableId);
         if (progress is null)
         {
             _index = 0;
@@ -301,11 +299,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             return;
         }
 
-        GalleryPage current = _pages[Math.Clamp(_index, 0, _pages.Count - 1)];
-        SingleRequest = new PageImageRequest(current.Candidates, _services.Images);
-
-        GalleryPage? next = _index + 1 < _pages.Count ? _pages[_index + 1] : null;
-        PreloadRequest = next is null ? null : new PageImageRequest(next.Candidates, _services.Images);
+        int index = Math.Clamp(_index, 0, _pages.Count - 1);
+        SingleRequest = _source.CreateRequest(index);
+        PreloadRequest = _index + 1 < _pages.Count ? _source.CreateRequest(_index + 1) : null;
     }
 
     private void UpdateLabels()
@@ -372,7 +368,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         if (_pages.Count == 0) return;
         GalleryPage page = _pages[_index];
         _services.Progress.RecordRead(
-            _gallery.WorkId,
+            _source.ProgressKey,
             page.Number,
             _index,
             _pageOffset,
@@ -544,8 +540,8 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
         try
         {
-            IReadOnlyList<PageDimension> dimensions = await _services.Dimensions
-                .LoadAsync(_gallery, _pages, progress, _lifetime.Token)
+            IReadOnlyList<PageDimension> dimensions = await _source
+                .LoadDimensionsAsync(progress, _lifetime.Token)
                 .ConfigureAwait(true);
 
             var vertical = new List<ContinuousPageItem>(_pages.Count);
@@ -555,13 +551,13 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
                 PageDimension dimension = dimensions[i];
                 vertical.Add(new ContinuousPageItem(
                     _pages[i],
-                    new PageImageRequest(_pages[i].Candidates, _services.Images),
+                    _source.CreateRequest(i),
                     dimension.Width,
                     dimension.Height,
                     dimension.Known));
                 horizontal.Add(new ContinuousPageItem(
                     _pages[i],
-                    new PageImageRequest(_pages[i].Candidates, _services.Images),
+                    _source.CreateRequest(i),
                     dimension.Width,
                     dimension.Height,
                     dimension.Known)
@@ -583,11 +579,54 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         }
         catch (Exception ex)
         {
-            _services.Log.Warn("Page dimension load failed: " + _gallery.FolderPath, ex);
+            _services.Log.Warn("Page dimension load failed: " + _source.DebugInfo, ex);
         }
         finally
         {
             IsLoadingDimensions = false;
+        }
+    }
+
+    /// <summary>Called from an image decode thread when an online page's real size is known.</summary>
+    private void OnOnlineDimensionResolved(int index, int width, int height)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_disposed) return;
+            RefineDimension(index, width, height);
+        }, DispatcherPriority.Background);
+    }
+
+    private void RefineDimension(int index, int width, int height)
+    {
+        if (width <= 0 || height <= 0) return;
+
+        bool changed = false;
+        if (index >= 0 && index < _continuousItems.Count)
+        {
+            _continuousItems[index].SetNaturalSize(width, height, keepWidth: true);
+            changed = true;
+        }
+
+        if (index >= 0 && index < _horizontalItems.Count)
+        {
+            _horizontalItems[index].SetNaturalSize(width, height, keepWidth: false);
+            changed = true;
+        }
+
+        if (!changed) return;
+
+        RecomputeTops();
+        RecomputeLefts();
+        if (IsContinuousMode)
+        {
+            SuppressSyncWhileRelocating(() =>
+                ScrollToRequested?.Invoke(this, GetScrollOffsetForPage(_index, _pageOffset)));
+        }
+        else if (IsHorizontalMode)
+        {
+            SuppressSyncWhileRelocating(() =>
+                HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
         }
     }
 

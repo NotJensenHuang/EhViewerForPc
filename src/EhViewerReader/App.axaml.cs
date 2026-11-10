@@ -42,6 +42,24 @@ public partial class App : Application
                 return;
             }
 
+            if (options.OnlineProbe)
+            {
+                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                Dispatcher.UIThread.Post(async () =>
+                {
+                    AppPaths probePaths = string.IsNullOrWhiteSpace(options.DataDirectory)
+                        ? new AppPaths()
+                        : new AppPaths(options.DataDirectory);
+                    probePaths.EnsureCreated();
+                    AppServices probeServices = AppServices.Initialize(probePaths);
+                    int code = await OnlineProbeService.RunAsync(probeServices, options.OutputPath);
+                    probeServices.Dispose();
+                    desktop.Shutdown(code);
+                });
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+
             if (options.SelfTest)
             {
                 Dispatcher.UIThread.Post(async () =>
@@ -68,28 +86,29 @@ public partial class App : Application
 
             ApplyTheme(services.Settings.Theme);
 
-            var viewModel = new MainViewModel(services);
-            var window = new MainWindow(viewModel);
+            var shell = new ShellViewModel(services);
+            var window = new MainWindow(shell);
             desktop.MainWindow = window;
 
             window.Opened += async (_, _) =>
             {
-                await viewModel.InitializeAsync();
+                await shell.InitializeAsync();
                 if (!string.IsNullOrWhiteSpace(options.Gallery))
                 {
-                    viewModel.OpenById(options.Gallery);
+                    shell.Library.OpenById(options.Gallery);
                 }
 
                 if (options.UiSmoke)
                 {
-                    await UiSmokeService.RunAsync(window, viewModel, options.OutputPath);
+                    shell.Navigate("library");
+                    await UiSmokeService.RunAsync(window, shell.Library, options.OutputPath);
                     desktop.Shutdown();
                 }
             };
 
             desktop.ShutdownRequested += (_, _) =>
             {
-                viewModel.Dispose();
+                shell.Dispose();
                 services.Dispose();
             };
         }

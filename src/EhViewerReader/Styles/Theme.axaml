@@ -197,4 +197,97 @@
     <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
     <Setter Property="FontSize" Value="11" />
   </Style>
+
+  <!-- Navigation rail -->
+  <Style Selector="Button.nav">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Foreground" Value="{DynamicResource AppTextSecondaryBrush}" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Padding" Value="12,9" />
+    <Setter Property="MinHeight" Value="38" />
+    <Setter Property="CornerRadius" Value="9" />
+    <Setter Property="FontSize" Value="13" />
+  </Style>
+
+  <Style Selector="Button.nav:pointerover">
+    <Setter Property="Background" Value="{DynamicResource AppCardHoverBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
+  </Style>
+
+  <Style Selector="Button.nav.active">
+    <Setter Property="Background" Value="{DynamicResource AppAccentSoftBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AppAccentBrush}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <!-- Online gallery card -->
+  <Style Selector="Button.gallery-card">
+    <Setter Property="Background" Value="{DynamicResource AppCardBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="10" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="VerticalContentAlignment" Value="Stretch" />
+    <Setter Property="MinHeight" Value="0" />
+  </Style>
+
+  <Style Selector="Button.gallery-card:pointerover">
+    <Setter Property="Background" Value="{DynamicResource AppCardHoverBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppAccentBrush}" />
+  </Style>
+
+  <Style Selector="ToggleButton.chip">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Foreground" Value="{DynamicResource AppTextSecondaryBrush}" />
+    <Setter Property="CornerRadius" Value="999" />
+    <Setter Property="Padding" Value="12,5" />
+    <Setter Property="MinHeight" Value="28" />
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+
+  <Style Selector="ToggleButton.chip:checked">
+    <Setter Property="Background" Value="{DynamicResource AppAccentSoftBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppAccentBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource AppAccentBrush}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <!-- Section helpers -->
+  <Style Selector="TextBlock.h1">
+    <Setter Property="FontSize" Value="20" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="TextBlock.h2">
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <Style Selector="Border.tile">
+    <Setter Property="Background" Value="{DynamicResource AppSurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="18" />
+  </Style>
+
+  <Style Selector="Border.row">
+    <Setter Property="Background" Value="{DynamicResource AppCardBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="Padding" Value="14,10" />
+  </Style>
+
+  <Style Selector="CheckBox">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="MinHeight" Value="26" />
+  </Style>
 </Styles>

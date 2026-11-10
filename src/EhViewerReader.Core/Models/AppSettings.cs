@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using EhViewerReader.Core.Online;
+
 namespace EhViewerReader.Core.Models;
 
 public enum AppTheme
@@ -5,6 +8,14 @@ public enum AppTheme
     System = 0,
     Dark = 1,
     Light = 2,
+}
+
+public enum ProxyMode
+{
+    None = 0,
+    System = 1,
+    Http = 2,
+    Socks5 = 3,
 }
 
 public enum ReadingMode
@@ -51,12 +62,18 @@ public enum LibraryFilter
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
 
     /// <summary>Legacy single-root field; migrated into <see cref="Sources"/> on load.</summary>
     public string? LibraryRoot { get; set; }
 
     public List<LibrarySource> Sources { get; set; } = [];
+
+    public AccountSettings Account { get; set; } = new();
+
+    public NetworkSettings Network { get; set; } = new();
+
+    public DownloadSettings Download { get; set; } = new();
 
     /// <summary>
     /// Work id -> preferred source id. Only populated for works that exist in
@@ -77,6 +94,12 @@ public sealed class AppSettings
     public LibrarySort Sort { get; set; } = LibrarySort.RecentlyRead;
     public LibraryFilter Filter { get; set; } = LibraryFilter.All;
     public string? LanguageFilter { get; set; }
+
+    /// <summary>Recent online search terms (newest first).</summary>
+    public List<string> SearchHistory { get; set; } = [];
+
+    /// <summary>User-saved searches, including category mask and page range.</summary>
+    public List<SavedSearchEntry> SavedSearches { get; set; } = [];
     public double WindowWidth { get; set; } = 1200;
     public double WindowHeight { get; set; } = 700;
     public bool WindowMaximized { get; set; }
@@ -98,6 +121,15 @@ public sealed class AppSettings
         if (!Enum.IsDefined(ReaderBackground)) ReaderBackground = ReaderBackground.Black;
         if (!Enum.IsDefined(Sort)) Sort = LibrarySort.RecentlyRead;
         if (!Enum.IsDefined(Filter)) Filter = LibraryFilter.All;
+        Account ??= new AccountSettings();
+        Account.Normalize();
+        Network ??= new NetworkSettings();
+        Network.Normalize();
+        Download ??= new DownloadSettings();
+        Download.Normalize();
+        SearchHistory ??= [];
+        SavedSearches ??= [];
+        SavedSearches.RemoveAll(s => s is null || string.IsNullOrWhiteSpace(s.Name));
         NormalizeSources();
         PreferredSourceByWork = new Dictionary<string, string>(
             PreferredSourceByWork ?? [], StringComparer.OrdinalIgnoreCase);
@@ -200,6 +232,130 @@ public sealed class AppSettings
         }
     }
 
+    [JsonIgnore]
     public IReadOnlyList<LibrarySource> ActiveSources =>
         Sources.Where(s => s.Enabled).ToList();
+}
+
+/// <summary>
+/// E-Hentai / ExHentai account state. Only cookies are persisted: the client
+/// never stores the account password, same as the original Android app.
+/// </summary>
+public sealed class AccountSettings
+{
+    /// <summary>Site the user browses by default.</summary>
+    public EhSite Site { get; set; } = EhSite.EHentai;
+
+    /// <summary>Cookie name → value (ipb_member_id, ipb_pass_hash, igneous, sk).</summary>
+    public Dictionary<string, string> Cookies { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string LastUserName { get; set; } = string.Empty;
+
+    /// <summary>Result of the last ExHentai access probe.</summary>
+    public bool ExAccess { get; set; }
+
+    public string LastSignInUtc { get; set; } = string.Empty;
+
+    public void Normalize()
+    {
+        Cookies ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Cookies = new Dictionary<string, string>(Cookies, StringComparer.OrdinalIgnoreCase);
+        if (!Enum.IsDefined(Site)) Site = EhSite.EHentai;
+    }
+
+    [JsonIgnore]
+    public bool HasCredentials =>
+        Cookies.TryGetValue("ipb_member_id", out string? id) && id.Length > 0 &&
+        Cookies.TryGetValue("ipb_pass_hash", out string? hash) && hash.Length > 0;
+
+    [JsonIgnore]
+    public string CookieHeader => string.Join("; ",
+        Cookies.Where(p => p.Value.Length > 0).Select(p => p.Key + "=" + p.Value));
+}
+
+/// <summary>Proxy / DNS configuration shared by browsing, covers and downloads.</summary>
+public sealed class NetworkSettings
+{
+    public ProxyMode ProxyMode { get; set; } = ProxyMode.System;
+    public string ProxyHost { get; set; } = string.Empty;
+    public int ProxyPort { get; set; }
+    public string ProxyUserName { get; set; } = string.Empty;
+    public string ProxyPassword { get; set; } = string.Empty;
+
+    /// <summary>When false, image hosts bypass the proxy (direct connection).</summary>
+    public bool ProxyForImages { get; set; } = true;
+
+    /// <summary>Resolve host names over HTTPS instead of the system resolver.</summary>
+    public bool DnsOverHttps { get; set; }
+
+    public string DohEndpoint { get; set; } = "https://cloudflare-dns.com/dns-query";
+
+    /// <summary>Extra host → IP lines (Windows hosts syntax, both orders accepted).</summary>
+    public string HostsOverride { get; set; } = string.Empty;
+
+    public int TimeoutSeconds { get; set; } = 40;
+
+    public void Normalize()
+    {
+        if (!Enum.IsDefined(ProxyMode)) ProxyMode = ProxyMode.System;
+        ProxyHost = ProxyHost?.Trim() ?? string.Empty;
+        ProxyUserName ??= string.Empty;
+        ProxyPassword ??= string.Empty;
+        DohEndpoint = string.IsNullOrWhiteSpace(DohEndpoint) ? "https://cloudflare-dns.com/dns-query" : DohEndpoint.Trim();
+        HostsOverride ??= string.Empty;
+        ProxyPort = Math.Clamp(ProxyPort, 0, 65535);
+        TimeoutSeconds = Math.Clamp(TimeoutSeconds, 8, 300);
+    }
+
+    public bool HasProxy =>
+        ProxyMode is ProxyMode.Http or ProxyMode.Socks5 && ProxyHost.Length > 0 && ProxyPort > 0;
+}
+
+/// <summary>
+/// Download engine configuration. Downloads are written in EhViewer's folder
+/// layout, so the folder can be registered as an ordinary library source and
+/// stays readable by the Android app.
+/// </summary>
+public sealed class DownloadSettings
+{
+    /// <summary>Empty means the app's default download directory.</summary>
+    public string RootPath { get; set; } = string.Empty;
+
+    /// <summary>Register the download root as a library source automatically.</summary>
+    public bool AddAsSource { get; set; } = true;
+
+    /// <summary>Label → sub folder, mirroring E-Hentai's favorite-style grouping.</summary>
+    public string DefaultLabel { get; set; } = string.Empty;
+
+    public int MaxConcurrentTasks { get; set; } = 2;
+    public int MaxConcurrentPages { get; set; } = 2;
+
+    /// <summary>Download the original image instead of the resampled version.</summary>
+    public bool DownloadOriginal { get; set; } = true;
+
+    public bool WriteThumb { get; set; } = true;
+    public bool WriteEhviewerHeader { get; set; } = true;
+    public bool AutoStart { get; set; } = true;
+
+    /// <summary>Automatically rescan the library after a task completes.</summary>
+    public bool RefreshLibraryOnComplete { get; set; } = true;
+
+    public void Normalize()
+    {
+        RootPath = RootPath?.Trim() ?? string.Empty;
+        DefaultLabel = DefaultLabel?.Trim() ?? string.Empty;
+        MaxConcurrentTasks = Math.Clamp(MaxConcurrentTasks, 1, 8);
+        MaxConcurrentPages = Math.Clamp(MaxConcurrentPages, 1, 8);
+    }
+}
+
+/// <summary>Serialisable form of a saved search.</summary>
+public sealed class SavedSearchEntry
+{
+    public string Name { get; set; } = string.Empty;
+    public string Query { get; set; } = string.Empty;
+    public int CategoryMask { get; set; } = 1023;
+    public int MinPages { get; set; }
+    public int MaxPages { get; set; }
+    public string Language { get; set; } = string.Empty;
 }

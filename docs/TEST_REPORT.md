@@ -288,3 +288,60 @@ EhViewerReader.exe --ui-smoke --out docs/screenshots
 - 单页/连续/设置/详情/搜索/收藏/进度恢复可用；阅读器为非模态窗口，阅读期间可继续浏览资料库，关闭后库视图滚动位置与顺序保持不变。
 - Release 构建 0 警告，发布产物可运行；最终只读快照哈希一致；全量探测 245,535 个页面头，最大图/长条图/1,728 页尺寸预读均在预算内。
 - NativeAOT 产物（22.6 MB，含 9 帧图标资源）完成完整 UI 冒烟与二次启动，持久化 JSON 全部由源生成上下文处理。
+
+---
+
+## 8. 在线功能迁移验证（2026-11-10）
+
+### 8.1 单元测试
+
+命令：`dotnet test tests/EhViewerReader.Core.Tests`
+
+结果：**60 passed / 0 failed**。新增 8 项在线解析回归（`OnlineParserTests`，fixture 取自真实页面）与 8 项下载/网络回归（`DownloadAndNetworkTests`：目录名清洗、标签子目录、源生成 JSON 往返、Cookie 解析、hosts 两种顺序）。
+
+| 用例 | 断言要点 |
+| --- | --- |
+| 列表行 | gid/token、标题（排除标签串）、分类中英映射、页数、发布日期、上传者、缩略图绝对地址 |
+| 详情页 | `#gdd` 标签/值行（Posted/Parent/Visible/Language/File Size/Length/Favorited）、`Average:` 评分、`#gdc` 分类、`#taglist` 命名空间 + 标签 |
+| 页面列表 | `/s/{hash}/{gid}-{page}` 中 gid 在前的解析、sprite 盒尺寸（200×282）作为宽高、`?p=` 分页判定 |
+| 图片页 | `img#img` 地址与 `nl('keystamp')` 提取 |
+| URL | 视图 URL 往返、`f_cats` 取反掩码（1023 去掉同人志与漫画 = 1017）、`f_spf`/`f_spt`、`&page=` |
+| 紧凑列表标题 | 标题链接内含标签 chip 时只取 `div.glink` 文本（实测站点默认 Compact 视图） |
+| HtmlLite | 容错嵌套（未闭合 `<b>`）、实体解码、块级/行内文本拼接 |
+
+### 8.2 在线链路自检（`--online-probe`）
+
+命令：`EhViewerReader.exe --online-probe --out artifacts/online-probe.json`（未登录，系统代理）
+
+| 阶段 | 结果 |
+| --- | --- |
+| 首页解析 | 25 项，`hasMore=true`，标题/分类/页数/日期/缩略图主机全部有效 |
+| 详情解析 | 标题、`Misc`/`Doujinshi` 分类、37 页、评分 1.40、31.29 MiB、语言 Japanese、15 个标签（含 `parody:`/`character:`/`female:` 命名空间） |
+| 页面列表 | 20 项，`Page=1`、`hasMore=true` |
+| 图片解析 | 解析出 `*.hath.network` 直链（`resolved=true`） |
+| 缩略图下载 | `ehgt.org` 22,936 bytes（`ok=true`） |
+
+### 8.3 UI 冒烟（`--ui-smoke`）
+
+在原有本地库断言全部保持通过的前提下，新增导航逐页截图与在线详情窗口：
+
+- `page-online.png` / `page-search.png` / `page-favorites.png` / `page-history.png` / `page-downloads.png` / `page-settings.png` / `online-detail.png`
+- 在线详情：标题、11 个标签、`14 页`，无绑定错误或异常
+- 导航切换不重建页面（视图按 ViewModel 缓存），本地库滚动位置与虚拟化断言（6,315 项、约 20 个容器）保持不变
+
+### 8.4 未覆盖
+
+- 账号密码登录与 ExHentai 权限探测需要真实账号，未在自动化中执行（Cookie 导入/登出/站点切换已通过编译与 UI 路径验证）。
+- HTTP/SOCKS5/DoH/hosts 需要外部代理环境，仅做代码路径与设置持久化验证。
+- 实际内容下载未纳入自动化（避免把站点内容写入测试产物）；下载目录布局、`.thumb`/`.ehviewer` 生成与续传逻辑由本地库扫描器与单元测试间接覆盖。
+
+### 8.5 NativeAOT 与裁剪
+
+```
+dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-test
+```
+
+- 结果：原生 exe **29.7 MB**，另附 `libSkiaSharp.dll` / `libHarfBuzzSharp.dll` / `av_libglesv2.dll`。
+- **IL2026 / IL3050 = 0**。首轮发布曾在 `SearchPage.axaml` 的搜索历史/保存搜索模板上出现反射绑定警告（`x:CompileBindings="False"`），已改为强类型 `TextItem` + 编译绑定；二轮发布无任何裁剪/AOT 警告。
+- AOT 版本运行 `--online-probe`：首页 25 项、详情（211 页 / 评分 2.43 / 515.5 MiB / 3 标签）、页列表 20 项、图片直链、缩略图 23,192 bytes，全部成功。
+- 说明：本机安全策略禁止 `reg.exe`，发布末尾的后置步骤被拦截，但 `dotnet publish` 退出码为 0 且产物完整可运行。

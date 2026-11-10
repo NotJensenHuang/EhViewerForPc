@@ -18,22 +18,51 @@ public sealed class ContinuousPageItem : ObservableObject
 
     private double _displayWidth;
     private double _displayHeight;
+    private int _originalWidth;
+    private int _originalHeight;
 
     public ContinuousPageItem(GalleryPage page, IImageRequest request, int originalWidth, int originalHeight, bool known)
     {
         Page = page;
         Request = request;
-        OriginalWidth = originalWidth > 0 ? originalWidth : (int)PlaceholderWidth;
-        OriginalHeight = originalHeight > 0 ? originalHeight : (int)PlaceholderHeight;
+        _originalWidth = originalWidth > 0 ? originalWidth : (int)PlaceholderWidth;
+        _originalHeight = originalHeight > 0 ? originalHeight : (int)PlaceholderHeight;
         Known = known;
     }
 
     public GalleryPage Page { get; }
     public IImageRequest Request { get; }
-    public int OriginalWidth { get; }
-    public int OriginalHeight { get; }
-    public bool Known { get; }
+    public int OriginalWidth => _originalWidth;
+    public int OriginalHeight => _originalHeight;
+    public bool Known { get; private set; }
     public int Number => Page.Number;
+
+    /// <summary>
+    /// Replaces the estimated aspect ratio with the real one once the page has
+    /// been decoded. Online galleries start from a placeholder; the slot is
+    /// resized along its current layout axis so the strip stays aligned.
+    /// </summary>
+    public void SetNaturalSize(int width, int height, bool keepWidth)
+    {
+        if (width <= 0 || height <= 0) return;
+        if (width == _originalWidth && height == _originalHeight && Known) return;
+
+        _originalWidth = width;
+        _originalHeight = height;
+        Known = true;
+        OnPropertyChanged(nameof(OriginalWidth));
+        OnPropertyChanged(nameof(OriginalHeight));
+        OnPropertyChanged(nameof(Ratio));
+
+        if (keepWidth)
+        {
+            if (DisplayWidth > 0) Resize(DisplayWidth);
+        }
+        else if (DisplayHeight > 0)
+        {
+            ResizeToHeight(DisplayHeight);
+        }
+    }
 
     public double DisplayWidth
     {

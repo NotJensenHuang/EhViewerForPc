@@ -1,0 +1,116 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerReader.ViewModels"
+        xmlns:controls="using:EhViewerReader.Controls"
+        mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="760"
+        x:Class="EhViewerReader.Views.OnlineGalleryWindow"
+        x:DataType="vm:OnlineGalleryViewModel"
+        Title="{Binding Title}"
+        Width="1000" Height="760" MinWidth="820" MinHeight="600"
+        Background="{DynamicResource AppBgBrush}"
+        WindowStartupLocation="CenterOwner">
+  <Grid RowDefinitions="Auto,*,Auto">
+    <!-- Header -->
+    <Border Grid.Row="0" Padding="22,16,22,14" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="4">
+          <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" MaxLines="1"
+                     TextTrimming="CharacterEllipsis" />
+          <TextBlock Text="{Binding JapaneseTitle}" Classes="secondary" TextWrapping="Wrap" MaxLines="1"
+                     IsVisible="{Binding HasJapaneseTitle}" />
+          <TextBlock Text="{Binding MetaLine}" Classes="caption" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Classes="primary" Content="在线阅读" Command="{Binding ReadCommand}" MinWidth="96" />
+          <Button Content="下载" Command="{Binding DownloadCommand}" />
+          <Button Content="{Binding FavoriteText}" Command="{Binding ToggleFavoriteCommand}" />
+          <ComboBox Width="104" ItemsSource="{Binding FavoriteSlots}" SelectedItem="{Binding SelectedSlot}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:FeedOption">
+                <TextBlock Text="{Binding Label}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <Button Content="浏览器" Command="{Binding OpenInBrowserCommand}" />
+          <Button Content="刷新" Classes="ghost" Command="{Binding RefreshCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- Body -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <Grid ColumnDefinitions="300,*" Margin="22,16,22,20" ColumnSpacing="20">
+        <StackPanel Grid.Column="0" Spacing="10">
+          <Border CornerRadius="10" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}" Height="420">
+            <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="Uniform" />
+          </Border>
+
+          <Border Classes="row">
+            <StackPanel Spacing="4">
+              <TextBlock Classes="caption" Text="{Binding GidText, StringFormat='GID {0}'}" />
+              <TextBlock Classes="caption" Text="{Binding Url}" TextWrapping="Wrap" FontSize="10" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Spacing="14">
+          <Border Classes="tile" Padding="16,14">
+            <Grid ColumnDefinitions="Auto,12,*,24,Auto,12,*" RowDefinitions="Auto,8,Auto,8,Auto,8,Auto"
+                  ColumnSpacing="0">
+              <TextBlock Grid.Row="0" Grid.Column="0" Text="分类" Classes="caption" />
+              <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding CategoryText}" Foreground="{Binding CategoryBrush}" />
+              <TextBlock Grid.Row="0" Grid.Column="4" Text="评分" Classes="caption" />
+              <TextBlock Grid.Row="0" Grid.Column="6" Text="{Binding RatingText}" />
+
+              <TextBlock Grid.Row="2" Grid.Column="0" Text="页数" Classes="caption" />
+              <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding PagesText}" />
+              <TextBlock Grid.Row="2" Grid.Column="4" Text="大小" Classes="caption" />
+              <TextBlock Grid.Row="2" Grid.Column="6" Text="{Binding FileSizeText}" />
+
+              <TextBlock Grid.Row="4" Grid.Column="0" Text="发布" Classes="caption" />
+              <TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding PostedText}" />
+              <TextBlock Grid.Row="4" Grid.Column="4" Text="语言" Classes="caption" />
+              <TextBlock Grid.Row="4" Grid.Column="6" Text="{Binding LanguageText}" />
+
+              <TextBlock Grid.Row="6" Grid.Column="0" Text="上传者" Classes="caption" />
+              <TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding UploaderText}" TextTrimming="CharacterEllipsis" />
+              <TextBlock Grid.Row="6" Grid.Column="4" Text="可见性" Classes="caption" />
+              <TextBlock Grid.Row="6" Grid.Column="6" Text="{Binding VisibleText}" />
+            </Grid>
+          </Border>
+
+          <StackPanel Spacing="8">
+            <TextBlock Text="标签（点击搜索同一标签）" Classes="h2" />
+            <ItemsControl ItemsSource="{Binding Tags}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:TagChip">
+                  <Button Classes="chip" Content="{Binding Display}" Command="{Binding Command}"
+                          Margin="0,0,8,8" ToolTip.Tip="{Binding Term}" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </StackPanel>
+      </Grid>
+    </ScrollViewer>
+
+    <!-- Status -->
+    <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="11" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1" Classes="muted" FontSize="11" VerticalAlignment="Center"
+                   Text="在线阅读会按页缓存到本地；下载写入 EhViewer 兼容目录" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>
