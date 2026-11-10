@@ -57,6 +57,7 @@
                         <TextBlock Classes="caption" Text="{Binding GidText}" />
                         <TextBlock Classes="caption" Text="{Binding StateText}" Foreground="{Binding StateBadgeColor}" />
                         <TextBlock Classes="caption" Text="{Binding Label}" />
+                        <TextBlock Classes="caption" Text="{Binding QualityText}" />
                         <TextBlock Classes="caption" Text="{Binding Message}" IsVisible="{Binding HasMessage}" />
                       </StackPanel>
                       <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}" />

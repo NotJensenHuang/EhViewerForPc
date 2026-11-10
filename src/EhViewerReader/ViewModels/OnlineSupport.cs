@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -18,7 +18,7 @@ public interface IOnlineHost
 
     Task DownloadAsync(EhGallerySummary summary);
 
-    Task DownloadDetailsAsync(EhGalleryDetails details);
+    Task DownloadDetailsAsync(EhGalleryDetails details, ImageQuality quality);
 
     void SearchTag(string query);
 
@@ -33,10 +33,10 @@ public interface IOnlineHost
 
     /// <summary>Opens the local copy in the reader; false when there is none.</summary>
     bool OpenLocal(long gid);
-
-    /// <summary>Number of local copies (versions) of this gallery id; 0 when absent.</summary>
-    int GetLocalVersionCount(long gid);
 }
+
+/// <summary>Online reading request: which gallery, at which image size.</summary>
+public sealed record OnlineReadRequest(EhGalleryDetails Details, ImageQuality Quality);
 
 /// <summary>
 /// Plain string wrapper used by the search history / saved-search chips. Binding
@@ -108,8 +108,6 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
 
     /// <summary>True when the same gallery id exists in a local source.</summary>
     public bool IsInLocalLibrary => _isLocal;
-
-    public string LocalBadgeText => "已在本机";
 
     public void RefreshLocalState()
     {
@@ -327,6 +325,7 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public string SizeText => Task.SizeText;
     public string Message => Task.Message;
     public string Label => Task.Label;
+    public string QualityText => Task.Quality == ImageQuality.Original ? "原图" : "压缩图";
     public string FolderPath => Task.FolderPath;
 
     public bool IsRunning => Task.State == DownloadState.Running;

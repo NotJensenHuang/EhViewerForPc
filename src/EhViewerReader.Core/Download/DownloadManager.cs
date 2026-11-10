@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text;
 using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Online;
@@ -95,7 +95,11 @@ public sealed class DownloadManager : IDisposable
 
     // --------------------------------------------------------------- queueing
 
-    public DownloadTask Enqueue(EhGalleryDetails details, string? label = null, bool startImmediately = true)
+    public DownloadTask Enqueue(
+        EhGalleryDetails details,
+        string? label = null,
+        bool startImmediately = true,
+        ImageQuality? quality = null)
     {
         DownloadTask task;
         bool changed = false;
@@ -124,6 +128,7 @@ public sealed class DownloadManager : IDisposable
                     Category = details.Category,
                     ThumbUrl = details.ThumbUrl,
                     Label = (label ?? _settings.Download.DefaultLabel).Trim(),
+                    Quality = quality ?? _settings.ImageQuality,
                     PageCount = details.Pages,
                     State = DownloadState.Pending,
                     Message = "等待中",
@@ -471,7 +476,7 @@ public sealed class DownloadManager : IDisposable
                 if (HasPageFile(task.FolderPath, page.Page)) return;
 
                 string imageUrl = await _client
-                    .GetImageUrlAsync(page, _settings.Download.DownloadOriginal, innerToken)
+                    .GetImageUrlAsync(page, task.Quality == ImageQuality.Original, innerToken)
                     .ConfigureAwait(false);
 
                 string extension = GuessExtension(imageUrl);

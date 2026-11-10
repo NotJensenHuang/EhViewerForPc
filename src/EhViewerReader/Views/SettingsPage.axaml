@@ -123,8 +123,21 @@
 
             <WrapPanel Orientation="Horizontal">
               <CheckBox Content="显示中文标签翻译" IsChecked="{Binding ShowTagTranslations}" Margin="0,0,18,0" />
-              <CheckBox Content="在线阅读原图（更清晰，流量更大）" IsChecked="{Binding ReadOriginalImages}" />
+              <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,18,0">
+                <TextBlock Text="图片尺寸" Classes="secondary" VerticalAlignment="Center" />
+                <ComboBox Width="238" ItemsSource="{Binding ImageQualityOptions}"
+                          SelectedIndex="{Binding ImageQualityIndex}" VerticalAlignment="Center">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:FeedOption">
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <Button Content="站点图片设置" Classes="ghost" Command="{Binding OpenSiteImageSettingsCommand}"
+                        VerticalAlignment="Center" ToolTip.Tip="在站点 uconfig.php 中调整压缩图宽度（780/980/1280/1600/2400）" />
+              </StackPanel>
             </WrapPanel>
+            <TextBlock Classes="caption" Text="{Binding ImageQualityHint}" TextWrapping="Wrap" />
 
             <Grid ColumnDefinitions="*,10,Auto" ColumnSpacing="0">
               <TextBox Grid.Column="0" Text="{Binding TagTranslationUrl}" PlaceholderText="标签翻译库地址" />
@@ -199,10 +212,11 @@
 
             <WrapPanel Orientation="Horizontal">
               <CheckBox Content="注册为本地库数据源" IsChecked="{Binding DownloadAddAsSource}" Margin="0,0,18,0" />
-              <CheckBox Content="下载原图" IsChecked="{Binding DownloadOriginal}" Margin="0,0,18,0" />
               <CheckBox Content="写入 .thumb 封面" IsChecked="{Binding WriteThumb}" Margin="0,0,18,0" />
               <CheckBox Content="写入 .ehviewer 元数据" IsChecked="{Binding WriteHeader}" />
             </WrapPanel>
+            <TextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="下载使用的图片尺寸与在线阅读相同，可在上方「在线浏览 → 图片尺寸」中切换。" />
 
             <WrapPanel Orientation="Horizontal">
               <CheckBox Content="启动时自动继续" IsChecked="{Binding AutoStart}" Margin="0,0,18,0" />

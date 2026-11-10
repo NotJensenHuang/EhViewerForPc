@@ -18,6 +18,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     private readonly AppServices _services;
     private readonly IOnlineHost _host;
     private readonly EhGallerySummary _summary;
+    private IReadOnlyList<FeedOption> _qualityOptions = [];
     private EhGalleryDetails? _details;
     private bool _loading;
     private string _statusText = "载入中…";
@@ -25,6 +26,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     private bool _isFavorite;
     private int _favoriteSlot = -1;
     private FeedOption? _selectedSlot;
+    private FeedOption _selectedQuality = new("orig", "原图");
     private bool _suppressSlotChange;
 
     private int _myRating;
@@ -42,6 +44,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         _summary = summary;
 
         RebuildFavoriteSlots();
+        RebuildQualityOptions();
 
         Title = summary.Title;
         if (summary.ThumbUrl.Length > 0)
@@ -50,7 +53,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         }
     }
 
-    public event EventHandler<EhGalleryDetails>? ReadRequested;
+    public event EventHandler<OnlineReadRequest>? ReadRequested;
 
     public event EventHandler<string>? TagSearchRequested;
 
@@ -116,10 +119,54 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     /// <summary>True when the local library already holds this gallery id.</summary>
     public bool IsInLocalLibrary => _host.HasLocalCopy(_summary.Gid);
 
-    public string LocalStateText => _host.GetLocalVersionCount(_summary.Gid) is int count and > 1
-        ? $"本地库已有此作品（{count} 个版本）"
-        : "本地库已有此作品";
     public bool HasFavoriteCount => FavoriteCountText.Length > 0;
+
+    /// <summary>The primary button reads local when the work is already on disk.</summary>
+    public string ReadButtonText => IsInLocalLibrary ? "本地阅读" : "在线阅读";
+
+    /// <summary>Image size used by both the reader and the download of this gallery.</summary>
+    public IReadOnlyList<FeedOption> QualityOptions => _qualityOptions;
+
+    public FeedOption SelectedQuality
+    {
+        get => _selectedQuality;
+        set
+        {
+            if (value is null || ReferenceEquals(value, _selectedQuality)) return;
+            _selectedQuality = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(QualityHint));
+
+            // Remember the choice: it is the default for the next gallery too.
+            ImageQuality quality = IsOriginalQuality ? ImageQuality.Original : ImageQuality.Resampled;
+            if (_services.Settings.ImageQuality != quality)
+            {
+                _services.Settings.ImageQuality = quality;
+                _services.TrySaveSettings(out _);
+            }
+        }
+    }
+
+    public bool IsOriginalQuality => _selectedQuality.Key == "orig";
+
+    public string QualityHint => IsOriginalQuality
+        ? (_services.Online.IsSignedIn
+            ? "原图：每页单独解析，画质最好、流量最大"
+            : "原图需要登录；未登录时会自动改用站点压缩图")
+        : "站点压缩图：宽度约 1280（站点账号可改为 780/980/1600/2400）";
+
+    private void RebuildQualityOptions()
+    {
+        _qualityOptions =
+        [
+            new FeedOption("orig", "原图"),
+            new FeedOption("res", "压缩图（约 1280）"),
+        ];
+
+        bool original = _services.Settings.ImageQuality == ImageQuality.Original;
+        _selectedQuality = _qualityOptions[original ? 0 : 1];
+        _selectedQuality.IsActive = true;
+    }
 
     public string MetaLine
     {
@@ -474,14 +521,26 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     private void Read()
     {
         if (_details is null) return;
-        ReadRequested?.Invoke(this, _details);
+
+        // Already on disk: read the local copy, not the online one.
+        if (IsInLocalLibrary && _host.OpenLocal(_summary.Gid))
+        {
+            _host.Notify("已打开本地副本");
+            return;
+        }
+
+        ReadRequested?.Invoke(this, new OnlineReadRequest(_details, SelectedQuality.Key == "orig"
+            ? ImageQuality.Original
+            : ImageQuality.Resampled));
     }
 
     [RelayCommand]
     private async Task DownloadAsync()
     {
         if (_details is null) return;
-        await _host.DownloadDetailsAsync(_details);
+        await _host.DownloadDetailsAsync(_details, IsOriginalQuality
+            ? ImageQuality.Original
+            : ImageQuality.Resampled);
     }
 
     [RelayCommand]
@@ -508,12 +567,6 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     private void OpenInBrowser()
     {
         _host.OpenExternal(Url);
-    }
-
-    [RelayCommand]
-    private void OpenLocal()
-    {
-        _host.Notify(_host.OpenLocal(_summary.Gid) ? "已在本地库中打开" : "本地库中没有该作品");
     }
 
     [RelayCommand]

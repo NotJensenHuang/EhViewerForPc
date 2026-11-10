@@ -1,26 +1,21 @@
-<UserControl xmlns="https://github.com/avaloniaui"
+﻿<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EhViewerReader.ViewModels"
              xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
              xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.OnlineFeedPage"
              x:DataType="vm:OnlineFeedViewModel">
-  <Grid RowDefinitions="Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
-    <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="22,16,22,8">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+    <!-- Header -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="22,16,22,8">
       <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
         <TextBlock Text="{Binding Title}" Classes="h1" />
         <TextBlock Text="{Binding Subtitle}" Classes="caption" />
       </StackPanel>
 
-      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" Margin="16,0" VerticalAlignment="Center"
-                  IsVisible="{Binding ShowFavoriteSearch}">
-        <TextBox Width="240" Text="{Binding FavoriteQuery}" PlaceholderText="在收藏夹中搜索标签或关键词…"
-                 KeyDown="OnFavoriteSearchKeyDown" />
-        <Button Content="搜索" Command="{Binding SearchFavoritesCommand}" />
-        <Button Content="清除" Classes="ghost" Command="{Binding ClearFavoriteSearchCommand}" />
-      </StackPanel>
-
-      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <Button Content="高级选项" Classes="chip" Classes.active="{Binding ShowAdvanced}"
+                Command="{Binding ToggleAdvancedCommand}" IsVisible="{Binding ShowSearchBar}" />
         <ComboBox Width="104" ItemsSource="{Binding ToplistOptions}" SelectedItem="{Binding SelectedToplistOption}"
                   IsVisible="{Binding ShowToplistSelector}" VerticalAlignment="Center">
           <ComboBox.ItemTemplate>
@@ -36,7 +31,23 @@
       </StackPanel>
     </Grid>
 
-    <ItemsControl Grid.Row="1" ItemsSource="{Binding Tabs}" Margin="22,0,22,10" IsVisible="{Binding HasTabs}">
+    <!-- Search bar (browse page) / favourite-slot search -->
+    <Grid Grid.Row="1" ColumnDefinitions="*,10,Auto" Margin="22,0,22,8" IsVisible="{Binding ShowSearchBar}">
+      <TextBox x:Name="SearchBox" Text="{Binding Query}" KeyDown="OnSearchKeyDown"
+               PlaceholderText="搜索关键词或标签（如 language:chinese female:sole female、gid:123456）" />
+      <Button Grid.Column="2" Classes="primary" Content="搜索" Command="{Binding SearchCommand}" MinWidth="88" />
+    </Grid>
+
+    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="22,0,22,8"
+                IsVisible="{Binding ShowFavoriteSearch}">
+      <TextBox Width="260" Text="{Binding FavoriteQuery}" PlaceholderText="在收藏夹中搜索标签或关键词…"
+               KeyDown="OnFavoriteSearchKeyDown" />
+      <Button Content="搜索" Command="{Binding SearchFavoritesCommand}" />
+      <Button Content="清除" Classes="ghost" Command="{Binding ClearFavoriteSearchCommand}" />
+    </StackPanel>
+
+    <!-- Feed tabs -->
+    <ItemsControl Grid.Row="2" ItemsSource="{Binding Tabs}" Margin="22,0,22,10" IsVisible="{Binding ShowTabs}">
       <ItemsControl.ItemsPanel>
         <ItemsPanelTemplate>
           <StackPanel Orientation="Horizontal" Spacing="8" />
@@ -50,7 +61,116 @@
       </ItemsControl.ItemTemplate>
     </ItemsControl>
 
-    <Grid Grid.Row="2">
+    <!-- Search result header -->
+    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="22,0,22,10"
+          IsVisible="{Binding ShowSearchResultHeader}">
+      <TextBlock Text="{Binding SearchResultText}" Classes="secondary" VerticalAlignment="Center"
+                 TextTrimming="CharacterEllipsis" />
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+        <Button Content="保存当前搜索" Command="{Binding SaveSearchCommand}" />
+        <Button Content="清除搜索" Classes="ghost" Command="{Binding ClearSearchCommand}" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Advanced search options -->
+    <Border Grid.Row="3" Classes="tile" Margin="22,0,22,10" Padding="16,14" IsVisible="{Binding ShowAdvancedPanel}">
+      <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12">
+          <StackPanel Spacing="6">
+            <TextBlock Text="分类" Classes="h2" />
+            <ItemsControl ItemsSource="{Binding Categories}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:CategoryToggle">
+                  <ToggleButton Classes="chip" Content="{Binding Label}" IsChecked="{Binding IsEnabled}"
+                                Foreground="{Binding Brush}" Margin="0,0,8,8" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+
+          <StackPanel Orientation="Horizontal" Spacing="12">
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <TextBlock Text="页数" Classes="secondary" VerticalAlignment="Center" />
+              <TextBox Width="70" Text="{Binding MinPages}" PlaceholderText="最少" />
+              <TextBlock Text="—" Classes="muted" VerticalAlignment="Center" />
+              <TextBox Width="70" Text="{Binding MaxPages}" PlaceholderText="最多" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+              <TextBlock Text="语言" Classes="secondary" VerticalAlignment="Center" />
+              <ComboBox Width="120" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:FeedOption">
+                    <TextBlock Text="{Binding Label}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+            </StackPanel>
+          </StackPanel>
+
+          <WrapPanel Orientation="Horizontal">
+            <CheckBox Content="搜索标题" IsChecked="{Binding SearchName}" Margin="0,0,18,0" />
+            <CheckBox Content="搜索标签" IsChecked="{Binding SearchTags}" Margin="0,0,18,0" />
+            <CheckBox Content="搜索描述" IsChecked="{Binding SearchDescription}" Margin="0,0,18,0" />
+            <CheckBox Content="仅含种子" IsChecked="{Binding OnlyTorrents}" Margin="0,0,18,0" />
+            <Button Content="重置选项" Classes="ghost" FontSize="11" Padding="8,2" MinHeight="24"
+                    Command="{Binding ResetSearchOptionsCommand}" />
+          </WrapPanel>
+
+          <StackPanel Spacing="6" IsVisible="{Binding HasHistory}">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="最近搜索" Classes="caption" VerticalAlignment="Center" />
+              <Button Content="显示/隐藏" Classes="ghost" FontSize="11" Padding="6,2" MinHeight="22"
+                      Command="{Binding ToggleHistoryCommand}" />
+            </StackPanel>
+            <ItemsControl ItemsSource="{Binding History}" IsVisible="{Binding ShowHistory}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:TextItem">
+                  <Button Classes="chip" Content="{Binding Text}" Tag="{Binding Text}" Margin="0,0,8,8"
+                          Click="OnHistoryClick" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+
+          <StackPanel Spacing="6" IsVisible="{Binding HasSavedSearches}">
+            <TextBlock Text="已保存的搜索" Classes="caption" />
+            <ItemsControl ItemsSource="{Binding SavedSearches}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:TextItem">
+                  <Border Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+                          BorderThickness="1" CornerRadius="999" Padding="10,3" Margin="0,0,8,8">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <Button Content="{Binding Text}" Classes="ghost" FontSize="11" Padding="0" MinHeight="0"
+                              Tag="{Binding Text}" Click="OnSavedClick" />
+                      <Button Content="✕" Classes="ghost" FontSize="10" Padding="0" MinHeight="0"
+                              Tag="{Binding Text}" Click="OnSavedRemoveClick" ToolTip.Tip="删除该保存的搜索" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+    <!-- Grid -->
+    <Grid Grid.Row="4">
       <ScrollViewer VerticalScrollBarVisibility="Auto">
         <Border Padding="22,0,22,20">
           <ir:ItemsRepeater ItemsSource="{Binding Items}" ItemTemplate="{StaticResource OnlineGalleryCard}">
@@ -73,7 +193,8 @@
       <ProgressBar IsIndeterminate="True" Height="3" VerticalAlignment="Top" IsVisible="{Binding IsBusy}" />
     </Grid>
 
-    <Border Grid.Row="3" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
+    <!-- Status bar -->
+    <Border Grid.Row="5" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0">
       <Grid ColumnDefinitions="*,Auto">
         <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="11"

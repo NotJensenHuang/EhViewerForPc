@@ -24,11 +24,6 @@
               <Border Background="#CC101317" CornerRadius="6" Padding="7,2" HorizontalAlignment="Left">
                 <TextBlock Text="{Binding CategoryText}" FontSize="10" Foreground="{Binding CategoryBrush}" />
               </Border>
-              <Border Background="#CC103425" CornerRadius="6" Padding="7,2" HorizontalAlignment="Left"
-                      IsVisible="{Binding IsInLocalLibrary}"
-                      ToolTip.Tip="本地库中已有该作品，可在详情里直接打开">
-                <TextBlock Text="{Binding LocalBadgeText}" FontSize="10" Foreground="#7FE0B0" />
-              </Border>
             </StackPanel>
 
             <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"

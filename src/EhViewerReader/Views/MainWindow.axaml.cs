@@ -1,4 +1,4 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private readonly List<ReaderWindow> _readers = [];
     private ShellViewModel? _shell;
     private LibraryPage? _libraryPage;
+    private OnlineFeedPage? _onlinePage;
     private SettingsPage? _settingsPage;
     private OnlineGalleryWindow? _galleryWindow;
     private TorrentWindow? _torrentWindow;
@@ -64,6 +65,10 @@ public partial class MainWindow : Window
         shell.PropertyChanged += OnShellPropertyChanged;
         shell.GalleryRequested += OnGalleryRequested;
         shell.WebLoginRequested += OnWebLoginRequested;
+        shell.LocalReadRequested += OnLocalReadRequested;
+        // The library view model outlives its page, so reading a local copy must
+        // work even when the library page has never been shown.
+        shell.Library.OpenGalleryRequested += OnLocalReadRequested;
         ShowPage(shell.CurrentPage);
     }
 
@@ -94,10 +99,10 @@ public partial class MainWindow : Window
                 _libraryPage = new LibraryPage();
                 _libraryPage.SettingsRequested += (_, _) => _shell?.Navigate("settings");
                 return _libraryPage;
-            case OnlineFeedViewModel:
-                return new OnlineFeedPage();
-            case SearchPageViewModel:
-                return new SearchPage();
+            case OnlineFeedViewModel online:
+                var onlineView = new OnlineFeedPage();
+                if (ReferenceEquals(online, _shell?.Online)) _onlinePage = onlineView;
+                return onlineView;
             case HistoryViewModel:
                 return new HistoryPage();
             case DownloadsViewModel:
@@ -199,11 +204,8 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.F && control)
         {
-            _shell?.Navigate("search");
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (ContentHost.Content is SearchPage page) page.FocusQuery();
-            }, DispatcherPriority.Loaded);
+            _shell?.Navigate("online");
+            Dispatcher.UIThread.Post(() => _onlinePage?.FocusSearch(), DispatcherPriority.Loaded);
             e.Handled = true;
             return;
         }
@@ -214,9 +216,6 @@ public partial class MainWindow : Window
             {
                 case OnlineFeedViewModel feed:
                     feed.RefreshCommand.Execute(null);
-                    break;
-                case SearchPageViewModel search:
-                    search.SearchCommand.Execute(null);
                     break;
                 case DownloadsViewModel downloads:
                     downloads.SyncAll();
@@ -272,9 +271,45 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnOnlineReadRequested(object? sender, EhGalleryDetails details)
+    private void OnLocalReadRequested(object? sender, GalleryItemViewModel item)
+    {
+        try
+        {
+            ReaderWindow? existing = _readers.FirstOrDefault(r =>
+                string.Equals(r.GalleryId, item.StableId, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
+                existing.Activate();
+                return;
+            }
+
+            var readerViewModel = new ReaderViewModel(AppServices.Current, item.Info);
+            var window = new ReaderWindow(readerViewModel)
+            {
+                GalleryId = item.StableId,
+                WindowStartupLocation = WindowStartupLocation.CenterScreen,
+            };
+
+            _readers.Add(window);
+            window.Closed += (_, _) =>
+            {
+                _readers.Remove(window);
+                if (!_closing) _shell?.Library.RefreshItemProgress(item);
+            };
+
+            window.Show(this);
+        }
+        catch (Exception ex)
+        {
+            _shell?.Notify("打开本地阅读失败：" + ex.Message);
+        }
+    }
+
+    private async void OnOnlineReadRequested(object? sender, OnlineReadRequest request)
     {
         if (_shell is null) return;
+        EhGalleryDetails details = request.Details;
         try
         {
             _shell.Notify("正在读取页面列表…");
@@ -296,7 +331,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var source = new Services.OnlineReaderSource(AppServices.Current, details, pages);
+            var source = new Services.OnlineReaderSource(AppServices.Current, details, pages, request.Quality);
             var readerViewModel = new ReaderViewModel(AppServices.Current, source);
             var window = new ReaderWindow(readerViewModel)
             {

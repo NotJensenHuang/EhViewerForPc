@@ -1,7 +1,8 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Online;
 using EhViewerReader.Services;
 
@@ -53,7 +54,6 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Library = new MainViewModel(services);
         Online = new OnlineFeedViewModel(services, this, OnlineFeedMode.Front, "在线浏览",
             "E-Hentai / ExHentai 首页、热门、关注与排行");
-        Search = new SearchPageViewModel(services, this);
         Favorites = new OnlineFeedViewModel(services, this, OnlineFeedMode.Favorites, "收藏夹",
             "按 E-Hentai 收藏分类浏览，登录后可用");
         History = new HistoryViewModel(services, Library);
@@ -65,16 +65,11 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Settings.AccountChanged += (_, _) => RaiseAccount();
 
         // The local index drives the "已在本机" badges on every online listing.
-        Library.LocalIndexChanged += (_, _) =>
-        {
-            Online.RefreshLocalState();
-            Search.RefreshLocalState();
-        };
+        Library.LocalIndexChanged += (_, _) => Online.RefreshLocalState();
 
         NavItems =
         [
             new NavItem("online", "在线浏览", "◎", Online),
-            new NavItem("search", "搜索", "⌕", Search),
             new NavItem("favorites", "收藏", "♥", Favorites),
             new NavItem("history", "阅读历史", "◷", History),
             new NavItem("downloads", "下载", "↓", Downloads),
@@ -94,6 +89,9 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public event EventHandler<EhGallerySummary>? GalleryRequested;
 
+    /// <summary>Raised when a local copy should be opened in the reader.</summary>
+    public event EventHandler<GalleryItemViewModel>? LocalReadRequested;
+
     /// <summary>Raised by the sidebar or settings; the window opens the browser login.</summary>
     public event EventHandler? WebLoginRequested;
 
@@ -101,7 +99,6 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public MainViewModel Library { get; }
     public OnlineFeedViewModel Online { get; }
-    public SearchPageViewModel Search { get; }
     public OnlineFeedViewModel Favorites { get; }
     public HistoryViewModel History { get; }
     public DownloadsViewModel Downloads { get; }
@@ -174,8 +171,6 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         {
             case OnlineFeedViewModel feed when feed.Items.Count == 0 && !feed.IsBusy:
                 _ = feed.LoadAsync(reset: true);
-                break;
-            case SearchPageViewModel:
                 break;
             case SettingsViewModel:
                 Settings.RefreshAccount();
@@ -252,15 +247,10 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public bool HasLocalCopy(long gid) => Library.HasLocalCopy(gid);
 
-    public int GetLocalVersionCount(long gid) =>
-        Library.TryGetLocalCopy(gid, out GalleryItemViewModel? item) && item is not null
-            ? item.Versions.Count
-            : 0;
-
     public bool OpenLocal(long gid)
     {
         if (!Library.TryGetLocalCopy(gid, out GalleryItemViewModel? item) || item is null) return false;
-        Library.OpenGalleryCommand.Execute(item);
+        LocalReadRequested?.Invoke(this, item);
         return true;
     }
 
@@ -288,7 +278,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             EhGalleryDetails details = await _services.Online
                 .GetDetailsAsync(summary.Gid, summary.Token, CancellationToken.None)
                 .ConfigureAwait(true);
-            await DownloadDetailsAsync(details).ConfigureAwait(true);
+            await DownloadDetailsAsync(details, _services.Settings.ImageQuality).ConfigureAwait(true);
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
@@ -296,9 +286,9 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         }
     }
 
-    public Task DownloadDetailsAsync(EhGalleryDetails details)
+    public Task DownloadDetailsAsync(EhGalleryDetails details, ImageQuality quality)
     {
-        _services.Downloads.Enqueue(details);
+        _services.Downloads.Enqueue(details, quality: quality);
         _services.EnsureDownloadSource();
         Notify($"已加入下载队列：{details.DisplayTitle}");
         Navigate("downloads");
@@ -308,9 +298,8 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public void SearchTag(string query)
     {
-        Search.Query = query;
-        Navigate("search");
-        Search.SearchCommand.Execute(null);
+        Navigate("online");
+        Online.RunSearch(query);
     }
 
     public void Notify(string message)

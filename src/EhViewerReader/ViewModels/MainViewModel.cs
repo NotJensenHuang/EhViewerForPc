@@ -592,7 +592,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         List<GalleryItemViewModel> list = _selectedSort.Value switch
         {
             LibrarySort.RecentlyRead => query
-                .OrderByDescending(i => i.LastReadUtc ?? DateTime.MinValue)
+                // Never-read works fall back to their folder time, so a fresh
+                // download shows up first instead of at the very bottom.
+                .OrderByDescending(i => i.LastReadUtc ?? i.Info.LastWriteUtc)
                 .ThenByDescending(i => i.Info.LastWriteUtc)
                 .ThenBy(i => i.Title, StringComparer.CurrentCulture)
                 .ToList(),

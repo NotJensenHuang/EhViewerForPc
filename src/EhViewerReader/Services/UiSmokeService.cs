@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media.Imaging;
@@ -596,7 +596,7 @@ public static class UiSmokeService
         // flight and a missing page shows up as an empty content host.
         if (window.Shell is { } shell)
         {
-            foreach (string key in new[] { "online", "search", "favorites", "downloads", "settings" })
+            foreach (string key in new[] { "online", "favorites", "downloads", "settings" })
             {
                 shell.Navigate(key);
                 await Task.Delay(900);
@@ -605,12 +605,12 @@ public static class UiSmokeService
                 pageShots.Add(name);
             }
 
-            shell.Navigate("search");
-            shell.Search.ShowAdvanced = true;
-            shell.Search.ShowHistory = true;
+            shell.Navigate("online");
+            shell.Online.ShowAdvanced = true;
+            shell.Online.ShowHistory = true;
             await Task.Delay(700);
-            SaveScreenshot(window, Path.Combine(output, "page-search-advanced.png"));
-            pageShots.Add("page-search-advanced.png");
+            SaveScreenshot(window, Path.Combine(output, "page-online-advanced.png"));
+            pageShots.Add("page-online-advanced.png");
 
             // The online settings live below the fold; scroll there so the
             // translation / filter / favourite-slot editors are captured too.
@@ -624,7 +624,7 @@ public static class UiSmokeService
                 pageShots.Add("page-settings-online.png");
                 settingsScroll.Offset = new Vector(0, 0);
             }
-            shell.Search.ShowAdvanced = false;
+            shell.Online.ShowAdvanced = false;
 
             // Online gallery detail (network dependent): validates the XAML and
             // the scrape → view model path. A failure is recorded, not fatal.
@@ -774,9 +774,9 @@ public static class UiSmokeService
                 report["webLoginError"] = ex.Message;
             }
 
-            // Local-copy badge: 800000 exists in the stress library (the current
-            // root by now), so the card and the detail window must flag it
-            // without any network.
+            // Local copy: 800000 exists in the stress library (the current root
+            // by now), so the detail window must offer local reading without
+            // any network.
             try
             {
                 var localSummary = new EhGallerySummary
@@ -809,7 +809,9 @@ public static class UiSmokeService
                 pageShots.Add("online-local.png");
                 report["localHitDetail"] = new Dictionary<string, object?>
                 {
-                    ["banner"] = localViewModel.IsInLocalLibrary,
+                    ["inLocal"] = localViewModel.IsInLocalLibrary,
+                    ["readButton"] = localViewModel.ReadButtonText,
+                    ["quality"] = localViewModel.SelectedQuality.Label,
                 };
                 localWindow.Close();
                 await Task.Delay(200);

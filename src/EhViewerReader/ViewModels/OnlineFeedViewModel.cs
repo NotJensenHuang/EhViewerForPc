@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -10,17 +10,16 @@ namespace EhViewerReader.ViewModels;
 
 public enum OnlineFeedMode
 {
-    /// <summary>Front page with 首页 / 热门 / 关注 / 排行 tabs.</summary>
+    /// <summary>Front page with 首页 / 热门 / 关注 / 排行 tabs, plus the search bar.</summary>
     Front = 0,
     Favorites = 1,
-    History = 2,
 }
 
 /// <summary>
-/// One browsable online listing. The same class serves the front page, the
-/// favourite slots and the watch history; only the URL builder and the tab set
-/// differ. Paging follows the site's own "next" link, with a visited-URL stack
-/// so "上一页" never re-derives a page number the site does not use.
+/// The one online listing page: the front feeds (首页/热门/关注/排行) and the
+/// search results share the same card grid, paging stack and status bar.
+/// Searching swaps the URL builder, not the page — so there is a single place
+/// to browse and to search.
 /// </summary>
 public sealed partial class OnlineFeedViewModel : ObservableObject
 {
@@ -28,6 +27,9 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     private readonly IOnlineHost _host;
     private readonly OnlineFeedMode _mode;
     private readonly List<string> _visitedUrls = [];
+    private readonly List<FeedOption> _languages;
+
+    private EhSearchRequest _searchRequest = new();
     private string _nextUrl = string.Empty;
     private int _urlIndex;
     private bool _busy;
@@ -38,6 +40,17 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     private int _toplistIndex = 15;
     private int _favoriteSlot;
     private string _favoriteQuery = string.Empty;
+    private bool _searchMode;
+    private string _query = string.Empty;
+    private string _minPages = string.Empty;
+    private string _maxPages = string.Empty;
+    private bool _searchName = true;
+    private bool _searchTags = true;
+    private bool _searchDescription;
+    private bool _onlyTorrents;
+    private FeedOption? _selectedLanguage;
+    private bool _showAdvanced;
+    private bool _showHistory = true;
     private CancellationTokenSource? _cancellation;
 
     public OnlineFeedViewModel(AppServices services, IOnlineHost host, OnlineFeedMode mode, string title, string subtitle)
@@ -68,26 +81,61 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
         _selectedTab = Tabs.Count > 0 ? Tabs[0] : null;
         if (_selectedTab is not null) _selectedTab.IsActive = true;
+
+        foreach (EhCategory category in EhCategories.AllCategories)
+        {
+            Categories.Add(new CategoryToggle(category, true));
+        }
+
+        _languages =
+        [
+            new FeedOption(string.Empty, "全部语言"),
+            new FeedOption("chinese", "中文"),
+            new FeedOption("english", "英文"),
+            new FeedOption("japanese", "日文"),
+            new FeedOption("korean", "韩文"),
+        ];
+        _selectedLanguage = _languages[0];
+
+        ReloadSearchHistory();
     }
 
     public string Title { get; }
     public string Subtitle { get; }
 
     public ObservableCollection<OnlineGalleryItemViewModel> Items { get; } = [];
-
     public ObservableCollection<FeedOption> Tabs { get; } = [];
+    public ObservableCollection<CategoryToggle> Categories { get; } = [];
+    public ObservableCollection<TextItem> History { get; } = [];
+    public ObservableCollection<TextItem> SavedSearches { get; } = [];
+
+    public IReadOnlyList<FeedOption> Languages => _languages;
 
     public bool HasTabs => Tabs.Count > 0;
+    public bool HasHistory => History.Count > 0;
+    public bool HasSavedSearches => SavedSearches.Count > 0;
 
     public bool IsFavorites => _mode == OnlineFeedMode.Favorites;
 
     public bool IsFront => _mode == OnlineFeedMode.Front;
 
-    public bool IsHistory => _mode == OnlineFeedMode.History;
+    /// <summary>True while the grid shows search results instead of a feed.</summary>
+    public bool IsSearchMode => _searchMode;
 
-    public bool ShowToplistSelector => IsFront && _selectedTab?.Key == "toplist";
+    /// <summary>The merged search bar only exists on the browse page.</summary>
+    public bool ShowSearchBar => IsFront;
 
     public bool ShowFavoriteSearch => IsFavorites;
+
+    public bool ShowTabs => HasTabs && !_searchMode;
+
+    public bool ShowSearchResultHeader => _searchMode;
+
+    public bool ShowAdvancedPanel => _showAdvanced && IsFront;
+
+    public bool ShowHistoryPanel => HasHistory && _showHistory && IsFront;
+
+    public bool ShowToplistSelector => IsFront && !_searchMode && _selectedTab?.Key == "toplist";
 
     /// <summary>Keyword searched inside the current favourite slot.</summary>
     public string FavoriteQuery
@@ -96,11 +144,84 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         set => SetProperty(ref _favoriteQuery, value);
     }
 
+    public string Query
+    {
+        get => _query;
+        set => SetProperty(ref _query, value);
+    }
+
+    public string MinPages
+    {
+        get => _minPages;
+        set => SetProperty(ref _minPages, value);
+    }
+
+    public string MaxPages
+    {
+        get => _maxPages;
+        set => SetProperty(ref _maxPages, value);
+    }
+
+    public bool SearchName
+    {
+        get => _searchName;
+        set => SetProperty(ref _searchName, value);
+    }
+
+    public bool SearchTags
+    {
+        get => _searchTags;
+        set => SetProperty(ref _searchTags, value);
+    }
+
+    public bool SearchDescription
+    {
+        get => _searchDescription;
+        set => SetProperty(ref _searchDescription, value);
+    }
+
+    public bool OnlyTorrents
+    {
+        get => _onlyTorrents;
+        set => SetProperty(ref _onlyTorrents, value);
+    }
+
+    public FeedOption? SelectedLanguage
+    {
+        get => _selectedLanguage;
+        set => SetProperty(ref _selectedLanguage, value);
+    }
+
+    public bool ShowAdvanced
+    {
+        get => _showAdvanced;
+        set
+        {
+            if (!SetProperty(ref _showAdvanced, value)) return;
+            OnPropertyChanged(nameof(ShowAdvancedPanel));
+        }
+    }
+
+    public bool ShowHistory
+    {
+        get => _showHistory;
+        set
+        {
+            if (!SetProperty(ref _showHistory, value)) return;
+            OnPropertyChanged(nameof(ShowHistoryPanel));
+        }
+    }
+
+    public string SearchResultText => _searchRequest.EffectiveQuery.Length > 0
+        ? "搜索结果 · " + _searchRequest.EffectiveQuery
+        : "搜索结果";
+
     public string EmptyText => _mode switch
     {
         OnlineFeedMode.Favorites => "收藏夹为空，或该分类下没有作品",
-        OnlineFeedMode.History => "还没有浏览记录",
-        _ => "没有可显示的作品",
+        _ => _searchMode
+            ? "没有匹配结果，试试别的关键词或标签语法"
+            : "没有可显示的作品",
     };
 
     public IReadOnlyList<FeedOption> ToplistOptions { get; } =
@@ -125,6 +246,9 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
             {
                 _favoriteSlot = int.TryParse(value.Key, out int slot) ? slot : -1;
             }
+
+            // Picking a feed tab leaves the search results behind.
+            SetSearchMode(false);
 
             OnPropertyChanged();
             OnPropertyChanged(nameof(ShowToplistSelector));
@@ -191,6 +315,127 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         }
     }
 
+    /// <summary>Runs a search from outside the page (tag chips, GID search).</summary>
+    public void RunSearch(string query)
+    {
+        Query = query;
+        _ = SearchAsync();
+    }
+
+    [RelayCommand]
+    private async Task SearchAsync()
+    {
+        EhSearchRequest request = BuildRequest();
+        _searchRequest = request;
+        AddSearchHistory(request.EffectiveQuery);
+        SetSearchMode(true);
+        OnPropertyChanged(nameof(SearchResultText));
+        await LoadAsync(reset: true);
+    }
+
+    [RelayCommand]
+    private async Task ClearSearchAsync()
+    {
+        Query = string.Empty;
+        if (!_searchMode)
+        {
+            await LoadAsync(reset: true);
+            return;
+        }
+
+        SetSearchMode(false);
+        StatusText = string.Empty;
+        await LoadAsync(reset: true);
+    }
+
+    [RelayCommand]
+    private void ToggleAdvanced() => ShowAdvanced = !ShowAdvanced;
+
+    [RelayCommand]
+    private void ToggleHistory() => ShowHistory = !ShowHistory;
+
+    [RelayCommand]
+    private void UseHistory(string? entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry)) return;
+        Query = entry;
+        _ = SearchAsync();
+    }
+
+    [RelayCommand]
+    private void UseSavedSearch(string? name)
+    {
+        SavedSearchEntry? entry = _services.Settings.SavedSearches.FirstOrDefault(s => s.Name == name);
+        if (entry is null) return;
+
+        Query = entry.Query;
+        MinPages = entry.MinPages > 0 ? entry.MinPages.ToString() : string.Empty;
+        MaxPages = entry.MaxPages > 0 ? entry.MaxPages.ToString() : string.Empty;
+        SelectedLanguage = _languages.FirstOrDefault(l => l.Key == entry.Language) ?? _languages[0];
+        foreach (CategoryToggle toggle in Categories)
+        {
+            toggle.IsEnabled = (entry.CategoryMask & (1 << (int)toggle.Category)) != 0;
+        }
+
+        _ = SearchAsync();
+    }
+
+    [RelayCommand]
+    private async Task SaveSearchAsync()
+    {
+        EhSearchRequest request = BuildRequest();
+        string key = request.EffectiveQuery;
+        if (key.Length == 0)
+        {
+            _host.Notify("当前搜索为空，无法保存");
+            return;
+        }
+
+        var entry = new SavedSearchEntry
+        {
+            Name = key.Length > 40 ? key[..40] : key,
+            Query = request.Query,
+            CategoryMask = request.CategoryMask,
+            MinPages = request.MinPages,
+            MaxPages = request.MaxPages,
+            Language = request.Language,
+        };
+
+        if (_services.Settings.SavedSearches.Any(s => s.Name == entry.Name))
+        {
+            _host.Notify("同名搜索已保存");
+            return;
+        }
+
+        _services.Settings.SavedSearches.Add(entry);
+        _services.TrySaveSettings(out _);
+        ReloadSearchHistory();
+        await Task.CompletedTask;
+    }
+
+    [RelayCommand]
+    private void RemoveSavedSearch(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return;
+        _services.Settings.SavedSearches.RemoveAll(s => s.Name == name);
+        _services.TrySaveSettings(out _);
+        ReloadSearchHistory();
+    }
+
+    [RelayCommand]
+    private async Task ResetSearchOptionsAsync()
+    {
+        MinPages = string.Empty;
+        MaxPages = string.Empty;
+        SearchName = true;
+        SearchTags = true;
+        SearchDescription = false;
+        OnlyTorrents = false;
+        SelectedLanguage = _languages[0];
+        foreach (CategoryToggle toggle in Categories) toggle.IsEnabled = true;
+        await Task.CompletedTask;
+    }
+
     public async Task LoadAsync(bool reset)
     {
         if (_busy) return;
@@ -215,7 +460,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         CancellationToken token = _cancellation.Token;
 
         IsBusy = true;
-        StatusText = "载入中…";
+        StatusText = _searchMode ? "搜索中…" : "载入中…";
         int filtered = 0;
 
         try
@@ -387,6 +632,18 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         foreach (OnlineGalleryItemViewModel item in Items) item.RefreshLocalState();
     }
 
+    private void SetSearchMode(bool value)
+    {
+        if (_searchMode == value) return;
+        _searchMode = value;
+        OnPropertyChanged(nameof(IsSearchMode));
+        OnPropertyChanged(nameof(ShowTabs));
+        OnPropertyChanged(nameof(ShowSearchResultHeader));
+        OnPropertyChanged(nameof(ShowToplistSelector));
+        OnPropertyChanged(nameof(SearchResultText));
+        OnPropertyChanged(nameof(EmptyText));
+    }
+
     private void OpenUrl(string url)
     {
         try
@@ -422,9 +679,61 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         }
     }
 
+    private EhSearchRequest BuildRequest()
+    {
+        var request = new EhSearchRequest
+        {
+            Query = Query.Trim(),
+            CategoryMask = EhCategories.MaskOf(Categories.Where(c => c.IsEnabled).Select(c => c.Category)),
+            SearchName = SearchName,
+            SearchTags = SearchTags,
+            SearchDescription = SearchDescription,
+            OnlyTorrents = OnlyTorrents,
+            Language = SelectedLanguage?.Key ?? string.Empty,
+        };
+
+        if (int.TryParse(MinPages, out int min)) request.MinPages = Math.Max(0, min);
+        if (int.TryParse(MaxPages, out int max)) request.MaxPages = Math.Max(0, max);
+        return request;
+    }
+
+    private void AddSearchHistory(string query)
+    {
+        string trimmed = query.Trim();
+        if (trimmed.Length == 0) return;
+
+        _services.Settings.SearchHistory.RemoveAll(h => string.Equals(h, trimmed, StringComparison.OrdinalIgnoreCase));
+        _services.Settings.SearchHistory.Insert(0, trimmed);
+        while (_services.Settings.SearchHistory.Count > 15)
+        {
+            _services.Settings.SearchHistory.RemoveAt(_services.Settings.SearchHistory.Count - 1);
+        }
+
+        _services.TrySaveSettings(out _);
+        ReloadSearchHistory();
+    }
+
+    private void ReloadSearchHistory()
+    {
+        History.Clear();
+        foreach (string entry in _services.Settings.SearchHistory) History.Add(new TextItem(entry));
+
+        SavedSearches.Clear();
+        foreach (SavedSearchEntry entry in _services.Settings.SavedSearches) SavedSearches.Add(new TextItem(entry.Name));
+
+        OnPropertyChanged(nameof(HasHistory));
+        OnPropertyChanged(nameof(HasSavedSearches));
+        OnPropertyChanged(nameof(ShowHistoryPanel));
+    }
+
     private string BuildUrl(int page)
     {
         EhSite site = _services.Online.Site;
+        if (_searchMode)
+        {
+            return EhUrls.Search(site, _searchRequest, page);
+        }
+
         return _mode switch
         {
             OnlineFeedMode.Favorites => EhUrls.Favorites(
@@ -432,7 +741,6 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
                 _favoriteSlot,
                 _favoriteQuery.Trim().Length == 0 ? null : new EhSearchRequest { Query = _favoriteQuery.Trim() },
                 page),
-            OnlineFeedMode.History => EhUrls.History(site, page),
             _ => _selectedTab?.Key switch
             {
                 "popular" => EhUrls.Popular(site, page),

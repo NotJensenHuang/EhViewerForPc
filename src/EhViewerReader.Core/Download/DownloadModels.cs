@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
+using EhViewerReader.Core.Models;
 
 namespace EhViewerReader.Core.Download;
 
@@ -25,6 +26,10 @@ public sealed class DownloadTask
     public string ThumbUrl { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
     public string FolderPath { get; set; } = string.Empty;
+
+    /// <summary>Image size this task was queued with (original vs site-resampled).</summary>
+    public ImageQuality Quality { get; set; } = ImageQuality.Original;
+
     public int PageCount { get; set; }
     public int DownloadedPages { get; set; }
     public long TotalBytes { get; set; }

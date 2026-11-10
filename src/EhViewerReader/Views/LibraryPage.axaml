@@ -76,7 +76,8 @@
                         Focusable="True" Tapped="OnCardTapped" ContextRequested="OnCardContextRequested"
                         KeyDown="OnCardKeyDown">
                   <Grid RowDefinitions="266,Auto,*">
-                    <Border CornerRadius="8" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}">
+                    <Border CornerRadius="8" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}"
+                            Tapped="OnCoverTapped" ToolTip.Tip="点击封面查看详情">
                       <Grid>
                         <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="UniformToFill" />
 

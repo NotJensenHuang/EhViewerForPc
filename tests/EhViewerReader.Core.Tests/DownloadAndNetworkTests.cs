@@ -1,4 +1,4 @@
-using EhViewerReader.Core.Download;
+﻿using EhViewerReader.Core.Download;
 using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Online;
 using EhViewerReader.Core.Storage;
@@ -102,9 +102,11 @@ public sealed class DownloadAndNetworkTests
                 DownloadTask task = manager.Enqueue(
                     new EhGalleryDetails { Gid = 1234, Token = "tok", Title = "Queue: Test", Pages = 12 },
                     "label",
-                    startImmediately: false);
+                    startImmediately: false,
+                    quality: ImageQuality.Resampled);
 
                 Assert.Equal(DownloadState.Pending, task.State);
+                Assert.Equal(ImageQuality.Resampled, task.Quality);
                 Assert.EndsWith(Path.Combine("label", "1234-Queue_ Test"), task.FolderPath);
                 Assert.True(File.Exists(paths.DownloadTasksFile));
             }
@@ -115,6 +117,7 @@ public sealed class DownloadAndNetworkTests
                 Assert.Equal(1234, task.Gid);
                 Assert.Equal("tok", task.Token);
                 Assert.Equal(12, task.PageCount);
+                Assert.Equal(ImageQuality.Resampled, task.Quality);
             }
         }
         finally

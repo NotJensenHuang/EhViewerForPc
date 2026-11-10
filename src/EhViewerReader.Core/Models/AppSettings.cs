@@ -50,6 +50,21 @@ public enum LibrarySort
     Gid = 4,
 }
 
+/// <summary>
+/// Image size requested from the site. E-Hentai only exposes two sizes to a
+/// client: the full-size file (per image) and the resampled one, whose width is
+/// the account preference (780/980/1280/1600/2400, default 1280). The app
+/// honours both for reading and downloading.
+/// </summary>
+public enum ImageQuality
+{
+    /// <summary>Full-size original; needs a signed-in account for most galleries.</summary>
+    Original = 0,
+
+    /// <summary>Site-resampled image; width follows the account setting (~1280).</summary>
+    Resampled = 1,
+}
+
 public enum LibraryFilter
 {
     All = 0,
@@ -62,7 +77,7 @@ public enum LibraryFilter
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 3;
+    public int SchemaVersion { get; set; } = 4;
 
     /// <summary>Legacy single-root field; migrated into <see cref="Sources"/> on load.</summary>
     public string? LibraryRoot { get; set; }
@@ -76,6 +91,12 @@ public sealed class AppSettings
     public OnlineSettings Online { get; set; } = new();
 
     public DownloadSettings Download { get; set; } = new();
+
+    /// <summary>
+    /// Image size shared by the online reader and the download engine; the
+    /// gallery detail window can override it for one gallery.
+    /// </summary>
+    public ImageQuality ImageQuality { get; set; } = ImageQuality.Original;
 
     /// <summary>
     /// Work id -> preferred source id. Only populated for works that exist in
@@ -123,6 +144,7 @@ public sealed class AppSettings
         if (!Enum.IsDefined(ReaderBackground)) ReaderBackground = ReaderBackground.Black;
         if (!Enum.IsDefined(Sort)) Sort = LibrarySort.RecentlyRead;
         if (!Enum.IsDefined(Filter)) Filter = LibraryFilter.All;
+        if (!Enum.IsDefined(ImageQuality)) ImageQuality = ImageQuality.Original;
         Account ??= new AccountSettings();
         Account.Normalize();
         Network ??= new NetworkSettings();
@@ -354,9 +376,6 @@ public sealed class OnlineSettings
     public string TagTranslationUpdatedUtc { get; set; } = string.Empty;
     public int TagTranslationCount { get; set; }
 
-    /// <summary>Read the original (full-size) image instead of the resampled one.</summary>
-    public bool ReadOriginalImages { get; set; }
-
     /// <summary>Include/exclude rules applied to every online listing.</summary>
     public List<FilterRule> Filters { get; set; } = [];
 
@@ -396,9 +415,6 @@ public sealed class DownloadSettings
 
     public int MaxConcurrentTasks { get; set; } = 2;
     public int MaxConcurrentPages { get; set; } = 2;
-
-    /// <summary>Download the original image instead of the resampled version.</summary>
-    public bool DownloadOriginal { get; set; } = true;
 
     public bool WriteThumb { get; set; } = true;
     public bool WriteEhviewerHeader { get; set; } = true;

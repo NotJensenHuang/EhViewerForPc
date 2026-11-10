@@ -15,7 +15,6 @@ namespace EhViewerReader.Views;
 /// </summary>
 public partial class LibraryPage : UserControl
 {
-    private readonly List<ReaderWindow> _readers = [];
     private MainViewModel? _viewModel;
     private Vector _libraryOffset;
     private bool _restoringScroll;
@@ -46,7 +45,6 @@ public partial class LibraryPage : UserControl
             _viewModel.GalleryListReplaced -= OnGalleryListReplaced;
             _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
             _viewModel.GalleryListRebalanced -= OnGalleryListRebalanced;
-            _viewModel.OpenGalleryRequested -= OnOpenGalleryRequested;
             _viewModel.OpenDetailsRequested -= OnOpenDetailsRequested;
             _viewModel.OpenVersionsRequested -= OnOpenVersionsRequested;
             _viewModel.ChooseFolderRequested -= OnChooseFolderRequested;
@@ -58,7 +56,6 @@ public partial class LibraryPage : UserControl
         viewModel.GalleryListReplaced += OnGalleryListReplaced;
         viewModel.PropertyChanged += OnViewModelPropertyChanged;
         viewModel.GalleryListRebalanced += OnGalleryListRebalanced;
-        viewModel.OpenGalleryRequested += OnOpenGalleryRequested;
         viewModel.OpenDetailsRequested += OnOpenDetailsRequested;
         viewModel.OpenVersionsRequested += OnOpenVersionsRequested;
         viewModel.ChooseFolderRequested += OnChooseFolderRequested;
@@ -154,6 +151,17 @@ public partial class LibraryPage : UserControl
         }
     }
 
+    /// <summary>A cover click opens the details; the rest of the card starts reading.</summary>
+    private void OnCoverTapped(object? sender, TappedEventArgs e)
+    {
+        if (_viewModel is null) return;
+        if (sender is Control { DataContext: GalleryItemViewModel item })
+        {
+            _viewModel.OpenDetailsCommand.Execute(item);
+            e.Handled = true;
+        }
+    }
+
     private void OnCardKeyDown(object? sender, KeyEventArgs e)
     {
         if (_viewModel is null || e.Key is not (Key.Enter or Key.Space)) return;
@@ -244,43 +252,6 @@ public partial class LibraryPage : UserControl
         {
             _viewModel.OpenVersionsCommand.Execute(item);
             e.Handled = true;
-        }
-    }
-
-    private void OnOpenGalleryRequested(object? sender, GalleryItemViewModel item)
-    {
-        if (_viewModel is null) return;
-        try
-        {
-            ReaderWindow? existing = _readers.FirstOrDefault(r =>
-                string.Equals(r.GalleryId, item.StableId, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null)
-            {
-                if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
-                existing.Activate();
-                return;
-            }
-
-            var readerViewModel = new ReaderViewModel(_viewModel.Services, item.Info);
-            var window = new ReaderWindow(readerViewModel)
-            {
-                GalleryId = item.StableId,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            };
-
-            _readers.Add(window);
-            window.Closed += (_, _) =>
-            {
-                _readers.Remove(window);
-                _viewModel?.RefreshItemProgress(item);
-            };
-
-            if (TopLevel.GetTopLevel(this) is Window owner) window.Show(owner);
-            else window.Show();
-        }
-        catch (Exception ex)
-        {
-            _viewModel.ReportError("打开阅读器失败：" + ex.Message);
         }
     }
 

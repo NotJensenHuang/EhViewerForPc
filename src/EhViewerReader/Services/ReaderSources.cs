@@ -84,12 +84,20 @@ public sealed class OnlineReaderSource : IReaderSource
     private readonly AppServices _services;
     private readonly EhGalleryDetails _details;
     private readonly IReadOnlyList<EhPageRef> _refs;
+    private readonly bool _originalImages;
 
-    public OnlineReaderSource(AppServices services, EhGalleryDetails details, IReadOnlyList<EhPageRef> refs)
+    public OnlineReaderSource(
+        AppServices services,
+        EhGalleryDetails details,
+        IReadOnlyList<EhPageRef> refs,
+        ImageQuality quality = ImageQuality.Original)
     {
         _services = services;
         _details = details;
         _refs = refs;
+        // Originals need an account; anonymous browsing always gets the
+        // site-resampled file, so skip the extra nl request in that case.
+        _originalImages = quality == ImageQuality.Original && services.Online.IsSignedIn;
 
         var pages = new List<GalleryPage>(refs.Count);
         for (int i = 0; i < refs.Count; i++)
@@ -123,7 +131,7 @@ public sealed class OnlineReaderSource : IReaderSource
         int captured = index;
         return _services.OnlineImages.CreatePageRequest(
             _refs[index],
-            original: _services.Settings.Online.ReadOriginalImages,
+            original: _originalImages,
             (width, height) => DimensionResolved?.Invoke(captured, width, height));
     }
 

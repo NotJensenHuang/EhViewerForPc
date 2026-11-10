@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -167,7 +167,6 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private bool _downloadAddAsSource;
     private double _maxTasks;
     private double _maxPages;
-    private bool _downloadOriginal;
     private bool _writeThumb;
     private bool _writeHeader;
     private bool _autoStart;
@@ -183,7 +182,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private string _tagTranslationStatus = string.Empty;
     private bool _updatingTags;
 
-    private bool _readOriginalImages;
+    private int _imageQualityIndex;
     private string _filterStatus = string.Empty;
 
     private string _favoriteSlotStatus = string.Empty;
@@ -691,11 +690,26 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _updatingTags, value);
     }
 
-    public bool ReadOriginalImages
+    /// <summary>Index into <see cref="ImageQualityOptions"/>; shared by reader and downloads.</summary>
+    public int ImageQualityIndex
     {
-        get => _readOriginalImages;
-        set => SetProperty(ref _readOriginalImages, value);
+        get => _imageQualityIndex;
+        set
+        {
+            if (SetProperty(ref _imageQualityIndex, value)) OnPropertyChanged(nameof(ImageQualityHint));
+        }
     }
+
+    public IReadOnlyList<FeedOption> ImageQualityOptions { get; } =
+    [
+        new FeedOption("orig", "原图（最大尺寸，需登录）"),
+        new FeedOption("res", "站点压缩图（约 1280 宽）"),
+    ];
+
+    public string ImageQualityHint =>
+        _imageQualityIndex == 0
+            ? "原图每页单独解析，流量最大；未登录或原图不可用时自动回退到站点压缩图。"
+            : "压缩图宽度由站点账号设置决定（780 / 980 / 1280 / 1600 / 2400），默认 1280。";
 
     public string FilterStatus
     {
@@ -720,7 +734,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         OnlineSettings online = _services.Settings.Online;
         _showTagTranslations = online.ShowTagTranslations;
         _tagTranslationUrl = online.TagTranslationUrl;
-        _readOriginalImages = online.ReadOriginalImages;
+        _imageQualityIndex = _services.Settings.ImageQuality == ImageQuality.Original ? 0 : 1;
         // Do not parse the 2.5 MB database just to render the settings page; the
         // stored summary is enough until the user opens a gallery or updates it.
         _tagTranslationStatus = online.TagTranslationCount > 0
@@ -837,12 +851,6 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
     public string MaxPagesLabel => $"{_maxPages:F0} 页";
 
-    public bool DownloadOriginal
-    {
-        get => _downloadOriginal;
-        set => SetProperty(ref _downloadOriginal, value);
-    }
-
     public bool WriteThumb
     {
         get => _writeThumb;
@@ -886,7 +894,6 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         _downloadAddAsSource = download.AddAsSource;
         _maxTasks = download.MaxConcurrentTasks;
         _maxPages = download.MaxConcurrentPages;
-        _downloadOriginal = download.DownloadOriginal;
         _writeThumb = download.WriteThumb;
         _writeHeader = download.WriteEhviewerHeader;
         _autoStart = download.AutoStart;
@@ -935,7 +942,6 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         download.AddAsSource = DownloadAddAsSource;
         download.MaxConcurrentTasks = (int)MaxConcurrentTasks;
         download.MaxConcurrentPages = (int)MaxConcurrentPages;
-        download.DownloadOriginal = DownloadOriginal;
         download.WriteThumb = WriteThumb;
         download.WriteEhviewerHeader = WriteHeader;
         download.AutoStart = AutoStart;
@@ -992,6 +998,27 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         catch (Exception ex)
         {
             _services.Log.Warn("Open source folder failed", ex);
+        }
+    }
+
+    /// <summary>
+    /// The resampled width (780/980/1280/1600/2400) is an account preference on
+    /// the site; there is no per-request parameter, so open its settings page.
+    /// </summary>
+    [RelayCommand]
+    private void OpenSiteImageSettings()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = Core.Online.EhUrls.Base(_services.Online.Site) + "uconfig.php",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _services.Log.Warn("Open site image settings failed", ex);
         }
     }
 
@@ -1060,7 +1087,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
         settings.Online.ShowTagTranslations = _showTagTranslations;
         settings.Online.TagTranslationUrl = TagTranslationUrl.Trim();
-        settings.Online.ReadOriginalImages = _readOriginalImages;
+        settings.ImageQuality = ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled;
         settings.Online.Filters = Filters.Select(f => f.Rule.Clone()).ToList();
         settings.Online.Normalize();
 
