@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using EhViewerReader.Core.Storage;
 using System.Text.RegularExpressions;
 using EhViewerReader.Core.Format;
 using EhViewerReader.Core.Models;
@@ -18,7 +19,8 @@ public sealed partial class LibraryScanner
         CancellationToken cancellationToken = default,
         string? sourceId = null,
         string? sourceName = null,
-        bool qualifyStableId = false)
+        bool qualifyStableId = false,
+        string? onlyFolder = null)
     {
         string root = Path.GetFullPath(rootPath);
         if (!Directory.Exists(root))
@@ -27,15 +29,11 @@ public sealed partial class LibraryScanner
         }
 
         var stopwatch = Stopwatch.StartNew();
-        var cacheEntries = cache?.Entries ?? new Dictionary<string, GalleryCacheEntry>(StringComparer.OrdinalIgnoreCase);
-        var directories = new DirectoryInfo(root)
-            .EnumerateDirectories("*", SearchOption.TopDirectoryOnly)
-            .Where(IsCandidateDirectory)
-            .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var cacheEntries = cache?.Entries ?? new Dictionary<string, GalleryCacheEntry>(PathIdentity.Comparer);
+        var directories = onlyFolder is null ? EnumerateGalleryDirectories(new DirectoryInfo(root), cancellationToken).ToArray() : new[] { new DirectoryInfo(onlyFolder) };
 
         var galleries = new List<GalleryInfo>(directories.Length);
-        var newEntries = new Dictionary<string, GalleryCacheEntry>(StringComparer.OrdinalIgnoreCase);
+        var newEntries = new Dictionary<string, GalleryCacheEntry>(PathIdentity.Comparer);
         int cacheHits = 0;
         int scanned = 0;
         int ignored = 0;
@@ -61,7 +59,8 @@ public sealed partial class LibraryScanner
             IReadOnlyList<PageCandidate> files = PageFileParser.Enumerate(directory.FullName, out string? enumError);
             var snapshot = GallerySnapshot.Create(folderWriteUtc, ehFile, thumbFile, files);
 
-            GalleryCacheEntry? cached = cacheEntries.GetValueOrDefault(folderName);
+            string relativePath = Path.GetRelativePath(root, directory.FullName);
+            GalleryCacheEntry? cached = cacheEntries.GetValueOrDefault(relativePath);
             GalleryInfo gallery;
             if (!forceRefresh && cached is not null && snapshot.Matches(cached))
             {
@@ -89,7 +88,7 @@ public sealed partial class LibraryScanner
             }
 
             galleries.Add(gallery);
-            newEntries[folderName] = ToCacheEntry(gallery, snapshot);
+            newEntries[relativePath] = ToCacheEntry(gallery, snapshot);
 
             if (processed % 25 == 0 || processed == directories.Length)
             {
@@ -132,6 +131,19 @@ public sealed partial class LibraryScanner
             Elapsed = stopwatch.Elapsed,
             Cache = libraryCache,
         };
+    }
+
+    private static IEnumerable<DirectoryInfo> EnumerateGalleryDirectories(DirectoryInfo root, CancellationToken token, int depth = 0)
+    {
+        foreach (DirectoryInfo directory in root.EnumerateDirectories().Where(IsCandidateDirectory).OrderBy(d => d.Name, PathIdentity.Comparer))
+        {
+            token.ThrowIfCancellationRequested();
+            bool gallery = File.Exists(Path.Combine(directory.FullName, ".ehviewer")) ||
+                directory.EnumerateFiles().Any(f => PageFileParser.TryParsePageName(f.Name, out _, out _));
+            if (gallery || !directory.EnumerateDirectories().Any()) yield return directory;
+            else if (depth < 8)
+                foreach (var child in EnumerateGalleryDirectories(directory, token, depth + 1)) yield return child;
+        }
     }
 
     private static bool IsCandidateDirectory(DirectoryInfo directory)
@@ -316,9 +328,9 @@ public sealed partial class LibraryScanner
         bool qualifyStableId = false)
     {
         var galleries = new List<GalleryInfo>(cache.Entries.Count);
-        foreach (GalleryCacheEntry entry in cache.Entries.Values)
+        foreach (var pair in cache.Entries)
         {
-            galleries.Add(FromCache(entry, Path.Combine(rootPath, entry.FolderName)));
+            galleries.Add(FromCache(pair.Value, Path.Combine(rootPath, pair.Key)));
         }
 
         AssignStableIds(galleries, sourceId, sourceName, qualifyStableId);

@@ -4,14 +4,14 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using EhViewerReader.Core.Models;
 using EhViewerReader.ViewModels;
 
 namespace EhViewerReader.Views;
 
 /// <summary>
-/// Local library page (offline, read-only). Owns the reader/detail/version
-/// windows it opens; the shell only hosts it.
+/// Local library page (offline, read-only). Requests document navigation from the shell.
 /// </summary>
 public partial class LibraryPage : UserControl
 {
@@ -25,6 +25,8 @@ public partial class LibraryPage : UserControl
     }
 
     public event EventHandler? SettingsRequested;
+    public event EventHandler<GalleryItemViewModel>? LocalDetailsRequested;
+    public event EventHandler<GalleryItemViewModel>? VersionsRequested;
 
     public ScrollViewer Scroller => LibraryScroll;
 
@@ -143,15 +145,16 @@ public partial class LibraryPage : UserControl
 
     private void OnCardTapped(object? sender, TappedEventArgs e)
     {
+        if (e.Source is Visual visual && (visual is Button || visual.FindAncestorOfType<Button>() is not null)) return;
         if (_viewModel is null) return;
         if (sender is Control { DataContext: GalleryItemViewModel item })
         {
-            _viewModel.OpenGalleryCommand.Execute(item);
+            _viewModel.OpenDetailsCommand.Execute(item);
             e.Handled = true;
         }
     }
 
-    /// <summary>A cover click opens the details; the rest of the card starts reading.</summary>
+    /// <summary>A cover click opens the same details as the rest of the card.</summary>
     private void OnCoverTapped(object? sender, TappedEventArgs e)
     {
         if (_viewModel is null) return;
@@ -162,12 +165,18 @@ public partial class LibraryPage : UserControl
         }
     }
 
+    private void OnReadCard(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Control { DataContext: GalleryItemViewModel item }) _viewModel?.OpenGalleryCommand.Execute(item);
+        e.Handled = true;
+    }
+
     private void OnCardKeyDown(object? sender, KeyEventArgs e)
     {
         if (_viewModel is null || e.Key is not (Key.Enter or Key.Space)) return;
         if (sender is Control { DataContext: GalleryItemViewModel item })
         {
-            _viewModel.OpenGalleryCommand.Execute(item);
+            _viewModel.OpenDetailsCommand.Execute(item);
             e.Handled = true;
         }
     }
@@ -255,48 +264,6 @@ public partial class LibraryPage : UserControl
         }
     }
 
-    private async void OnOpenVersionsRequested(object? sender, GalleryItemViewModel item)
-    {
-        if (_viewModel is null) return;
-        try
-        {
-            var window = new VersionsWindow(new VersionsViewModel(item, _viewModel.Services))
-            {
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            };
-
-            if (TopLevel.GetTopLevel(this) is Window owner) await window.ShowDialog(owner);
-            else window.Show();
-
-            if (window.ReadVersion is { } read)
-            {
-                _viewModel.SetPreferredSource(item, read);
-                _viewModel.OpenGalleryCommand.Execute(item);
-            }
-            else if (window.DefaultVersion is { } preferred)
-            {
-                _viewModel.SetPreferredSource(item, preferred);
-            }
-        }
-        catch (Exception ex)
-        {
-            _viewModel.ReportError("打开版本管理失败：" + ex.Message);
-        }
-    }
-
-    private async void OnOpenDetailsRequested(object? sender, GalleryItemViewModel item)
-    {
-        if (_viewModel is null) return;
-        try
-        {
-            var window = new GalleryDetailsWindow(item, _viewModel.Services);
-            if (TopLevel.GetTopLevel(this) is Window owner) await window.ShowDialog(owner);
-            else window.Show();
-            _viewModel.RefreshItemProgress(item);
-        }
-        catch (Exception ex)
-        {
-            _viewModel.ReportError("打开详情失败：" + ex.Message);
-        }
-    }
+    private void OnOpenVersionsRequested(object? sender, GalleryItemViewModel item) => VersionsRequested?.Invoke(this, item);
+    private void OnOpenDetailsRequested(object? sender, GalleryItemViewModel item) => LocalDetailsRequested?.Invoke(this, item);
 }

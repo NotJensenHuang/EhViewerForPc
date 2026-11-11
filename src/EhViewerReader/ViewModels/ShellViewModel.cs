@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -57,6 +57,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Favorites = new OnlineFeedViewModel(services, this, OnlineFeedMode.Favorites, "收藏夹",
             "按 E-Hentai 收藏分类浏览，登录后可用");
         History = new HistoryViewModel(services, Library);
+        History.OnlineRequested += (_, summary) => OpenGallery(summary);
         History.OpenLibraryRequested += (_, _) => Navigate("library");
         History.OpenSiteHistoryRequested += (_, _) =>
             OpenExternal(EhUrls.Home(services.Online.Site) + "history.php");
@@ -65,7 +66,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Settings.AccountChanged += (_, _) => RaiseAccount();
 
         // The local index drives the "已在本机" badges on every online listing.
-        Library.LocalIndexChanged += (_, _) => Online.RefreshLocalState();
+        Library.LocalIndexChanged += (_, _) => { Online.RefreshLocalState(); Favorites.RefreshLocalState(); LocalStateChanged?.Invoke(this, EventArgs.Empty); };
 
         NavItems =
         [
@@ -88,6 +89,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     }
 
     public event EventHandler<EhGallerySummary>? GalleryRequested;
+    public event EventHandler? LocalStateChanged;
 
     /// <summary>Raised when a local copy should be opened in the reader.</summary>
     public event EventHandler<GalleryItemViewModel>? LocalReadRequested;
@@ -174,6 +176,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
                 break;
             case SettingsViewModel:
                 Settings.RefreshAccount();
+                Settings.RefreshSources();
                 break;
             case DownloadsViewModel downloads:
                 downloads.SyncAll();
@@ -245,11 +248,13 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public void OpenGallery(EhGallerySummary summary) => GalleryRequested?.Invoke(this, summary);
 
-    public bool HasLocalCopy(long gid) => Library.HasLocalCopy(gid);
+    public bool HasLocalCopy(long gid, bool requireComplete = true) => requireComplete ? Library.HasLocalCopy(gid) : Library.TryGetAnyLocalCopy(gid, out _);
 
-    public bool OpenLocal(long gid)
+    public bool OpenLocal(long gid, bool allowIncomplete = false)
     {
-        if (!Library.TryGetLocalCopy(gid, out GalleryItemViewModel? item) || item is null) return false;
+        GalleryItemViewModel? item;
+        bool found = allowIncomplete ? Library.TryGetAnyLocalCopy(gid, out item) : Library.TryGetLocalCopy(gid, out item);
+        if (!found || item is null) return false;
         LocalReadRequested?.Invoke(this, item);
         return true;
     }
@@ -286,14 +291,13 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         }
     }
 
-    public Task DownloadDetailsAsync(EhGalleryDetails details, ImageQuality quality)
+    public async Task DownloadDetailsAsync(EhGalleryDetails details, ImageQuality quality)
     {
-        _services.Downloads.Enqueue(details, quality: quality);
+        bool existed = _services.Downloads.IsQueued(details.Gid);
+        var queued = await Task.Run(() => _services.Downloads.Enqueue(details, quality: quality));
         _services.EnsureDownloadSource();
-        Notify($"已加入下载队列：{details.DisplayTitle}");
-        Navigate("downloads");
+        Notify(queued.IsFinished ? "下载已完成，可从本地库阅读" : existed ? "该作品已在下载队列中" : $"已加入下载队列：{details.DisplayTitle}");
         Downloads.SyncAll();
-        return Task.CompletedTask;
     }
 
     public void SearchTag(string query)

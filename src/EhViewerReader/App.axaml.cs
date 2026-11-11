@@ -94,6 +94,14 @@ public partial class App : Application
                 : new AppPaths(options.DataDirectory);
 
             AppServices services = AppServices.Initialize(paths);
+            if (options.UiSmoke)
+            {
+                services.Settings.Download.RootPath = Path.Combine(Path.GetDirectoryName(paths.BaseDirectory)!, "smoke-downloads-" + Guid.NewGuid().ToString("N"));
+                services.Settings.Download.AddAsSource = false;
+                services.Settings.Network.ProxyMode = ProxyMode.None;
+                services.Settings.Network.HostsOverride = "127.0.0.1 e-hentai.org\n127.0.0.1 exhentai.org";
+                services.ReloadNetwork();
+            }
             if (!string.IsNullOrWhiteSpace(options.Root) && Directory.Exists(options.Root))
             {
                 // --root adds (or enables) a source instead of replacing the
@@ -119,8 +127,8 @@ public partial class App : Application
                 if (options.UiSmoke)
                 {
                     shell.Navigate("library");
-                    await UiSmokeService.RunAsync(window, shell.Library, options.OutputPath);
-                    desktop.Shutdown();
+                    int smokeCode = await UiSmokeService.RunAsync(window, shell.Library, options.OutputPath);
+                    desktop.Shutdown(smokeCode);
                 }
             };
 

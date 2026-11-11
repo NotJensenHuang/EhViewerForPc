@@ -9,6 +9,7 @@ public sealed class ReadingProgress
     public DateTime LastReadUtc { get; set; }
     public bool Completed { get; set; }
     public bool Favorite { get; set; }
+    public bool HiddenFromHistory { get; set; }
 
     public ReadingProgress Clone() => (ReadingProgress)MemberwiseClone();
 }

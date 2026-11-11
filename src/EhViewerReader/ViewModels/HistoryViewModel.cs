@@ -1,158 +1,112 @@
-using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Online;
 using EhViewerReader.Services;
 
 namespace EhViewerReader.ViewModels;
 
-/// <summary>
-/// Local reading history. The site has its own history page, but the original
-/// desktop workflow is "what did I read on this machine": it is built from the
-/// library plus the progress store, so it also covers galleries that are no
-/// longer reachable online.
-/// </summary>
+/// <summary>Reading history is work-level state, including online and unavailable local works.</summary>
 public sealed partial class HistoryViewModel : ObservableObject, IDisposable
 {
     private readonly AppServices _services;
     private readonly MainViewModel _library;
     private bool _disposed;
-
     public HistoryViewModel(AppServices services, MainViewModel library)
     {
         _services = services;
         _library = library;
-
         library.LocalIndexChanged += OnLibraryChanged;
         library.GalleryListRebalanced += OnLibraryChanged;
         Reload();
     }
-
-    public ObservableCollection<HistoryEntryViewModel> Items { get; } = [];
-
+    public IReadOnlyList<HistoryEntryViewModel> Items { get; private set; } = [];
     public bool ShowEmpty => Items.Count == 0;
-
     public bool HasItems => Items.Count > 0;
-
-    public string CountText => Items.Count == 0 ? "暂无阅读记录" : $"{Items.Count} 个作品";
-
-    public string StatusText { get; private set; } =
-        "打开任意本地作品后，这里会按最近阅读时间排序显示";
-
+    public string CountText => $"{Items.Count} 个作品";
+    public string StatusText { get; private set; } = "本机阅读记录：在线与本地共享进度";
     public event EventHandler? OpenLibraryRequested;
-
     public event EventHandler? OpenSiteHistoryRequested;
+    public event EventHandler<EhGallerySummary>? OnlineRequested;
 
-    /// <summary>Rebuilds the list from the current library snapshot and progress.</summary>
     public void Reload()
     {
         if (_disposed) return;
-
-        List<GalleryItemViewModel> works = _library.SnapshotAllWorks()
-            .Where(item => !item.IsUnread)
-            .OrderByDescending(item => item.LastReadUtc ?? DateTime.MinValue)
-            .ThenBy(item => item.Title, StringComparer.CurrentCultureIgnoreCase)
-            .ToList();
-
-        Items.Clear();
-        foreach (GalleryItemViewModel item in works) Items.Add(new HistoryEntryViewModel(item, this));
-
-        StatusText = works.Count == 0
-            ? "还没有阅读记录：打开任意本地作品后会自动记录"
-            : $"共 {works.Count} 个作品 · 按最近阅读排序";
-
+        var snapshot = _library.SnapshotAllWorks();
+        var local = snapshot.GroupBy(i => i.WorkId).ToDictionary(g => g.Key, g => g.OrderBy(i => i.IsIncomplete).ThenByDescending(i => i.PageCount).First());
+        foreach (var copy in snapshot) local.TryAdd(copy.StableId, copy);
+        var entries = new List<HistoryEntryViewModel>();
+        foreach (var pair in _services.Progress.Snapshot())
+        {
+            if (pair.Value.HiddenFromHistory || pair.Value.LastReadUtc == default) continue;
+            local.TryGetValue(pair.Key, out var item);
+            var work = _services.Works.Get(item?.WorkId ?? pair.Key);
+            if (work is null && item is null) continue;
+            work ??= new WorkRecord { WorkId = item!.WorkId, Gid = item.Gid, Title = item.Title, PageCount = item.PageCount };
+            entries.Add(new HistoryEntryViewModel(item, work, pair.Value, _services, this));
+        }
+        Items = entries.GroupBy(e => e.Work.WorkId).Select(g => g.OrderByDescending(e => e.LastReadUtc).First()).OrderByDescending(e => e.LastReadUtc).ToArray();
+        StatusText = Items.Count == 0 ? "阅读在线或本地作品后，会自动记录进度" : $"共 {Items.Count} 个作品 · 按最近阅读排序";
+        OnPropertyChanged(nameof(Items));
         OnPropertyChanged(nameof(ShowEmpty));
         OnPropertyChanged(nameof(HasItems));
         OnPropertyChanged(nameof(CountText));
         OnPropertyChanged(nameof(StatusText));
     }
-
-    [RelayCommand]
-    private void Refresh() => Reload();
-
-    [RelayCommand]
-    private void OpenLibrary() => OpenLibraryRequested?.Invoke(this, EventArgs.Empty);
-
-    [RelayCommand]
-    private void OpenSiteHistory() => OpenSiteHistoryRequested?.Invoke(this, EventArgs.Empty);
-
+    [RelayCommand] private void Refresh() => Reload();
+    [RelayCommand] private void OpenLibrary() => OpenLibraryRequested?.Invoke(this, EventArgs.Empty);
+    [RelayCommand] private void OpenSiteHistory() => OpenSiteHistoryRequested?.Invoke(this, EventArgs.Empty);
     internal void Open(HistoryEntryViewModel entry)
     {
-        // The library page owns the reader/details windows. Bring it up first so
-        // its handlers exist even when the user has never visited that tab.
-        OpenLibraryRequested?.Invoke(this, EventArgs.Empty);
-
-        if (entry.Item.PageCount == 0)
-        {
-            _library.OpenDetailsCommand.Execute(entry.Item);
-            return;
-        }
-
-        _library.OpenGalleryCommand.Execute(entry.Item);
+        if (entry.Item is { PageCount: > 0 } item && Directory.Exists(item.FolderPath)) _library.OpenGalleryCommand.Execute(item);
+        else if (entry.Work.Gid is long gid && entry.Work.Token.Length > 0)
+            OnlineRequested?.Invoke(this, new EhGallerySummary { Gid = gid, Token = entry.Work.Token, Title = entry.Title, ThumbUrl = entry.Work.ThumbnailUrl, Pages = entry.PageCount });
+        else { StatusText = "原资料库不可用，请连接磁盘后刷新"; OnPropertyChanged(nameof(StatusText)); }
     }
-
     internal void Remove(HistoryEntryViewModel entry)
     {
-        _services.Progress.Clear(entry.Item.WorkId);
-        _services.Progress.Clear(entry.Item.StableId);
-        entry.Item.ApplyProgress(null);
-        _services.Progress.Save(out _);
+        _services.Progress.HideFromHistory(entry.Work.WorkId);
+        if (entry.Item is { } item && item.StableId != item.WorkId) _services.Progress.HideFromHistory(item.StableId);
+        _services.TrySaveProgress(out _);
         Reload();
     }
-
     private void OnLibraryChanged(object? sender, EventArgs e) => Reload();
-
     public void Dispose()
     {
-        if (_disposed) return;
         _disposed = true;
         _library.LocalIndexChanged -= OnLibraryChanged;
         _library.GalleryListRebalanced -= OnLibraryChanged;
     }
 }
 
-/// <summary>One row of the local reading history.</summary>
 public sealed partial class HistoryEntryViewModel
 {
     private readonly HistoryViewModel _owner;
-
-    public HistoryEntryViewModel(GalleryItemViewModel item, HistoryViewModel owner)
+    private readonly ReadingProgress _progress;
+    public HistoryEntryViewModel(GalleryItemViewModel? item, WorkRecord work, ReadingProgress progress, AppServices services, HistoryViewModel owner)
     {
         Item = item;
+        Work = work;
+        _progress = progress;
         _owner = owner;
+        CoverRequest = item?.CoverRequest ?? services.OnlineImages.CreateThumbnailRequest(work.ThumbnailUrl);
     }
-
-    public GalleryItemViewModel Item { get; }
-
-    [RelayCommand]
-    private void Open() => _owner.Open(this);
-
-    [RelayCommand]
-    private void Remove() => _owner.Remove(this);
-
-    public string Title => Item.Title;
-    public IImageRequest CoverRequest => Item.CoverRequest;
-    public int PageCount => Item.PageCount;
-    public string PageCountText => Item.PageCountText;
-    public string ProgressText => Item.ProgressText;
-    public double ProgressFraction => Item.ProgressFraction;
-    public string ProgressDetail => Item.ProgressDetail;
-    public string LastReadText => FormatLastRead(Item.LastReadUtc);
-    public string SourceText => Item.HasSourceName ? Item.SourceName : "默认数据源";
-
-    public string MetaText
-    {
-        get
-        {
-            // ProgressDetail already carries the page count; the source is only
-            // interesting when the same work exists in several of them.
-            var parts = new List<string>(2) { ProgressDetail };
-            if (Item.SourceCount > 1) parts.Add(SourceText);
-            return string.Join(" · ", parts);
-        }
-    }
-
+    public GalleryItemViewModel? Item { get; }
+    public WorkRecord Work { get; }
+    [RelayCommand] private void Open() => _owner.Open(this);
+    [RelayCommand] private void Remove() => _owner.Remove(this);
+    public string Title => Work.Title;
+    public IImageRequest CoverRequest { get; }
+    public int PageCount => Item?.PageCount ?? Work.PageCount;
+    public string PageCountText => $"{PageCount} 页";
+    public string ProgressText => _progress.Completed ? "已读完" : $"第 {_progress.PageNumber} 页";
+    public double ProgressFraction => _progress.Completed ? 1 : Math.Clamp(_progress.PageNumber / (double)Math.Max(1, PageCount), 0, 1);
+    public string ProgressDetail => ProgressText + $" / 共 {PageCount} 页";
+    public DateTime LastReadUtc => _progress.LastReadUtc;
+    public string LastReadText => FormatLastRead(LastReadUtc);
+    public string SourceText => Item?.SourceName ?? (Work.Token.Length > 0 ? "在线" : "原资料库不可用");
+    public string MetaText => ProgressDetail + " · " + SourceText;
     public string TooltipText => Title + "\n" + MetaText + "\n最近阅读：" + LastReadText;
-
     private static string FormatLastRead(DateTime? utc)
     {
         if (utc is null) return "未记录";

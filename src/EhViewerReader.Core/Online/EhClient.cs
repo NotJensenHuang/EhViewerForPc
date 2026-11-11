@@ -1,8 +1,12 @@
 using System.Net;
+using System.Buffers;
+using EhViewerReader.Core.Format;
 using System.Text;
 using EhViewerReader.Core.Models;
 
 namespace EhViewerReader.Core.Online;
+
+public sealed record EhResolvedImage(string Url, bool IsOriginal);
 
 public sealed class EhException : Exception
 {
@@ -30,8 +34,9 @@ public sealed class EhClient : IDisposable
     private readonly AppSettings _settings;
     private readonly Action<string>? _log;
     private readonly EhSession _session = new();
+    private readonly SemaphoreSlim _viewerResolutionGate = new(1, 1);
     private readonly SemaphoreSlim _viewerGate = new(1, 1);
-    private readonly Dictionary<string, string> _imageUrlCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, EhResolvedImage> _imageUrlCache = new(StringComparer.Ordinal);
     private readonly object _cacheGate = new();
 
     private HttpClient _web;
@@ -49,6 +54,7 @@ public sealed class EhClient : IDisposable
     }
 
     public EhSession Session => _session;
+    public int ResampledWidth => _settings.ResampledWidth;
 
     public EhSite Site => _settings.Account.Site;
 
@@ -713,73 +719,73 @@ public sealed class EhClient : IDisposable
 
     /// <summary>
     /// Resolves the direct image URL of one viewer page. <paramref name="original"/>
-    /// follows the site's "nl" link to the full-size file; otherwise the
+    /// follows the site's fullimg.php link to the full-size file; otherwise the
     /// resampled image is returned.
     /// </summary>
-    public async Task<string> GetImageUrlAsync(EhPageRef page, bool original, CancellationToken cancellationToken)
+    public async Task<string> GetImageUrlAsync(EhPageRef page, bool original, CancellationToken cancellationToken) =>
+        (await ResolveImageAsync(page, original, cancellationToken).ConfigureAwait(false)).Url;
+
+    public async Task<EhResolvedImage> ResolveImageAsync(EhPageRef page, bool original, CancellationToken cancellationToken, int? resampledWidth = null)
     {
         string pageUrl = page.PageUrl.Length > 0 ? page.PageUrl : EhUrls.ImagePage(Site, page);
-        string key = pageUrl + (original ? "|orig" : "|res");
-        lock (_cacheGate)
+        int width = resampledWidth ?? ResampledWidth;
+        string key = pageUrl + (original ? "|orig" : "|res") + "|" + width;
+        lock (_cacheGate) { if (_imageUrlCache.TryGetValue(key, out var cached)) return cached; }
+        string html;
+        await _viewerResolutionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            if (_imageUrlCache.TryGetValue(key, out string? cached)) return cached;
+            await ThrottleViewerAsync(cancellationToken).ConfigureAwait(false);
+            _session.SetImageSize(width);
+            html = await GetStringAsync(pageUrl, null, cancellationToken).ConfigureAwait(false);
         }
-
-        await ThrottleViewerAsync(cancellationToken).ConfigureAwait(false);
-        string html = await GetStringAsync(pageUrl, null, cancellationToken).ConfigureAwait(false);
-        if (!EhParser.TryParseImagePage(html, out string imageUrl, out string? nlKey, out string? error))
-        {
+        finally { _viewerResolutionGate.Release(); }
+        if (!EhParser.TryParseImagePage(html, out string imageUrl, out _, out string? error))
             throw new EhException(error ?? "无法解析图片页");
-        }
-
-        if (original && nlKey is not null)
+        if (imageUrl.Contains("/509", StringComparison.OrdinalIgnoreCase)) throw new EhException("站点图片配额不足，请稍后重试");
+        bool actualOriginal = false;
+        if (original)
         {
-            string? full = await ResolveFullImageAsync(pageUrl, nlKey, cancellationToken).ConfigureAwait(false);
-            if (full is not null) imageUrl = full;
+            HtmlNode document = HtmlLite.Parse(html);
+            string? link = document.Descendants("a").Select(n => n.GetAttribute("href"))
+                .FirstOrDefault(h => h.Contains("fullimg.php", StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(link) && Uri.TryCreate(new Uri(pageUrl), link, out var fullUri))
+            {
+                string? full = await ResolveFullImageAsync(fullUri.ToString(), pageUrl, cancellationToken).ConfigureAwait(false);
+                if (full is not null) { imageUrl = full; actualOriginal = true; }
+            }
         }
-
+        var resolved = new EhResolvedImage(imageUrl, actualOriginal);
         lock (_cacheGate)
         {
-            if (_imageUrlCache.Count > 512) _imageUrlCache.Clear();
-            _imageUrlCache[key] = imageUrl;
+            if (_imageUrlCache.Count >= 512) _imageUrlCache.Clear();
+            _imageUrlCache[key] = resolved;
         }
-
-        return imageUrl;
+        return resolved;
     }
 
-    /// <summary>
-    /// Asks the site for the full-size file. <paramref name="nlKey"/> comes from
-    /// the viewer page's <c>onerror="nl('...')"</c> hook; the returned page then
-    /// points <c>img#img</c> at the original image.
-    /// </summary>
-    private async Task<string?> ResolveFullImageAsync(string pageUrl, string nlKey, CancellationToken cancellationToken)
+    private async Task<string?> ResolveFullImageAsync(string originalUrl, string pageUrl, CancellationToken cancellationToken)
     {
         try
         {
-            string separator = pageUrl.Contains('?') ? "&" : "?";
-            string absolute = pageUrl + separator + "nl=" + Uri.EscapeDataString(nlKey);
-            using var request = new HttpRequestMessage(HttpMethod.Get, absolute);
+            using var request = new HttpRequestMessage(HttpMethod.Get, originalUrl);
             request.Headers.Referrer = new Uri(pageUrl);
-            using HttpResponseMessage response = await _web
-                .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
-                .ConfigureAwait(false);
-
-            Uri? final = response.RequestMessage?.RequestUri;
-            if (final is not null && LooksLikeImage(final.ToString()))
-            {
-                return final.ToString();
-            }
-
-            string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-            if (body.Length == 0) return null;
-            HtmlNode document = HtmlLite.Parse(body);
-            HtmlNode? image = document.FirstDescendantById("img");
-            string src = image?.GetAttribute("src") ?? string.Empty;
-            return src.Length > 0 ? src : null;
+            // Stop after headers: resolving an original must never buffer its pixels.
+            using HttpResponseMessage response = await _web.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location is { } location)
+                return new Uri(new Uri(originalUrl), location).ToString();
+            if (!response.IsSuccessStatusCode) return null;
+            string final = response.RequestMessage?.RequestUri?.ToString() ?? originalUrl;
+            if (LooksLikeImage(final) || response.Content.Headers.ContentType?.MediaType?.StartsWith("image/", StringComparison.Ordinal) == true)
+                return final;
+            string html = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            string? src = HtmlLite.Parse(html).FirstDescendantById("img")?.GetAttribute("src");
+            return string.IsNullOrEmpty(src) ? null : new Uri(new Uri(originalUrl), src).ToString();
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex) when (ex is EhException or HttpRequestException or TaskCanceledException)
         {
-            _log?.Invoke("Original image resolution failed: " + ex.Message);
+            _log?.Invoke("Original image unavailable; using resampled image: " + ex.Message);
             return null;
         }
     }
@@ -816,7 +822,7 @@ public sealed class EhClient : IDisposable
 
         request.Headers.TryAddWithoutValidation(
             "Accept",
-            imageAccept ? "image/avif,image/webp,image/apng,image/*,*/*;q=0.8" : "*/*");
+            imageAccept ? "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8" : "*/*");
 
         using HttpResponseMessage response = await client
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
@@ -827,22 +833,37 @@ public sealed class EhClient : IDisposable
             throw new EhException($"下载失败：HTTP {(int)response.StatusCode}");
         }
 
-        string tempPath = targetPath + ".part";
-        await using (Stream source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
-        await using (var target = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
+        string tempPath = targetPath + "." + Guid.NewGuid().ToString("N") + ".part";
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
+        try
         {
-            byte[] buffer = new byte[81920];
             long total = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+            long lastReport = Environment.TickCount64;
+            await using (Stream source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
+            await using (var target = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
             {
-                await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
-                total += read;
-                progress?.Report(total);
+                int read;
+                while ((read = await source.ReadAsync(buffer.AsMemory(0, 64 * 1024), cancellationToken).ConfigureAwait(false)) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+                    total += read;
+                    long now = Environment.TickCount64;
+                    if (now - lastReport >= 100) { progress?.Report(total); lastReport = now; }
+                }
             }
+            progress?.Report(total);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (response.Content.Headers.ContentLength is long expected && total != expected)
+                throw new IOException("下载数据不完整，请重试");
+            if (total == 0 || (imageAccept && !ImageSignature.IsValidFile(tempPath)))
+                throw new EhException("下载结果不是完整的受支持图片，请重试");
+            File.Move(tempPath, targetPath, overwrite: true);
         }
-
-        File.Move(tempPath, targetPath, overwrite: true);
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+            try { File.Delete(tempPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
     }
 
     public async Task<byte[]> DownloadBytesAsync(string url, string referer, CancellationToken cancellationToken)

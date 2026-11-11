@@ -4,30 +4,28 @@
              x:Class="EhViewerReader.Views.SettingsPage"
              x:DataType="vm:SettingsViewModel">
   <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="22,16,22,10">
+    <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,10">
       <StackPanel Spacing="2">
         <TextBlock Text="设置" Classes="h1" />
         <TextBlock Classes="caption" Text="账号、网络代理、下载引擎与阅读器默认值" />
       </StackPanel>
-      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
         <Button Content="打开数据目录" Click="OnOpenDataDirectory" />
         <Button Content="清除扫描缓存" Click="OnClearCache" />
-        <Button Classes="primary" Content="保存全部设置" Click="OnApplyAll" />
+        <Button IsEnabled="{Binding !IsSaving}" Classes="primary" Content="{Binding SaveLabel}" Click="OnApplyAll" />
       </StackPanel>
     </Grid>
 
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-      <StackPanel Margin="22,0,22,24" Spacing="14">
-
-        <!-- Account -->
-        <Border Classes="tile">
+    <TabControl IsEnabled="{Binding !IsSaving}" x:Name="SettingsTabs" Grid.Row="1" Margin="16,0,16,12">
+      <TabItem><TabItem.Header><TextBlock Text="账号" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+<Border Classes="tile">
           <StackPanel Spacing="12">
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Text="账号" Classes="h2" />
               <TextBlock Grid.Column="1" Classes="caption" Text="{Binding AccountUserText}" />
             </Grid>
 
-            <Border Background="{DynamicResource AppBgAltBrush}" CornerRadius="10" Padding="14,12">
+            <Border IsVisible="{Binding !IsSignedIn}" Background="{DynamicResource AppBgAltBrush}" CornerRadius="10" Padding="14,12">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
                 <StackPanel Spacing="4">
                   <TextBlock Text="网页登录（推荐）" FontWeight="Bold" />
@@ -39,6 +37,10 @@
               </Grid>
             </Border>
 
+            <Grid IsVisible="{Binding IsSignedIn}" ColumnDefinitions="*,Auto">
+              <StackPanel Spacing="4"><TextBlock Text="账号已登录" FontWeight="Bold" /><TextBlock Classes="caption" Text="登录状态已保存，可直接浏览、收藏和下载。" /></StackPanel>
+              <Button Grid.Column="1" Content="更换账号" Click="OnWebLogin" VerticalAlignment="Center" />
+            </Grid>
             <Grid ColumnDefinitions="Auto,10,Auto,10,*,10,Auto" ColumnSpacing="0">
               <TextBlock Text="站点" Classes="secondary" VerticalAlignment="Center" />
               <ComboBox Grid.Column="2" Width="132" ItemsSource="{Binding SiteLabels}" SelectedIndex="{Binding SiteIndex}" />
@@ -49,12 +51,12 @@
             </Grid>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="退出登录" Command="{Binding SignOutCommand}" />
-              <Button Content="检测 ExHentai" Command="{Binding CheckExAccessCommand}" />
+              <Button IsVisible="{Binding IsSignedIn}" Content="退出登录" Command="{Binding SignOutCommand}" />
+              <Button IsEnabled="{Binding IsSignedIn}" Content="检测 ExHentai" Command="{Binding CheckExAccessCommand}" />
               <Button Content="注册账号" Classes="ghost" Command="{Binding OpenRegisterPageCommand}" />
             </StackPanel>
 
-            <Expander Header="密码登录（站点常以 Cloudflare 拦截，失败会自动转为网页登录）">
+            <Expander IsVisible="{Binding !IsSignedIn}" Header="密码登录（站点常以 Cloudflare 拦截，失败会自动转为网页登录）">
               <StackPanel Spacing="8" Margin="0,8,0,0">
                 <Grid ColumnDefinitions="*,10,*" ColumnSpacing="0">
                   <TextBox Grid.Column="0" Text="{Binding UserNameInput}" PlaceholderText="用户名" />
@@ -64,7 +66,7 @@
               </StackPanel>
             </Expander>
 
-            <Expander Header="手动粘贴 Cookie（无法使用浏览器时）">
+            <Expander IsVisible="{Binding !IsSignedIn}" Header="手动粘贴 Cookie（无法使用浏览器时）">
               <StackPanel Spacing="8" Margin="0,8,0,0">
                 <TextBlock Classes="caption" TextWrapping="Wrap"
                            Text="需要 ipb_member_id 与 ipb_pass_hash；也接受整段 Cookie 头、DevTools 的 Copy as cURL 或 JSON。导入后会立即向站点验证。" />
@@ -77,13 +79,13 @@
               </StackPanel>
             </Expander>
 
-            <TextBlock Text="{Binding AccountStatus}" Classes="caption" Foreground="{DynamicResource AppAccentBrush}"
+            <TextBlock Text="{Binding AccountStatus}" Classes="caption"
                        TextWrapping="Wrap" />
           </StackPanel>
         </Border>
-
-        <!-- Network -->
-        <Border Classes="tile">
+      </StackPanel></ScrollViewer></TabItem>
+      <TabItem><TabItem.Header><TextBlock Text="网络" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+<Border Classes="tile">
           <StackPanel Spacing="12">
             <TextBlock Text="网络与代理" Classes="h2" />
 
@@ -107,7 +109,7 @@
             </Grid>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="应用网络设置" Command="{Binding ApplyNetworkCommand}" />
+
               <Button Content="测试连接" Command="{Binding TestNetworkCommand}" />
               <TextBlock Text="{Binding NetworkStatus}" Classes="caption" VerticalAlignment="Center" />
             </StackPanel>
@@ -115,9 +117,9 @@
                        Text="提示：镜像站/代理仅影响应用的 HTTP 请求；图片主机可单独直连以节省代理流量。" />
           </StackPanel>
         </Border>
-
-        <!-- Online browsing -->
-        <Border Classes="tile">
+      </StackPanel></ScrollViewer></TabItem>
+      <TabItem><TabItem.Header><TextBlock Text="浏览" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+<Border Classes="tile">
           <StackPanel Spacing="12">
             <TextBlock Text="在线浏览" Classes="h2" />
 
@@ -133,6 +135,7 @@
                     </DataTemplate>
                   </ComboBox.ItemTemplate>
                 </ComboBox>
+                <ComboBox AutomationProperties.Name="压缩图片宽度" Width="136" ItemsSource="{Binding ResampledWidths}" SelectedIndex="{Binding ResampledWidthIndex}" />
                 <Button Content="站点图片设置" Classes="ghost" Command="{Binding OpenSiteImageSettingsCommand}"
                         VerticalAlignment="Center" ToolTip.Tip="在站点 uconfig.php 中调整压缩图宽度（780/980/1280/1600/2400）" />
               </StackPanel>
@@ -198,11 +201,11 @@
             </ItemsControl>
           </StackPanel>
         </Border>
-
-        <!-- Downloads -->
-        <Border Classes="tile">
+      </StackPanel></ScrollViewer></TabItem>
+      <TabItem><TabItem.Header><TextBlock Text="下载" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+<Border Classes="tile">
           <StackPanel Spacing="12">
-            <TextBlock Text="下载（独立数据源）" Classes="h2" />
+            <TextBlock Text="下载目录与本地库" Classes="h2" />
 
             <Grid ColumnDefinitions="*,10,Auto,8,Auto" ColumnSpacing="0">
               <TextBox Grid.Column="0" Text="{Binding DownloadRoot}" PlaceholderText="下载根目录" />
@@ -210,6 +213,11 @@
               <Button Grid.Column="4" Content="打开目录" Command="{Binding OpenDownloadFolderCommand}" />
             </Grid>
 
+            <StackPanel Spacing="6">
+              <TextBlock Text="变更目录时" Classes="secondary" />
+              <ComboBox AutomationProperties.Name="下载目录变更方式" ItemsSource="{Binding DownloadDirectoryModes}" SelectedIndex="{Binding DownloadDirectoryMode}" HorizontalAlignment="Stretch" />
+              <TextBlock Classes="caption" TextWrapping="Wrap" Text="{Binding DownloadDirectoryHint}" />
+            </StackPanel>
             <WrapPanel Orientation="Horizontal">
               <CheckBox Content="注册为本地库数据源" IsChecked="{Binding DownloadAddAsSource}" Margin="0,0,18,0" />
               <CheckBox Content="写入 .thumb 封面" IsChecked="{Binding WriteThumb}" Margin="0,0,18,0" />
@@ -239,7 +247,7 @@
             </Grid>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Content="保存下载设置" Command="{Binding ApplyDownloadCommand}" />
+
               <TextBlock Text="{Binding DownloadStatus}" Classes="caption" VerticalAlignment="Center" />
             </StackPanel>
 
@@ -254,38 +262,26 @@
             </Grid>
           </StackPanel>
         </Border>
-
-        <!-- Reader -->
-        <Border Classes="tile">
+      </StackPanel></ScrollViewer></TabItem>
+      <TabItem><TabItem.Header><TextBlock Text="阅读" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+<Border Classes="tile">
           <StackPanel Spacing="12">
             <TextBlock Text="阅读器" Classes="h2" />
-            <Grid ColumnDefinitions="Auto,10,140,10,Auto,10,140,10,Auto,10,140" ColumnSpacing="0">
-              <TextBlock Text="主题" Classes="secondary" VerticalAlignment="Center" />
-              <ComboBox Grid.Column="2" ItemsSource="{Binding ThemeLabels}" SelectedIndex="{Binding ThemeIndex}" />
-              <TextBlock Grid.Column="4" Text="默认模式" Classes="secondary" VerticalAlignment="Center" />
-              <ComboBox Grid.Column="6" ItemsSource="{Binding ModeLabels}" SelectedIndex="{Binding ModeIndex}" />
-              <TextBlock Grid.Column="8" Text="背景" Classes="secondary" VerticalAlignment="Center" />
-              <ComboBox Grid.Column="10" ItemsSource="{Binding BackgroundLabels}" SelectedIndex="{Binding BackgroundIndex}" />
-            </Grid>
-
-            <Grid ColumnDefinitions="Auto,10,140,10,Auto" ColumnSpacing="0">
-              <TextBlock Text="适应方式" Classes="secondary" VerticalAlignment="Center" />
-              <ComboBox Grid.Column="2" ItemsSource="{Binding FitLabels}" SelectedIndex="{Binding FitIndex}" />
-              <CheckBox Grid.Column="4" Content="日漫方向（右→左）" IsChecked="{Binding RightToLeft}" VerticalAlignment="Center" />
-            </Grid>
-
-            <Grid ColumnDefinitions="Auto,10,220,10,Auto,10,Auto,10,220" ColumnSpacing="0">
-              <TextBlock Text="解码上限" Classes="secondary" VerticalAlignment="Center" />
-              <Slider Grid.Column="2" Minimum="4" Maximum="96" Value="{Binding MaxMegapixels}" />
-              <TextBlock Grid.Column="4" Classes="caption" Text="{Binding MaxMegapixelsLabel}" VerticalAlignment="Center" MinWidth="70" />
-              <TextBlock Grid.Column="6" Text="封面宽度" Classes="secondary" VerticalAlignment="Center" />
-              <Slider Grid.Column="8" Minimum="160" Maximum="1024" Value="{Binding CoverDecodeWidth}" />
-            </Grid>
+            <WrapPanel Orientation="Horizontal">
+              <StackPanel Width="150" Spacing="4" Margin="0,0,12,12"><TextBlock Text="主题" /><ComboBox ItemsSource="{Binding ThemeLabels}" SelectedIndex="{Binding ThemeIndex}" /></StackPanel>
+              <StackPanel Width="150" Spacing="4" Margin="0,0,12,12"><TextBlock Text="默认模式" /><ComboBox ItemsSource="{Binding ModeLabels}" SelectedIndex="{Binding ModeIndex}" /></StackPanel>
+              <StackPanel Width="150" Spacing="4" Margin="0,0,12,12"><TextBlock Text="背景" /><ComboBox ItemsSource="{Binding BackgroundLabels}" SelectedIndex="{Binding BackgroundIndex}" /></StackPanel>
+              <StackPanel Width="150" Spacing="4" Margin="0,0,12,12"><TextBlock Text="适应方式" /><ComboBox ItemsSource="{Binding FitLabels}" SelectedIndex="{Binding FitIndex}" /></StackPanel>
+            </WrapPanel>
+            <CheckBox Content="日漫方向（右→左）" IsChecked="{Binding RightToLeft}" />
+            <StackPanel Spacing="4"><TextBlock Text="解码像素上限" /><Slider Minimum="4" Maximum="96" Value="{Binding MaxMegapixels}" /><TextBlock Text="{Binding MaxMegapixelsLabel}" /></StackPanel>
+            <StackPanel Spacing="4"><TextBlock Text="图像内存预算（包含解码缓冲、预读与动画）" TextWrapping="Wrap" /><Slider Minimum="64" Maximum="1536" Value="{Binding PageCacheMegabytes}" /><TextBlock Text="{Binding PageCacheLabel}" /></StackPanel>
+            <StackPanel Spacing="4"><TextBlock Text="封面解码宽度" /><Slider Minimum="160" Maximum="1024" Value="{Binding CoverDecodeWidth}" /><TextBlock Text="{Binding CoverDecodeLabel}" /></StackPanel>
           </StackPanel>
         </Border>
-
-        <!-- Sources -->
-        <Border Classes="tile">
+      </StackPanel></ScrollViewer></TabItem>
+      <TabItem><TabItem.Header><TextBlock Text="资料库" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+<Border Classes="tile">
           <StackPanel Spacing="10">
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Text="本地数据源" Classes="h2" />
@@ -314,9 +310,9 @@
             </ItemsControl>
           </StackPanel>
         </Border>
-
-        <!-- About -->
-        <Border Classes="tile">
+      </StackPanel></ScrollViewer></TabItem>
+      <TabItem><TabItem.Header><TextBlock Text="维护" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+<Border Classes="tile">
           <StackPanel Spacing="6">
             <TextBlock Text="关于" Classes="h2" />
             <TextBlock Classes="secondary" Text="{Binding DataDirectory, StringFormat='数据目录：{0}'}" TextWrapping="Wrap" />
@@ -328,13 +324,17 @@
                        Text="在线功能基于 E-Hentai / ExHentai 网页接口；请遵守站点条款，仅下载你有权访问的内容。应用的离线资料库仍保持只读。" />
           </StackPanel>
         </Border>
-      </StackPanel>
-    </ScrollViewer>
-
+      </StackPanel></ScrollViewer></TabItem>
+    </TabControl>
     <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0">
-      <TextBlock Classes="muted" FontSize="11"
-                 Text="更改网络设置后需要「应用网络设置」才会重建连接；下载目录变更对进行中的任务不生效。" />
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="4"><TextBlock Classes="muted" FontSize="12" Text="修改后点击上方保存；是否搬迁文件取决于所选的目录变更方式。" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding DownloadStatus}" Classes="caption" TextWrapping="Wrap" />
+          <ProgressBar IsVisible="{Binding IsSaving}" IsIndeterminate="True" Height="3" />
+        </StackPanel>
+        <Button Grid.Column="1" IsVisible="{Binding CanCancelMove}" Content="取消迁移" Command="{Binding CancelMoveCommand}" VerticalAlignment="Center" />
+      </Grid>
     </Border>
   </Grid>
 </UserControl>

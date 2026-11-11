@@ -1,0 +1,105 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerReader.ViewModels"
+        xmlns:controls="using:EhViewerReader.Controls"
+        mc:Ignorable="d" d:DesignWidth="820" d:DesignHeight="600"
+        x:Class="EhViewerReader.Views.GalleryDetailsPage"
+        x:DataType="vm:GalleryItemViewModel"
+        Background="{DynamicResource AppBgBrush}">
+  <Grid RowDefinitions="*,Auto" Background="{DynamicResource AppBgBrush}">
+    <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled">
+      <Border Padding="22,20">
+      <controls:AdaptiveGrid ColumnDefinitions="260,22,*">
+        <Border Width="260" Height="346" CornerRadius="10" ClipToBounds="True" VerticalAlignment="Top"
+                Background="{DynamicResource AppBgAltBrush}">
+          <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="Uniform" />
+        </Border>
+
+        <StackPanel Grid.Column="2" Spacing="10">
+          <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="Bold" TextWrapping="Wrap" />
+
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Border Background="{DynamicResource AppAccentSoftBrush}" CornerRadius="999" Padding="10,3"
+                    IsVisible="{Binding HasLanguages}">
+              <TextBlock Text="{Binding LanguageText}" FontSize="12" Foreground="{DynamicResource AppAccentBrush}" />
+            </Border>
+            <Border Background="{DynamicResource AppSurfaceBrush}" CornerRadius="999" Padding="10,3">
+              <TextBlock Text="{Binding PageCountText}" FontSize="12" Classes="secondary" />
+            </Border>
+            <Border Background="{DynamicResource AppSurfaceBrush}" CornerRadius="999" Padding="10,3"
+                    IsVisible="{Binding IsIncomplete}">
+              <TextBlock Text="{Binding IncompleteText}" FontSize="12" Foreground="{DynamicResource AppWarningBrush}" />
+            </Border>
+          </StackPanel>
+
+          <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="7" Margin="0,6,0,0">
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="文件夹" Classes="muted" FontSize="12" />
+            <TextBlock HorizontalAlignment="Left" Grid.Row="0" Grid.Column="1" Text="{Binding FolderName}" Classes="secondary" FontSize="12"
+                       MaxWidth="440" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding FolderPath}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="GID" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding GidText}" Classes="secondary" FontSize="12"
+                       FontFamily="{DynamicResource AppMonoFont}" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="页数" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="2" Grid.Column="1" Classes="secondary" FontSize="12"
+                       Text="{Binding PageCount, StringFormat='实际 {0}'}" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="预期页数" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ExpectedPagesText}" Classes="secondary" FontSize="12" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="缺页" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding MissingText}" Classes="secondary" FontSize="12"
+                       TextWrapping="Wrap" />
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="扩展名" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding ExtensionSummary}" Classes="secondary" FontSize="12" />
+
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="0 字节文件" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding Info.ZeroByteFiles}" Classes="secondary" FontSize="12" />
+
+            <TextBlock Grid.Row="7" Grid.Column="0" Text="封面来源" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding CoverSourceText}" Classes="secondary" FontSize="12" />
+
+            <TextBlock Grid.Row="8" Grid.Column="0" Text="解析错误" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding HeaderErrorText}" Classes="secondary" FontSize="12"
+                       TextWrapping="Wrap" />
+
+            <TextBlock Grid.Row="9" Grid.Column="0" Text="最后修改" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="9" Grid.Column="1" Text="{Binding LastWriteText}" Classes="secondary" FontSize="12" />
+
+            <TextBlock Grid.Row="10" Grid.Column="0" Text="阅读进度" Classes="muted" FontSize="12" />
+            <TextBlock Grid.Row="10" Grid.Column="1" Text="{Binding ProgressDetail}" Classes="secondary" FontSize="12" />
+
+            <TextBlock Grid.Row="11" Grid.Column="0" Text="数据源" Classes="muted" FontSize="12" />
+            <TextBlock HorizontalAlignment="Left" Grid.Row="11" Grid.Column="1" Text="{Binding SourceName}" Classes="secondary" FontSize="12"
+                       MaxWidth="440" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+
+            <TextBlock Grid.Row="12" Grid.Column="0" Text="版本" Classes="muted" FontSize="12" />
+            <StackPanel Grid.Row="12" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="{Binding VersionText}" Classes="secondary" FontSize="12" />
+              <TextBlock Text="{Binding VersionSummary}" Classes="muted" FontSize="12"
+                         IsVisible="{Binding HasMultipleVersions}" />
+            </StackPanel>
+          </Grid>
+
+          <TextBlock Text="{Binding Details}" Classes="caption" TextWrapping="Wrap" Margin="0,4,0,0" />
+        </StackPanel>
+      </controls:AdaptiveGrid>
+      </Border>
+    </ScrollViewer>
+
+    <Border Grid.Row="1" BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" Padding="20,14">
+      <controls:AdaptiveGrid ColumnDefinitions="Auto,8,Auto,8,Auto,*,Auto">
+        <Button Grid.Column="0" Content="开始阅读" Classes="primary" Click="OnRead" />
+        <Button Grid.Column="2" Content="打开文件夹" Click="OnOpenFolder" />
+        <Button Grid.Column="4" Content="{Binding FavoriteText}" Click="OnToggleFavorite" />
+        <Button Grid.Column="5" Content="清除进度" HorizontalAlignment="Left" Margin="8,0,0,0" Click="OnClearProgress" />
+        <Button Grid.Column="6" Content="关闭" Click="OnClose" />
+      </controls:AdaptiveGrid>
+    </Border>
+  </Grid>
+</UserControl>

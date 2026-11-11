@@ -4,25 +4,28 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using EhViewerReader.Controls;
+using EhViewerReader.Services;
 using EhViewerReader.Core.Models;
 using EhViewerReader.ViewModels;
 
 namespace EhViewerReader.Views;
 
-public partial class ReaderWindow : Window
+public partial class ReaderPage : DocumentPage
 {
     private readonly ReaderViewModel _viewModel;
     private readonly DispatcherTimer _resizeTimer;
     private int _scrollRequestSequence;
     private int _horizontalScrollSequence;
+    private bool _initialized;
+    private bool _disposed;
 
-    public ReaderWindow(ReaderViewModel viewModel)
+    public ReaderPage(ReaderViewModel viewModel)
     {
         InitializeComponent();
-        Icon = AppIcons.Window;
         Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
         _viewModel = viewModel;
         DataContext = viewModel;
+        Focusable = true;
 
         _resizeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _resizeTimer.Tick += OnResizeSettled;
@@ -30,16 +33,28 @@ public partial class ReaderWindow : Window
         viewModel.ScrollToRequested += OnScrollToRequested;
         viewModel.HorizontalScrollToRequested += OnHorizontalScrollToRequested;
         Loaded += OnLoaded;
-        Closing += OnClosing;
+
         SizeChanged += OnWindowSizeChanged;
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
 
-        SingleView.Focus();
     }
 
     /// <summary>Stable identifier of the gallery being read; used to avoid two
     /// reader windows writing the same progress record.</summary>
     public string? GalleryId { get; init; }
+    public ReaderViewModel ViewModel => _viewModel;
+    public bool IsImmersive { get; private set; }
+    public event EventHandler<bool>? ImmersiveChanged;
+    private void OnToggleImmersive(object? sender, RoutedEventArgs e) => SetImmersive(!IsImmersive);
+    private void SetImmersive(bool value)
+    {
+        IsImmersive = value;
+        ReaderHeading.IsVisible = !value;
+        ImmersiveButton.Content = value ? "退出沉浸" : "沉浸模式";
+        ImmersiveButton.Classes.Set("active", value);
+        ImmersiveChanged?.Invoke(this, value);
+        FocusReader();
+    }
 
     /// <summary>Test hook: drives the wheel pipeline without a real pointer.</summary>
     internal bool SimulateWheelForTest(double deltaY) => SingleView.SimulateWheel(deltaY);
@@ -50,8 +65,9 @@ public partial class ReaderWindow : Window
         {
             UpdateContinuousWidth();
             UpdateContinuousHeight();
-            await _viewModel.InitializeAsync();
-            SingleView.Focus();
+            FocusReader();
+            if (!_initialized) { _initialized = true; await _viewModel.InitializeAsync(); }
+            if (!_disposed) FocusReader();
         }
         catch (Exception ex)
         {
@@ -62,11 +78,21 @@ public partial class ReaderWindow : Window
         }
     }
 
-    private void OnClosing(object? sender, WindowClosingEventArgs e)
+    private void FocusReader()
     {
+        if (_viewModel.IsSingleMode) SingleView.Focus();
+        else Focus();
+    }
+
+    public override void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
         _viewModel.ScrollToRequested -= OnScrollToRequested;
         _viewModel.HorizontalScrollToRequested -= OnHorizontalScrollToRequested;
+        _resizeTimer.Stop();
         _viewModel.Dispose();
+        AnimationFramePool.Clear();
     }
 
     private void OnWindowSizeChanged(object? sender, SizeChangedEventArgs e)
@@ -187,7 +213,7 @@ public partial class ReaderWindow : Window
             ? ReadingMode.Single
             : ReadingMode.Continuous);
         if (_viewModel.IsContinuousMode) UpdateContinuousWidth();
-        else SingleView.Focus();
+        FocusReader();
     }
 
     private async void OnDoubleMode(object? sender, RoutedEventArgs e)
@@ -196,7 +222,7 @@ public partial class ReaderWindow : Window
             ? ReadingMode.Single
             : ReadingMode.Double);
         if (_viewModel.IsHorizontalMode) UpdateContinuousHeight();
-        else SingleView.Focus();
+        FocusReader();
     }
 
     private void OnToggleDirection(object? sender, RoutedEventArgs e) => _viewModel.ToggleDirection();
@@ -220,6 +246,7 @@ public partial class ReaderWindow : Window
         switch (e.Key)
         {
             case Key.Escape:
+                if (IsImmersive) { SetImmersive(false); e.Handled = true; return; }
                 if (WindowState == WindowState.FullScreen)
                 {
                     WindowState = WindowState.Normal;
@@ -317,9 +344,9 @@ public partial class ReaderWindow : Window
                 ? ReadingMode.Double
                 : ReadingMode.Single;
         await _viewModel.SetModeAsync(target);
-        if (target == ReadingMode.Single) SingleView.Focus();
-        else if (target == ReadingMode.Continuous) UpdateContinuousWidth();
+        if (target == ReadingMode.Continuous) UpdateContinuousWidth();
         else UpdateContinuousHeight();
+        FocusReader();
     }
 
     private void ShowHelp()
@@ -344,27 +371,7 @@ public partial class ReaderWindow : Window
             ?            显示本帮助
             """;
 
-        var help = new Window
-        {
-            Title = "快捷键",
-            Width = 460,
-            Height = 460,
-            CanResize = false,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#0B0D10")),
-            Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#F2F4F8")),
-            Content = new ScrollViewer
-            {
-                Padding = new Thickness(20),
-                Content = new TextBlock
-                {
-                    Text = text,
-                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-                    LineHeight = 22,
-                },
-            },
-        };
-
-        help.ShowDialog(this);
+        var flyout = new Flyout { Content = new ScrollViewer { MaxHeight = 460, Content = new TextBlock { Text = text, TextWrapping = Avalonia.Media.TextWrapping.Wrap, Margin = new Thickness(16) } } };
+        flyout.ShowAt(this);
     }
 }

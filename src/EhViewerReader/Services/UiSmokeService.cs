@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media.Imaging;
@@ -20,7 +20,7 @@ namespace EhViewerReader.Services;
 /// </summary>
 public static class UiSmokeService
 {
-    public static async Task RunAsync(MainWindow window, MainViewModel viewModel, string? outputPath)
+    public static async Task<int> RunAsync(MainWindow window, MainViewModel viewModel, string? outputPath)
     {
         string output = string.IsNullOrWhiteSpace(outputPath)
             ? Path.Combine(Path.GetTempPath(), "EhReaderSmoke-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"))
@@ -29,6 +29,7 @@ public static class UiSmokeService
 
         var report = new Dictionary<string, object?>();
         var pageShots = new List<string>();
+        bool succeeded = true;
         var stopwatch = Stopwatch.StartNew();
         ReadingMode originalMode = viewModel.Services.Settings.DefaultReadingMode;
 
@@ -42,7 +43,7 @@ public static class UiSmokeService
         {
             report["error"] = error;
             await WriteReport(output, report);
-            return;
+            return 1;
         }
 
         await WaitUntilAsync(() => !viewModel.IsScanning && viewModel.Galleries.Count > 0, TimeSpan.FromSeconds(90));
@@ -145,12 +146,8 @@ public static class UiSmokeService
             // Reading progress must survive a copy switch: record one on the
             // first copy, then read it back through the second.
             var versionsVm = new VersionsViewModel(merged, viewModel.Services);
-            var versionsWindow = new VersionsWindow(versionsVm)
-            {
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                Position = new PixelPoint(70, 70),
-            };
-            versionsWindow.Show();
+            var versionsWindow = new VersionsPage(versionsVm);
+            window.ShowDiagnosticPage(versionsWindow);
             await Task.Delay(1200);
             SaveScreenshot(versionsWindow, Path.Combine(output, "versions.png"));
             report["versionsWindow"] = new
@@ -167,28 +164,29 @@ public static class UiSmokeService
         GalleryItemViewModel? item = viewModel.Galleries.FirstOrDefault(i => i.PageCount > 3);
         if (item is not null)
         {
-            var details = new GalleryDetailsWindow(item, viewModel.Services)
-            {
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                Position = new PixelPoint(60, 60),
-            };
-            details.Show();
+            var details = new GalleryDetailsPage(item, viewModel.Services);
+            window.ShowDiagnosticPage(details);
             await Task.Delay(1500);
             SaveScreenshot(details, Path.Combine(output, "details.png"));
             details.Close();
             await Task.Delay(200);
 
             var readerViewModel = new ReaderViewModel(viewModel.Services, item.Info);
-            var reader = new ReaderWindow(readerViewModel)
-            {
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                Position = new PixelPoint(40, 40),
-            };
-            reader.Show();
+            var reader = new ReaderPage(readerViewModel);
+            window.ShowDiagnosticPage(reader);
             await Task.Delay(1800);
             SaveScreenshot(reader, Path.Combine(output, "reader-single.png"));
             report["readerPage"] = readerViewModel.PageLabel;
             report["readerLayout"] = DescribeLayout(reader);
+            succeeded &= window.GetVisualDescendants().OfType<Button>().Count(b => b.IsEffectivelyVisible && b.Content?.ToString() == "← 返回") == 1 && window.OwnedWindows.Count == 0;
+            report["readerNavigation"] = new { backButtons = window.GetVisualDescendants().OfType<Button>().Count(b => b.IsEffectivelyVisible && b.Content?.ToString() == "← 返回"),
+                independentWindows = window.OwnedWindows.Count };
+            reader.FindControl<Button>("ImmersiveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            await Task.Delay(300);
+            succeeded &= reader.IsImmersive && !window.FindControl<Border>("NavigationRail")!.IsVisible;
+            report["immersive"] = new { reader.IsImmersive, railHidden = !window.FindControl<Border>("NavigationRail")!.IsVisible };
+            SaveScreenshot(window, Path.Combine(output, "reader-immersive.png"));
+            reader.FindControl<Button>("ImmersiveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
 
             readerViewModel.Step(1);
             await Task.Delay(500);
@@ -198,6 +196,14 @@ public static class UiSmokeService
             await Task.Delay(1200);
             SaveScreenshot(reader, Path.Combine(output, "reader-continuous.png"));
             report["continuousItems"] = readerViewModel.ContinuousItems.Count;
+            var measuredItems = readerViewModel.ContinuousItems;
+            readerViewModel.ToggleDirection();
+            readerViewModel.UpdateScrollOffset(readerViewModel.GetScrollOffsetForPage(4, 0), 100);
+            bool directionKeepsScrollSync = readerViewModel.CurrentPageNumber == 5;
+            readerViewModel.ToggleDirection();
+            readerViewModel.GoToIndex(1, scrollContinuous: true);
+            await Task.Delay(400);
+            report["continuousDirection"] = new { ok = directionKeepsScrollSync };
 
             // Horizontal continuous mode (ReadingMode.Double): pages side by
             // side at a common height; merged two-page images keep their width.
@@ -249,6 +255,19 @@ public static class UiSmokeService
                 stepMoved = Math.Abs(xAfter - xBefore) > 10,
             };
             SaveScreenshot(reader, Path.Combine(output, "reader-horizontal.png"));
+            if (StartupOptions.Current.ReaderRegression)
+            {
+                bool moved = Math.Abs(xAfter - xBefore) > 1 && readerViewModel.CurrentPageNumber == 3;
+                await readerViewModel.SetModeAsync(ReadingMode.Continuous);
+                await Task.Delay(500);
+                bool reused = ReferenceEquals(measuredItems, readerViewModel.ContinuousItems);
+                report["dimensionsReused"] = reused;
+                report["passed"] = moved && directionKeepsScrollSync && reused && succeeded;
+                reader.Close();
+                await WriteReport(output, report);
+                return moved && directionKeepsScrollSync && reused && succeeded ? 0 : 1;
+            }
+
 
             // Slider precision: a fractional slider position must land inside
             // the target page (5.5 → page 5, halfway), matching scroll pixels.
@@ -388,12 +407,8 @@ public static class UiSmokeService
             };
 
             var gifViewModel = new ReaderViewModel(viewModel.Services, gifInfo);
-            var gifReader = new ReaderWindow(gifViewModel)
-            {
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                Position = new PixelPoint(100, 100),
-            };
-            gifReader.Show();
+            var gifReader = new ReaderPage(gifViewModel);
+            window.ShowDiagnosticPage(gifReader);
             await Task.Delay(1200);
             // The reading mode is a persisted setting and may be horizontal;
             // animation playback is asserted on the single-page surface.
@@ -461,15 +476,10 @@ public static class UiSmokeService
             gifViewModel.Dispose();
         }
 
-        var settings = new SettingsWindow(new SettingsViewModel(viewModel.Services), viewModel)
-        {
-            WindowStartupLocation = WindowStartupLocation.Manual,
-            Position = new PixelPoint(80, 80),
-        };
-        settings.Show();
-        await Task.Delay(1500);
-        SaveScreenshot(settings, Path.Combine(output, "settings.png"));
-        settings.Close();
+        window.Shell?.Navigate("settings");
+        await Task.Delay(700);
+        SaveScreenshot(window, Path.Combine(output, "settings.png"));
+        window.Shell?.Navigate("library");
         await Task.Delay(200);
 
         // Reader window behaviour: must be non-modal (library stays usable) and
@@ -492,16 +502,16 @@ public static class UiSmokeService
                 viewModel.OpenGalleryCommand.Execute(target);
                 await Task.Delay(1600);
 
-                ReaderWindow? reader = window.OwnedWindows.OfType<ReaderWindow>().FirstOrDefault();
+                ReaderPage? reader = window.ActiveReader;
                 bool nonModal = reader is not null && window.IsEnabled;
-                string? readerPage = (reader?.DataContext as ReaderViewModel)?.PageLabel;
+                string? readerPage = reader?.ViewModel.PageLabel;
                 bool singleWindowPerGallery = false;
                 if (reader is not null)
                 {
                     // Opening the same gallery again must activate, not duplicate.
                     viewModel.OpenGalleryCommand.Execute(target);
                     await Task.Delay(700);
-                    singleWindowPerGallery = window.OwnedWindows.OfType<ReaderWindow>().Count() == 1;
+                    singleWindowPerGallery = ReferenceEquals(window.ActiveReader, reader);
                     reader.Close();
                 }
 
@@ -532,12 +542,8 @@ public static class UiSmokeService
         if (corrupt is not null)
         {
             var corruptViewModel = new ReaderViewModel(viewModel.Services, corrupt.Info);
-            var corruptWindow = new ReaderWindow(corruptViewModel)
-            {
-                WindowStartupLocation = WindowStartupLocation.Manual,
-                Position = new PixelPoint(80, 80),
-            };
-            corruptWindow.Show();
+            var corruptWindow = new ReaderPage(corruptViewModel);
+            window.ShowDiagnosticPage(corruptWindow);
             await Task.Delay(1200);
             // The default reading mode is a persisted setting and may be
             // horizontal; this regression is about single-page wheel turning.
@@ -626,6 +632,7 @@ public static class UiSmokeService
             }
             shell.Online.ShowAdvanced = false;
 
+            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } onlineSettingsTabs) onlineSettingsTabs.SelectedIndex = 2;
             // Online gallery detail (network dependent): validates the XAML and
             // the scrape → view model path. A failure is recorded, not fatal.
             if (shell.Online.Items.FirstOrDefault() is { } first)
@@ -633,12 +640,8 @@ public static class UiSmokeService
                 try
                 {
                     var detailViewModel = new OnlineGalleryViewModel(AppServices.Current, shell, first.Summary);
-                    var detailWindow = new OnlineGalleryWindow(detailViewModel)
-                    {
-                        WindowStartupLocation = WindowStartupLocation.Manual,
-                        Position = new PixelPoint(60, 60),
-                    };
-                    detailWindow.Show();
+                    var detailWindow = new OnlineGalleryPage(detailViewModel);
+                    window.ShowDiagnosticPage(detailWindow);
                     await Task.Delay(4000);
                     // The comment box can take focus and scroll the body; capture
                     // the header state instead.
@@ -690,11 +693,8 @@ public static class UiSmokeService
                     if (torrentDetails is not null)
                     {
                         var torrentViewModel = new TorrentViewModel(AppServices.Current, torrentDetails!);
-                        var torrentWindow = new TorrentWindow(torrentViewModel)
-                        {
-                            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                        };
-                        torrentWindow.Show();
+                        var torrentWindow = new TorrentPage(torrentViewModel);
+                        window.ShowDiagnosticPage(torrentWindow);
                         await Task.Delay(3000);
                         SaveScreenshot(torrentWindow, Path.Combine(output, "online-torrents.png"));
                         pageShots.Add("online-torrents.png");
@@ -710,11 +710,8 @@ public static class UiSmokeService
                     if (detailViewModel.Details is { } archiveDetails && archiveDetails.ArchiveUrl.Length > 0)
                     {
                         var archiveViewModel = new ArchiveViewModel(AppServices.Current, shell, archiveDetails);
-                        var archiveWindow = new ArchiveWindow(archiveViewModel)
-                        {
-                            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                        };
-                        archiveWindow.Show();
+                        var archiveWindow = new ArchivePage(archiveViewModel);
+                        window.ShowDiagnosticPage(archiveWindow);
                         await Task.Delay(2500);
                         SaveScreenshot(archiveWindow, Path.Combine(output, "online-archive.png"));
                         pageShots.Add("online-archive.png");
@@ -781,9 +778,9 @@ public static class UiSmokeService
             {
                 var localSummary = new EhGallerySummary
                 {
-                    Gid = 800000,
+                    Gid = 900001,
                     Token = "local",
-                    Title = "压力样本 00000（本地命中）",
+                    Title = "本地完整样本（本地命中）",
                     Pages = 4,
                 };
                 localSummary.Tags.Add("language:chinese");
@@ -799,11 +796,8 @@ public static class UiSmokeService
                 };
 
                 var localViewModel = new OnlineGalleryViewModel(AppServices.Current, shell, localSummary);
-                var localWindow = new OnlineGalleryWindow(localViewModel)
-                {
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                };
-                localWindow.Show(window);
+                var localWindow = new OnlineGalleryPage(localViewModel);
+                window.ShowDiagnosticPage(localWindow);
                 await Task.Delay(1500);
                 SaveScreenshot(localWindow, Path.Combine(output, "online-local.png"));
                 pageShots.Add("online-local.png");
@@ -825,6 +819,110 @@ public static class UiSmokeService
             await Task.Delay(400);
         }
 
+        // Large history/download lists, narrow layouts and light theme are
+        // exercised together in the final bounded visual verification pass.
+        if (window.Shell is { } finalShell)
+        {
+            foreach (var work in viewModel.SnapshotAllWorks())
+                viewModel.Services.Progress.RecordRead(work.WorkId, 1, 0, 0, work.PageCount, false);
+            finalShell.History.Reload();
+            finalShell.Navigate("history");
+            await Task.Delay(700);
+            report["historyVirtualization"] = new { items = finalShell.History.Items.Count,
+                realizedImages = window.GetVisualDescendants().OfType<AsyncImage>().Count() };
+            finalShell.Navigate("downloads");
+            for (int i = 0; i < 2000; i++) finalShell.Downloads.Tasks.Add(new DownloadTaskViewModel(
+                new Core.Download.DownloadTask { Gid = 700000 + i, Title = "合成下载任务 " + i, State = Core.Download.DownloadState.Paused, PageCount = 100, DownloadedPages = 25 }, finalShell.Downloads));
+            finalShell.Downloads.RefreshStatus();
+            await Task.Delay(700);
+            report["downloadVirtualization"] = new { items = finalShell.Downloads.Tasks.Count,
+                realizedRows = window.GetVisualDescendants().OfType<Border>().Count(b => b.Classes.Contains("row")) };
+            SaveScreenshot(window, Path.Combine(output, "downloads-populated.png"));
+            finalShell.Downloads.Tasks.Clear();
+            finalShell.Downloads.SyncAll();
+            window.Width = 600;
+            window.Height = 720;
+            foreach (string key in new[] { "library", "settings", "downloads" })
+            {
+                finalShell.Navigate(key);
+                await Task.Delay(500);
+                if (key == "settings" && window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } tabs) tabs.SelectedIndex = 4;
+                await Task.Delay(300);
+                SaveScreenshot(window, Path.Combine(output, "narrow-" + key + ".png"));
+            }
+            App.ApplyTheme(AppTheme.Light);
+            finalShell.Navigate("library");
+            await Task.Delay(500);
+            SaveScreenshot(window, Path.Combine(output, "light-library.png"));
+            App.ApplyTheme(AppTheme.Dark);
+            window.Width = 1200;
+            finalShell.Navigate("library");
+            await Task.Delay(200);
+            var coverSample = viewModel.Galleries.FirstOrDefault(g => g.CanRead && g.Info.CoverPath is not null);
+            if (coverSample is not null)
+            {
+                using (await viewModel.Services.Covers.LoadCoverAsync(coverSample.Info, 256, 384, CancellationToken.None)) { }
+                long allocatedBefore = GC.GetTotalAllocatedBytes(true);
+                for (int i = 0; i < 100; i++)
+                    using (await viewModel.Services.Covers.LoadCoverAsync(coverSample.Info, 256, 384, CancellationToken.None)) { }
+                report["coverAllocation"] = new { loads = 100, allocatedBytes = GC.GetTotalAllocatedBytes(true) - allocatedBefore,
+                    oldRawBufferEstimate = 100L * 256 * 384 * 4 };
+            }
+            report["imageMemory"] = new { usedBytes = ImageMemoryBudget.UsedBytes, limitBytes = ImageMemoryBudget.LimitBytes };
+        }
+
+        if (window.Shell is { } updatedShell)
+        {
+            updatedShell.Navigate("library");
+            var sidebar = window.FindControl<Button>("SidebarToggle")!;
+            sidebar.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            await Task.Delay(300);
+            SaveScreenshot(window, Path.Combine(output, "sidebar-collapsed.png"));
+            report["sidebarToggle"] = window.Classes.Contains("compact");
+            sidebar.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            updatedShell.Navigate("settings");
+            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } currentTabs) currentTabs.SelectedIndex = 0;
+            AppServices.Current.Online.Session.Import(new Dictionary<string, string> { ["ipb_member_id"] = "42", ["ipb_pass_hash"] = "synthetic-ui-only" });
+            updatedShell.RaiseAccount();
+            await Task.Delay(300);
+            report["signedInSettings"] = new { updatedShell.Settings.IsSignedIn, updatedShell.Settings.AccountStatus };
+            SaveScreenshot(window, Path.Combine(output, "settings-signed-in.png"));
+            AppServices.Current.Online.SignOut(); updatedShell.Settings.RefreshAccount();
+            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } qualityTabs) qualityTabs.SelectedIndex = 2;
+            await Task.Delay(200); SaveScreenshot(window, Path.Combine(output, "settings-image-sizes.png"));
+            string oldRoot = viewModel.Services.Downloads.RootPath;
+            string targetRoot = oldRoot + "-moved";
+            string namedFolder = Path.Combine(oldRoot, "label", "680000-move-test");
+            string anonymousFolder = Path.Combine(oldRoot, "anonymous-book");
+            Directory.CreateDirectory(namedFolder); Directory.CreateDirectory(anonymousFolder);
+            string sample = Directory.EnumerateFiles(item!.FolderPath, "*.png").First();
+            File.Copy(sample, Path.Combine(namedFolder, "00000001.png"));
+            File.Copy(sample, Path.Combine(anonymousFolder, "00000001.png"));
+            var task = viewModel.Services.Downloads.Enqueue(new EhGalleryDetails { Gid = 680000, Token = "fixture", Title = "move-test", Pages = 1 }, "label", startImmediately: false);
+            viewModel.Services.Downloads.Pause(task);
+            viewModel.Services.Settings.Download.AddAsSource = true;
+            var downloadSource = viewModel.Services.EnsureDownloadSource()!;
+            string sourceId = downloadSource.Id;
+            await viewModel.ReloadSourcesAsync();
+            var before = viewModel.SnapshotAllWorks().First(g => g.FolderPath == anonymousFolder);
+            viewModel.Services.Progress.RecordRead(before.WorkId, 1, 0, 0.4, 1, false);
+            viewModel.Services.Progress.ToggleFavorite(before.WorkId);
+            updatedShell.Settings.RefreshSources();
+            updatedShell.Settings.SetDownloadRoot(targetRoot);
+            updatedShell.Settings.DownloadDirectoryMode = 1;
+            bool saved = await updatedShell.Settings.ApplyAsync(async _ => await viewModel.ReloadAfterRelocationAsync(oldRoot, targetRoot));
+            var after = viewModel.SnapshotAllWorks().FirstOrDefault(g => g.FolderPath == Path.Combine(targetRoot, "anonymous-book"));
+            succeeded &= saved && File.Exists(Path.Combine(targetRoot, "label", "680000-move-test", "00000001.png")) &&
+                !Directory.Exists(oldRoot) && viewModel.Services.Settings.Sources.Any(s => s.Id == sourceId && s.RootPath == targetRoot) &&
+                Core.Storage.PathIdentity.IsDescendantOf(task.FolderPath, targetRoot) && after?.ProgressPage == 1 && after.IsFavorite;
+            report["downloadRelocation"] = new { saved, fileMoved = File.Exists(Path.Combine(targetRoot, "label", "680000-move-test", "00000001.png")),
+                oldRootRemoved = !Directory.Exists(oldRoot), sameSourceIdentity = viewModel.Services.Settings.Sources.Any(s => s.Id == sourceId && s.RootPath == targetRoot),
+                taskUpdated = Core.Storage.PathIdentity.IsDescendantOf(task.FolderPath, targetRoot), progressPreserved = after?.ProgressPage == 1 && after.IsFavorite,
+                status = updatedShell.Settings.DownloadStatus };
+            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } moveTabs) moveTabs.SelectedIndex = 3;
+            await Task.Delay(300); SaveScreenshot(window, Path.Combine(output, "settings-download-moved.png"));
+        }
+
         report["pageScreenshots"] = pageShots;
         report["elapsedSeconds"] = Math.Round(stopwatch.Elapsed.TotalSeconds, 2);
 
@@ -837,8 +935,10 @@ public static class UiSmokeService
             "library.png", "library-search.png", "details.png", "reader-single.png", "reader-animated.png",
             "reader-continuous.png", "reader-horizontal.png", "versions.png", "settings.png",
         };
+        report["passed"] = succeeded;
         await WriteReport(output, report);
         Console.WriteLine("UI smoke screenshots: " + output);
+        return succeeded ? 0 : 1;
     }
 
     private static async Task WriteReport(string directory, Dictionary<string, object?> report)
@@ -858,7 +958,7 @@ public static class UiSmokeService
         }
     }
 
-    private static void SaveScreenshot(Window window, string path)
+    private static void SaveScreenshot(ContentControl window, string path)
     {
         Visual visual = window.Content as Visual ?? window;
         Size size = visual.Bounds.Size;
@@ -869,7 +969,7 @@ public static class UiSmokeService
 
         // Render at physical resolution so glyphs are rasterised at the same
         // scale as on screen (avoids subpixel ghosting in the capture).
-        double scaling = Math.Max(1.0, window.RenderScaling);
+        double scaling = Math.Max(1.0, (TopLevel.GetTopLevel(window)?.RenderScaling ?? 1));
         var pixelSize = new PixelSize(
             Math.Max(1, (int)Math.Ceiling(size.Width * scaling)),
             Math.Max(1, (int)Math.Ceiling(size.Height * scaling)));
@@ -896,7 +996,7 @@ public static class UiSmokeService
     private static string DescribeBounds(Visual visual) =>
         $"{visual.Bounds.X:F0},{visual.Bounds.Y:F0} {visual.Bounds.Width:F0}x{visual.Bounds.Height:F0}";
 
-    private static string DescribeLayout(Window window)
+    private static string DescribeLayout(ContentControl window)
     {
         var lines = new List<string>();
         if (window.Content is Visual root)

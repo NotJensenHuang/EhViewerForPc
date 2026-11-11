@@ -125,7 +125,12 @@ public sealed class AsyncImage : Control
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == SourceProperty)
+        if (change.Property == IsVisibleProperty)
+        {
+            if (!IsEffectivelyVisible) { _cancellation?.Cancel(); ReleaseBitmaps(); }
+            else BeginLoad();
+        }
+        else if (change.Property == SourceProperty)
         {
             BeginLoad();
         }
@@ -150,7 +155,7 @@ public sealed class AsyncImage : Control
     private void BeginLoad()
     {
         IImageRequest? request = Source;
-        if (!_attached || request is null || Bounds.Width < 8 || Bounds.Height < 4)
+        if (!_attached || !IsEffectivelyVisible || request is null || Bounds.Width < 8 || Bounds.Height < 4)
         {
             return;
         }

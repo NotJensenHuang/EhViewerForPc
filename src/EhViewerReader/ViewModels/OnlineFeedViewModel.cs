@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -33,6 +33,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     private string _nextUrl = string.Empty;
     private int _urlIndex;
     private bool _busy;
+    private int _requestGeneration;
     private bool _hasMore;
     private string _statusText = string.Empty;
     private string _pageLabel = string.Empty;
@@ -438,7 +439,8 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
     public async Task LoadAsync(bool reset)
     {
-        if (_busy) return;
+        if (_busy && !reset) return;
+        int generation = ++_requestGeneration;
 
         string url;
         if (reset)
@@ -501,7 +503,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            StatusText = "已取消";
+            if (generation == _requestGeneration) StatusText = token.IsCancellationRequested ? "已取消" : "请求超时，请重试";
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
@@ -511,7 +513,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         }
         finally
         {
-            IsBusy = false;
+            if (generation == _requestGeneration) IsBusy = false;
             OnPropertyChanged(nameof(CanGoBack));
         }
     }

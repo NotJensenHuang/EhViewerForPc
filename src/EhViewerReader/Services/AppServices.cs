@@ -1,4 +1,6 @@
 using EhViewerReader.Core.Download;
+using System.Text.Json;
+using EhViewerReader.Core.Imaging;
 using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Online;
 using EhViewerReader.Core.Scanning;
@@ -13,6 +15,8 @@ namespace EhViewerReader.Services;
 public sealed class AppServices : IDisposable
 {
     private bool _disposed;
+    private readonly object _settingsSaveGate = new();
+    private long _settingsRevision;
 
     private AppServices(AppPaths paths, AppSettings settings)
     {
@@ -20,7 +24,9 @@ public sealed class AppServices : IDisposable
         Settings = settings;
         Log = new LogService(paths.LogDirectory);
         SettingsStore = new SettingsStore(paths);
+        Writes = new DeferredSaveQueue();
         Progress = new ProgressStore(paths);
+        Works = new WorkCatalog(paths, Writes);
         CacheStore = new LibraryCacheStore(paths);
         Scanner = new LibraryScanner();
         Decoder = new ImageDecoder(Log);
@@ -28,9 +34,11 @@ public sealed class AppServices : IDisposable
         Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
         Online = new EhClient(settings, message => Log.Warn(message));
-        OnlineImages = new OnlineImageService(paths, Online, Images, Log);
+        PageImages = new GalleryImageStore(paths, Online);
+        OnlineImages = new OnlineImageService(paths, Online, Images, Log, PageImages);
         TagTranslation = new TagTranslationService(paths, settings, Online, Log);
-        Downloads = new DownloadManager(paths, settings, Online, message => Log.Warn(message));
+        Downloads = new DownloadManager(paths, settings, Online, message => Log.Warn(message), PageImages);
+        PageImages.FindLocalPage = Downloads.FindPage;
         ApplySettings(settings);
     }
 
@@ -41,6 +49,8 @@ public sealed class AppServices : IDisposable
     public LogService Log { get; }
     public SettingsStore SettingsStore { get; }
     public ProgressStore Progress { get; }
+    public DeferredSaveQueue Writes { get; }
+    public WorkCatalog Works { get; }
     public LibraryCacheStore CacheStore { get; }
     public LibraryScanner Scanner { get; }
     public ImageDecoder Decoder { get; }
@@ -53,6 +63,7 @@ public sealed class AppServices : IDisposable
 
     /// <summary>Thumbnail and page cache for online content.</summary>
     public OnlineImageService OnlineImages { get; }
+    public GalleryImageStore PageImages { get; }
 
     /// <summary>EhTagTranslation database (lazy, updatable from settings).</summary>
     public TagTranslationService TagTranslation { get; }
@@ -79,15 +90,42 @@ public sealed class AppServices : IDisposable
     public void ApplySettings(AppSettings settings)
     {
         Settings = settings;
+        ImageMemoryBudget.Configure(settings.PageCacheMegabytes);
         Images.MaxMegapixels = settings.MaxDecodeMegapixels;
         Images.MaxDimension = settings.MaxDecodeDimension;
+        Images.CoverDecodeWidth = settings.CoverDecodeWidth;
     }
 
     public bool TrySaveSettings(out string? error)
     {
         ApplySettings(Settings);
-        return SettingsStore.Save(Settings, out error);
+        // Capture on the caller/UI thread; serialize shared mutable settings only here.
+        AppSettings snapshot = JsonSerializer.Deserialize(JsonSerializer.SerializeToUtf8Bytes(Settings, StorageJsonContext.Default.AppSettings), StorageJsonContext.Default.AppSettings)!;
+        long revision = Interlocked.Increment(ref _settingsRevision);
+        Writes.Schedule("settings", () => { lock (_settingsSaveGate) { if (revision != _settingsRevision) return; if (!SettingsStore.Save(snapshot, out var failure)) Log.Warn("Settings save failed: " + failure); } });
+        error = null;
+        return true;
     }
+
+    public Task<bool> RelocateDownloadsAsync(string target, IProgress<DownloadMoveProgress>? progress, CancellationToken token) =>
+        Task.Run(() => Downloads.RelocateRootAsync(target, progress, token, () =>
+        {
+            lock (_settingsSaveGate)
+            {
+                Interlocked.Increment(ref _settingsRevision);
+                if (!SettingsStore.Save(Settings, out var error)) throw new IOException(error);
+            }
+        }), token);
+
+    public Task ChangeDownloadRootWithoutMovingAsync(string target, bool registerAsSource) => Task.Run(() =>
+        Downloads.ChangeRootWithoutMoving(target, registerAsSource, () =>
+        {
+            lock (_settingsSaveGate)
+            {
+                Interlocked.Increment(ref _settingsRevision);
+                if (!SettingsStore.Save(Settings, out var error)) throw new IOException(error);
+            }
+        }));
 
     /// <summary>Rebuilds the HTTP stacks after proxy/DNS/hosts changes.</summary>
     public void ReloadNetwork()
@@ -119,7 +157,12 @@ public sealed class AppServices : IDisposable
         return source;
     }
 
-    public bool TrySaveProgress(out string? error) => Progress.Save(out error);
+    public bool TrySaveProgress(out string? error)
+    {
+        Writes.Schedule("progress", () => { if (!Progress.Save(out var failure)) Log.Warn("Progress save failed: " + failure); });
+        error = null;
+        return true;
+    }
 
     public void Dispose()
     {
@@ -135,6 +178,7 @@ public sealed class AppServices : IDisposable
         }
 
         Downloads.Dispose();
+        Writes.Dispose();
         Online.Dispose();
         Covers.Dispose();
         Decoder.Dispose();

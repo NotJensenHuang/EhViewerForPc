@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using EhViewerReader.Services;
 
 namespace EhViewerReader;
@@ -36,7 +36,7 @@ internal static class Program
 
         if (!options.UiSmoke)
         {
-            _instanceMutex = new Mutex(initiallyOwned: true, @"Local\EhViewerReader", out bool createdNew);
+            _instanceMutex = new Mutex(initiallyOwned: true, OperatingSystem.IsWindows() ? @"Local\EhViewerReader" : "EhViewerReader", out bool createdNew);
             if (!createdNew)
             {
                 return 0;
@@ -49,7 +49,7 @@ internal static class Program
     // Avalonia configuration, don't remove; also used by visual designer.
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
-            .UseWin32()
+            .UsePlatformDetect()
             .UseSkia()
             .UseHarfBuzz()
             .WithInterFont()

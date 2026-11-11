@@ -772,7 +772,7 @@ public static partial class EhParser
 
         imageUrl = NormalizeUrl(image.GetAttribute("src"));
 
-        // Full-size image: the site exposes nl('keystamp') on the error hook.
+        // nl is the retry/skip-H@H key, independent from the fullimg original link.
         Match nl = NlKeyRegex().Match(html);
         if (nl.Success) nlKey = nl.Groups[1].Value;
 

@@ -46,6 +46,21 @@ public sealed class EhSession
         }
     }
 
+    public void SetImageSize(int width)
+    {
+        lock (_gate)
+        {
+            foreach (string host in CookieHosts)
+            {
+                var uri = new Uri(host);
+                string current = Cookies.GetCookies(uri)["uconfig"]?.Value ?? "";
+                var options = current.Split('-', StringSplitOptions.RemoveEmptyEntries)
+                    .Where(p => !p.StartsWith("xr_", StringComparison.Ordinal) && !p.StartsWith("oi_", StringComparison.Ordinal));
+                TryAdd(uri, "uconfig", string.Join('-', options.Concat(new[] { "xr_" + width, "oi_n" })));
+            }
+        }
+    }
+
     /// <summary>Installs stored cookies on both hosts.</summary>
     public void Import(IReadOnlyDictionary<string, string> cookies)
     {

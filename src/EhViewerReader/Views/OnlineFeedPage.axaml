@@ -1,4 +1,4 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EhViewerReader.ViewModels"
              xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
@@ -7,13 +7,13 @@
              x:DataType="vm:OnlineFeedViewModel">
   <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
     <!-- Header -->
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="22,16,22,8">
+    <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,8">
       <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
         <TextBlock Text="{Binding Title}" Classes="h1" />
         <TextBlock Text="{Binding Subtitle}" Classes="caption" />
       </StackPanel>
 
-      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+      <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
         <Button Content="高级选项" Classes="chip" Classes.active="{Binding ShowAdvanced}"
                 Command="{Binding ToggleAdvancedCommand}" IsVisible="{Binding ShowSearchBar}" />
         <ComboBox Width="104" ItemsSource="{Binding ToplistOptions}" SelectedItem="{Binding SelectedToplistOption}"
@@ -28,7 +28,7 @@
         <Button Content="上一页" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoBack}" />
         <Button Content="下一页" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" />
         <TextBlock Text="{Binding PageLabel}" Classes="caption" VerticalAlignment="Center" MinWidth="52" />
-      </StackPanel>
+      </WrapPanel>
     </Grid>
 
     <!-- Search bar (browse page) / favourite-slot search -->
@@ -117,14 +117,14 @@
             <CheckBox Content="搜索标签" IsChecked="{Binding SearchTags}" Margin="0,0,18,0" />
             <CheckBox Content="搜索描述" IsChecked="{Binding SearchDescription}" Margin="0,0,18,0" />
             <CheckBox Content="仅含种子" IsChecked="{Binding OnlyTorrents}" Margin="0,0,18,0" />
-            <Button Content="重置选项" Classes="ghost" FontSize="11" Padding="8,2" MinHeight="24"
+            <Button Content="重置选项" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="24"
                     Command="{Binding ResetSearchOptionsCommand}" />
           </WrapPanel>
 
           <StackPanel Spacing="6" IsVisible="{Binding HasHistory}">
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="最近搜索" Classes="caption" VerticalAlignment="Center" />
-              <Button Content="显示/隐藏" Classes="ghost" FontSize="11" Padding="6,2" MinHeight="22"
+              <Button Content="显示/隐藏" Classes="ghost" FontSize="12" Padding="6,2" MinHeight="22"
                       Command="{Binding ToggleHistoryCommand}" />
             </StackPanel>
             <ItemsControl ItemsSource="{Binding History}" IsVisible="{Binding ShowHistory}">
@@ -155,9 +155,9 @@
                   <Border Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
                           BorderThickness="1" CornerRadius="999" Padding="10,3" Margin="0,0,8,8">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                      <Button Content="{Binding Text}" Classes="ghost" FontSize="11" Padding="0" MinHeight="0"
+                      <Button Content="{Binding Text}" Classes="ghost" FontSize="12" Padding="0" MinHeight="0"
                               Tag="{Binding Text}" Click="OnSavedClick" />
-                      <Button Content="✕" Classes="ghost" FontSize="10" Padding="0" MinHeight="0"
+                      <Button Content="✕" Classes="ghost" FontSize="12" Padding="0" MinHeight="0"
                               Tag="{Binding Text}" Click="OnSavedRemoveClick" ToolTip.Tip="删除该保存的搜索" />
                     </StackPanel>
                   </Border>
@@ -197,9 +197,9 @@
     <Border Grid.Row="5" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0">
       <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="11"
+        <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12"
                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-        <TextBlock Grid.Column="1" Classes="muted" FontSize="11"
+        <TextBlock Grid.Column="1" Classes="muted" FontSize="12"
                    Text="{Binding Items.Count, StringFormat='{}{0} 项'}" VerticalAlignment="Center" />
       </Grid>
     </Border>

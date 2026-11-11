@@ -51,6 +51,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     /// settles at the requested offset.
     /// </summary>
     private bool _suppressScrollSync;
+    private int _relocationVersion;
 
     public ReaderViewModel(AppServices services, GalleryInfo gallery)
         : this(services, new LocalReaderSource(services, gallery))
@@ -97,6 +98,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             // Continuous mode starts with estimated slots; once a page decodes,
             // its real aspect ratio replaces the estimate.
             online.DimensionResolved = OnOnlineDimensionResolved;
+            online.QualityChanged = () => Dispatcher.UIThread.Post(() => { if (!_disposed) OnPropertyChanged(nameof(SourceText)); });
         }
     }
 
@@ -157,7 +159,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     public IReadOnlyList<ContinuousPageItem> ContinuousItems
     {
-        get => _continuousItems;
+        get => IsContinuousMode ? _continuousItems : [];
         private set => SetProperty(ref _continuousItems, value);
     }
 
@@ -172,7 +174,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     /// reading, so the first page sits at the right edge). Bound by the view.</summary>
     public IReadOnlyList<ContinuousPageItem> HorizontalDisplayItems
     {
-        get => _horizontalDisplayItems;
+        get => IsHorizontalMode ? _horizontalDisplayItems : [];
         private set => SetProperty(ref _horizontalDisplayItems, value);
     }
 
@@ -374,7 +376,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             _pageOffset,
             _pages.Count,
             completed: _index == _pages.Count - 1);
-        _services.Progress.Save(out _);
+        _services.TrySaveProgress(out _);
     }
 
     [RelayCommand]
@@ -404,11 +406,15 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     public async Task SetModeAsync(ReadingMode mode)
     {
         if (_mode == mode) return;
+        _suppressScrollSync = true;
+        _relocationVersion++;
         _mode = mode;
         OnPropertyChanged(nameof(Mode));
         OnPropertyChanged(nameof(IsSingleMode));
         OnPropertyChanged(nameof(IsContinuousMode));
         OnPropertyChanged(nameof(IsHorizontalMode));
+        OnPropertyChanged(nameof(ContinuousItems));
+        OnPropertyChanged(nameof(HorizontalDisplayItems));
 
         // The reading mode chosen in the reader persists as the default.
         _services.Settings.DefaultReadingMode = mode;
@@ -418,6 +424,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         {
             UpdateCurrentRequests();
             SetIndex(_index, scrollContinuous: false);
+            SuppressSyncWhileRelocating(static () => { });
         }
         else
         {
@@ -444,12 +451,14 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private void SuppressSyncWhileRelocating(Action raise)
     {
         _suppressScrollSync = true;
+        int version = ++_relocationVersion;
         raise();
-        Dispatcher.UIThread.Post(() => _suppressScrollSync = false, DispatcherPriority.SystemIdle);
+        Dispatcher.UIThread.Post(() => { if (version == _relocationVersion) _suppressScrollSync = false; }, DispatcherPriority.SystemIdle);
     }
 
     public void ToggleDirection()
     {
+        if (IsHorizontalMode) { _suppressScrollSync = true; _relocationVersion++; }
         _rightToLeft = !_rightToLeft;
         _services.Settings.RightToLeft = _rightToLeft;
         _services.TrySaveSettings(out _);
@@ -461,11 +470,17 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             SuppressSyncWhileRelocating(() =>
                 HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
         }
+        else if (IsHorizontalMode)
+        {
+            SuppressSyncWhileRelocating(static () => { });
+        }
     }
 
     public async Task InitializeAsync()
     {
         if (IsSingleMode) return;
+        _suppressScrollSync = true;
+        _relocationVersion++;
         await EnsureDimensionsAsync().ConfigureAwait(true);
         if (IsContinuousMode)
         {
@@ -507,7 +522,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private async Task EnsureDimensionsAsync()
     {
         if (_pages.Count == 0) return;
-        if (ContinuousItems.Count == _pages.Count)
+        if (_continuousItems.Count == _pages.Count)
         {
             return;
         }
@@ -633,15 +648,15 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     public void SetContinuousWidth(double width)
     {
         double target = Math.Clamp(width, 320, 1400);
-        if (Math.Abs(target - _continuousWidth) < 2 && ContinuousItems.Count > 0)
+        if (Math.Abs(target - _continuousWidth) < 2 && _continuousItems.Count > 0)
         {
             return;
         }
 
         _continuousWidth = target;
-        if (ContinuousItems.Count == 0) return;
+        if (_continuousItems.Count == 0) return;
 
-        foreach (ContinuousPageItem item in ContinuousItems)
+        foreach (ContinuousPageItem item in _continuousItems)
         {
             item.Resize(target);
         }
@@ -656,7 +671,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     private void ApplyContinuousWidth()
     {
-        foreach (ContinuousPageItem item in ContinuousItems)
+        foreach (ContinuousPageItem item in _continuousItems)
         {
             item.Resize(_continuousWidth);
         }
@@ -667,7 +682,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private void RecomputeTops()
     {
         double top = 0;
-        foreach (ContinuousPageItem item in ContinuousItems)
+        foreach (ContinuousPageItem item in _continuousItems)
         {
             item.Top = top;
             top += item.SlotHeight;
@@ -676,23 +691,23 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     public double GetScrollOffsetForPage(int index, double fraction)
     {
-        if (ContinuousItems.Count == 0) return 0;
-        ContinuousPageItem item = ContinuousItems[Math.Clamp(index, 0, ContinuousItems.Count - 1)];
+        if (_continuousItems.Count == 0) return 0;
+        ContinuousPageItem item = _continuousItems[Math.Clamp(index, 0, _continuousItems.Count - 1)];
         return item.Top + Math.Clamp(fraction, 0, 1) * item.DisplayHeight;
     }
 
     public void UpdateScrollOffset(double offsetY, double viewportHeight)
     {
-        if (ContinuousItems.Count == 0 || !IsContinuousMode || _suppressScrollSync) return;
+        if (_continuousItems.Count == 0 || !IsContinuousMode || _suppressScrollSync) return;
 
         double probe = offsetY + Math.Max(40, viewportHeight * 0.32);
         int low = 0;
-        int high = ContinuousItems.Count - 1;
+        int high = _continuousItems.Count - 1;
         int found = 0;
         while (low <= high)
         {
             int mid = (low + high) / 2;
-            if (ContinuousItems[mid].Top <= probe)
+            if (_continuousItems[mid].Top <= probe)
             {
                 found = mid;
                 low = mid + 1;
@@ -703,7 +718,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             }
         }
 
-        ContinuousPageItem item = ContinuousItems[found];
+        ContinuousPageItem item = _continuousItems[found];
         double fraction = item.DisplayHeight <= 0
             ? 0
             : Math.Clamp((probe - item.Top) / item.DisplayHeight, 0, 1);
@@ -756,7 +771,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
         _continuousHeight = target;
         if (_horizontalItems.Count == 0) return;
-
+        if (IsHorizontalMode) { _suppressScrollSync = true; _relocationVersion++; }
         ApplyContinuousHeight();
         if (IsHorizontalMode)
         {
@@ -828,6 +843,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        if (_source is OnlineReaderSource online) { online.DimensionResolved = null; online.QualityChanged = null; }
         _saveTimer.Stop();
         _hintTimer.Stop();
         SaveProgress();

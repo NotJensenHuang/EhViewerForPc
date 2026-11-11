@@ -111,6 +111,7 @@ public sealed class ProgressStore
             progress.PageOffset = Math.Clamp(pageOffset, 0, 1);
             progress.PageCountAtSave = Math.Max(0, pageCount);
             progress.LastReadUtc = DateTime.UtcNow;
+            progress.HiddenFromHistory = false;
             progress.Completed = completed;
             _dirty = true;
         }
@@ -122,7 +123,7 @@ public sealed class ProgressStore
         {
             if (!_entries.TryGetValue(stableId, out var progress))
             {
-                progress = new ReadingProgress { LastReadUtc = DateTime.UtcNow };
+                progress = new ReadingProgress();
                 _entries[stableId] = progress;
             }
 
@@ -165,7 +166,8 @@ public sealed class ProgressStore
             progress.PageIndex = 0;
             progress.PageOffset = 0;
             progress.Completed = false;
-            progress.LastReadUtc = DateTime.UtcNow;
+            progress.LastReadUtc = default;
+            progress.HiddenFromHistory = true;
             _dirty = true;
         }
     }
@@ -178,10 +180,34 @@ public sealed class ProgressStore
         }
     }
 
+    public IReadOnlyDictionary<string, ReadingProgress> Snapshot()
+    {
+        lock (_gate) return _entries.ToDictionary(p => p.Key, p => p.Value.Clone(), StringComparer.OrdinalIgnoreCase);
+    }
+
+    public void HideFromHistory(string workId)
+    {
+        lock (_gate)
+        {
+            if (_entries.TryGetValue(workId, out var progress)) { progress.HiddenFromHistory = true; _dirty = true; }
+        }
+    }
+
+    public void ResetReading(string workId)
+    {
+        lock (_gate)
+        {
+            if (!_entries.TryGetValue(workId, out var progress)) return;
+            _entries[workId] = new ReadingProgress { Favorite = progress.Favorite, HiddenFromHistory = true };
+            _dirty = true;
+        }
+    }
+
     public bool Save(out string? error)
     {
         lock (_gate)
         {
+            if (!_dirty) { error = null; return true; }
             var file = new ProgressFile
             {
                 SchemaVersion = 1,

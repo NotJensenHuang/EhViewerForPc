@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Scanning;
+using EhViewerReader.Core.Storage;
 using EhViewerReader.Services;
 
 namespace EhViewerReader.ViewModels;
@@ -100,12 +101,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>True when this gallery id already exists in a local source.</summary>
     public bool HasLocalCopy(long gid)
     {
-        lock (_byGid) return _byGid.ContainsKey(gid);
+        lock (_byGid) return _byGid.TryGetValue(gid, out var item) && item.PageCount > 0 && !item.IsIncomplete && Directory.Exists(item.FolderPath);
     }
 
     public bool TryGetLocalCopy(long gid, out GalleryItemViewModel? item)
     {
-        lock (_byGid) return _byGid.TryGetValue(gid, out item);
+        lock (_byGid)
+        {
+            if (_byGid.TryGetValue(gid, out item) && item.PageCount > 0 && !item.IsIncomplete && Directory.Exists(item.FolderPath)) return true;
+            item = null; return false;
+        }
+    }
+
+    public bool TryGetAnyLocalCopy(long gid, out GalleryItemViewModel? item)
+    {
+        lock (_byGid) return _byGid.TryGetValue(gid, out item) && item.PageCount > 0 && Directory.Exists(item.FolderPath);
     }
 
     /// <summary>Snapshot of every work, independent of the current filter/search.</summary>
@@ -117,7 +127,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var map = new Dictionary<long, GalleryItemViewModel>();
         foreach (GalleryItemViewModel item in _all)
         {
-            if (item.Gid is long gid) map[gid] = item;
+            if (item.Gid is long gid && (!map.TryGetValue(gid, out var previous) ||
+                (previous.IsIncomplete && !item.IsIncomplete) || (previous.IsIncomplete == item.IsIncomplete && previous.PageCount < item.PageCount))) map[gid] = item;
         }
 
         lock (_byGid) _byGid = map;
@@ -376,7 +387,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             try
             {
-                caches[source.Id] = _services.CacheStore.Load(source.Id, source.RootPath, out _);
+                caches[source.Id] = await Task.Run(() => _services.CacheStore.Load(source.Id, source.RootPath, out _), token);
             }
             catch (Exception ex)
             {
@@ -436,7 +447,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 cacheHits += result.CacheHitCount;
                 scanSeconds += result.Elapsed.TotalSeconds;
                 source.LastScanUtc = DateTime.UtcNow.ToString("O");
-                _services.CacheStore.Save(source.Id, result.Cache, out string? cacheError);
+                string? cacheError = await Task.Run(() => { _services.CacheStore.Save(source.Id, result.Cache, out var failure); return failure; }, token);
                 if (cacheError is not null) _services.Log.Warn("Cache save failed: " + cacheError);
             }
 
@@ -520,6 +531,69 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             StatusText = $"已载入缓存 {_all.Count:N0} 个作品";
         }
+    }
+
+    public async Task ImportDownloadAsync(EhViewerReader.Core.Download.DownloadTask task)
+    {
+        if (!_services.Settings.Download.AddAsSource) return;
+        while (IsScanning) await Task.Delay(50, _lifetime.Token);
+        string root = string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot;
+        var source = _services.Settings.AddSource(root, "下载目录");
+        _services.TrySaveSettings(out _);
+        // Scan only the completed gallery; no backup disks are revisited.
+        string parent = Path.GetDirectoryName(task.FolderPath)!;
+        var result = await Task.Run(() => _services.Scanner.Scan(parent, null, false, null, _lifetime.Token, source.Id, source.DisplayName, true, onlyFolder: task.FolderPath));
+        var completed = result.Galleries.Where(g => EhViewerReader.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).ToArray();
+        var all = _all.SelectMany(i => i.Versions).Where(g => !EhViewerReader.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).Concat(completed).ToArray();
+        ApplyGalleries(all, false);
+    }
+
+    public void RefreshAllProgress()
+    {
+        foreach (var item in _all) item.ApplyProgress(GalleryItemViewModel.LoadProgress(_services.Progress, item.Info));
+    }
+
+    public async Task ReloadAfterRelocationAsync(string oldRoot, string newRoot, bool movedFiles = true)
+    {
+        var previous = _all.SelectMany(i => i.Versions).Where(g => g.Gid is null && PathIdentity.IsDescendantOf(g.FolderPath, oldRoot))
+            .GroupBy(g => Path.GetRelativePath(oldRoot, g.FolderPath), PathIdentity.Comparer)
+            .ToDictionary(g => g.Key, g => g.First(), PathIdentity.Comparer);
+        await StopScanAsync();
+        while (IsScanning) await Task.Delay(50, _lifetime.Token);
+        var active = ResolveSources();
+        var retained = _all.SelectMany(i => i.Versions)
+            .Where(g => (!movedFiles || !PathIdentity.IsDescendantOf(g.FolderPath, oldRoot)) && active.Any(s => s.Id == g.SourceId)).ToList();
+        foreach (var gallery in retained) gallery.SourceName = active.First(s => s.Id == gallery.SourceId).DisplayName;
+        var indexed = retained.Select(g => g.SourceId).ToHashSet(StringComparer.Ordinal);
+        foreach (var source in active.Where(s => PathIdentity.Comparer.Equals(s.RootPath, newRoot) || PathIdentity.IsDescendantOf(s.RootPath, newRoot) || !indexed.Contains(s.Id)))
+        {
+            var scanned = await Task.Run(() =>
+            {
+                var cache = _services.CacheStore.Load(source.Id, source.RootPath, out _);
+                var result = _services.Scanner.Scan(source.RootPath, cache, false, null, _lifetime.Token, source.Id, source.DisplayName, active.Count > 1);
+                _services.CacheStore.Save(source.Id, result.Cache, out _);
+                return result.Galleries;
+            });
+            retained.AddRange(scanned);
+        }
+        ApplyGalleries(retained, false);
+        foreach (var gallery in _all.SelectMany(i => i.Versions))
+        {
+            if (!movedFiles || gallery.Gid is not null || !PathIdentity.IsDescendantOf(gallery.FolderPath, newRoot) ||
+                !previous.TryGetValue(Path.GetRelativePath(newRoot, gallery.FolderPath), out var old)) continue;
+            var progress = _services.Progress.Get(old.WorkId) ?? _services.Progress.Get(old.StableId);
+            if (progress is not null)
+            {
+                _services.Progress.Set(gallery.WorkId, progress);
+                if (gallery.WorkId != old.WorkId) _services.Progress.Clear(old.WorkId);
+                if (gallery.WorkId != old.StableId) _services.Progress.Clear(old.StableId);
+            }
+            _services.Works.MoveIdentity(old.WorkId, gallery.WorkId);
+            if (_services.Settings.PreferredSourceByWork.Remove(old.WorkId, out string? sourceId) && sourceId is not null) _services.Settings.PreferredSourceByWork[gallery.WorkId] = sourceId;
+        }
+        RefreshAllProgress();
+        _services.TrySaveProgress(out _);
+        _services.TrySaveSettings(out _);
     }
 
     private string? PreferredSourceOf(string workId) =>
@@ -672,13 +746,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (item is null) return;
         try
         {
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = "\"" + item.FolderPath + "\"",
-                UseShellExecute = true,
-            };
-            Process.Start(startInfo);
+            EhViewerReader.Services.PlatformLauncher.Open(item.FolderPath);
         }
         catch (Exception ex)
         {
@@ -692,7 +760,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (item is null) return;
         _services.Progress.ToggleFavorite(item.WorkId);
         item.ApplyProgress(GalleryItemViewModel.LoadProgress(_services.Progress, item.Info));
-        _services.Progress.Save(out _);
+        _services.TrySaveProgress(out _);
         ApplyFilterIfNeeded();
     }
 
@@ -702,7 +770,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (item is null || item.PageCount == 0) return;
         _services.Progress.MarkRead(item.WorkId, item.PageCount);
         item.ApplyProgress(GalleryItemViewModel.LoadProgress(_services.Progress, item.Info));
-        _services.Progress.Save(out _);
+        _services.TrySaveProgress(out _);
         ApplyFilterIfNeeded();
     }
 
@@ -712,7 +780,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (item is null) return;
         _services.Progress.MarkUnread(item.WorkId);
         item.ApplyProgress(GalleryItemViewModel.LoadProgress(_services.Progress, item.Info));
-        _services.Progress.Save(out _);
+        _services.TrySaveProgress(out _);
         ApplyFilterIfNeeded();
     }
 
@@ -720,9 +788,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void ClearProgress(GalleryItemViewModel? item)
     {
         if (item is null) return;
-        _services.Progress.Clear(item.WorkId);
-        item.ApplyProgress(null);
-        _services.Progress.Save(out _);
+        _services.Progress.ResetReading(item.WorkId);
+        item.ApplyProgress(_services.Progress.Get(item.WorkId));
+        _services.TrySaveProgress(out _);
         ApplyFilterIfNeeded();
     }
 
@@ -799,7 +867,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (error is not null) return error;
 
         await StopScanAsync();
-        _services.Settings.Sources.Clear();
         _services.Settings.AddSource(full);
         _services.Settings.LibraryRoot = null;
         _services.TrySaveSettings(out string? saveError);
@@ -821,7 +888,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (error is not null) return error;
 
         LibrarySource? existing = _services.Settings.Sources.FirstOrDefault(s =>
-            string.Equals(s.RootPath, full, StringComparison.OrdinalIgnoreCase));
+            EhViewerReader.Core.Storage.PathIdentity.Comparer.Equals(s.RootPath, full));
         if (existing is not null && existing.Enabled)
         {
             return null;
@@ -924,7 +991,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
         string normalizedCandidate = Path.GetFullPath(candidate)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return normalizedCandidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
+        return normalizedCandidate.StartsWith(normalizedRoot, EhViewerReader.Core.Storage.PathIdentity.Comparison);
     }
 
     public void Dispose()

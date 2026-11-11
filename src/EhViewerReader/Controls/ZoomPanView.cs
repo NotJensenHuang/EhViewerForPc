@@ -174,7 +174,12 @@ public sealed class ZoomPanView : Control
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-        if (change.Property == RequestProperty)
+        if (change.Property == IsVisibleProperty)
+        {
+            if (!IsEffectivelyVisible) { _cancellation?.Cancel(); CancelLoads(); RetireCurrent(); AnimationFramePool.Release(_retiredBitmap); _retiredBitmap = null; _preloaded?.Dispose(); _preloaded = null; _preloadedKey = null; }
+            else BeginLoad(resetView: false);
+        }
+        else if (change.Property == RequestProperty)
         {
             OnRequestChanged();
         }
@@ -261,7 +266,7 @@ public sealed class ZoomPanView : Control
     private void BeginLoad(bool resetView)
     {
         IImageRequest? request = Request;
-        if (!_attached || request is null || Bounds.Width < 8 || Bounds.Height < 8)
+        if (!_attached || !IsEffectivelyVisible || request is null || Bounds.Width < 8 || Bounds.Height < 8)
         {
             InvalidateVisual();
             return;

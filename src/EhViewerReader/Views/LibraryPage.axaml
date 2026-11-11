@@ -8,20 +8,20 @@
              x:DataType="vm:MainViewModel">
   <Grid RowDefinitions="Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
     <!-- Toolbar -->
-    <Grid Grid.Row="0" ColumnDefinitions="Auto,16,*,10,Auto,8,Auto" Margin="22,16,22,10">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" Margin="22,16,22,10">
       <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
         <TextBlock Text="本地库" Classes="h1" />
-        <TextBlock Classes="caption" Text="{Binding RootDisplay}" MaxWidth="360" TextTrimming="CharacterEllipsis" />
+        <TextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding RootDisplay}" MaxWidth="200" TextTrimming="CharacterEllipsis" />
       </StackPanel>
 
-      <Grid Grid.Column="2" VerticalAlignment="Center">
+      <Grid Grid.Row="1" Grid.ColumnSpan="3" VerticalAlignment="Center" Margin="0,8,0,0">
         <TextBox x:Name="SearchBox" Text="{Binding SearchText}" PlaceholderText="搜索标题、文件夹或 GID（Ctrl+F）" />
         <Button Content="清除" Classes="ghost" HorizontalAlignment="Right" VerticalAlignment="Center"
-                Margin="0,0,4,0" FontSize="11" Click="OnClearSearch"
+                Margin="0,0,4,0" FontSize="12" Click="OnClearSearch"
                 IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
       </Grid>
 
-      <ComboBox Grid.Column="4" Width="120" ItemsSource="{Binding SortOptions}"
+      <ComboBox Grid.Column="1" Width="120" ItemsSource="{Binding SortOptions}"
                 SelectedItem="{Binding SelectedSort}" VerticalAlignment="Center">
         <ComboBox.ItemTemplate>
           <DataTemplate x:DataType="vm:SortOption">
@@ -30,26 +30,26 @@
         </ComboBox.ItemTemplate>
       </ComboBox>
 
-      <Button Grid.Column="6" Content="刷新" Command="{Binding RefreshCommand}" VerticalAlignment="Center" />
+      <Button Grid.Column="2" Content="刷新" Command="{Binding RefreshCommand}" VerticalAlignment="Center" />
     </Grid>
 
     <!-- Filters -->
-    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="22,0,22,8">
+    <Grid Grid.Row="1" RowDefinitions="Auto,Auto" Margin="22,0,22,8">
       <ItemsControl Grid.Column="0" ItemsSource="{Binding FilterOptions}" VerticalAlignment="Center">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
-            <StackPanel Orientation="Horizontal" Spacing="8" />
+            <WrapPanel Orientation="Horizontal" />
           </ItemsPanelTemplate>
         </ItemsControl.ItemsPanel>
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:FilterOption">
-            <Button Classes="chip" Classes.active="{Binding IsActive}" Content="{Binding Label}"
+            <Button Classes="chip" Classes.active="{Binding IsActive}" Content="{Binding Label}" Margin="0,0,8,6"
                     Tag="{Binding}" Click="OnFilterClick" />
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
 
-      <ComboBox Grid.Column="1" Width="126" ItemsSource="{Binding LanguageOptions}"
+      <ComboBox Grid.Row="1" HorizontalAlignment="Right" Width="126" ItemsSource="{Binding LanguageOptions}"
                 SelectedItem="{Binding SelectedLanguage}" VerticalAlignment="Center">
         <ComboBox.ItemTemplate>
           <DataTemplate x:DataType="vm:LanguageOption">
@@ -84,38 +84,41 @@
                         <StackPanel Orientation="Horizontal" Spacing="6" Margin="8"
                                     HorizontalAlignment="Left" VerticalAlignment="Top">
                           <Border Background="#B3000000" CornerRadius="6" Padding="7,2">
-                            <TextBlock Text="{Binding PageCountText}" FontSize="10" Foreground="#F2F4F8" />
+                            <TextBlock Text="{Binding PageCountText}" FontSize="12" Foreground="#F2F4F8" />
                           </Border>
                           <Border Background="#CC3A1D24" CornerRadius="6" Padding="7,2"
                                   IsVisible="{Binding HasMultipleVersions}" Tapped="OnVersionsClick"
                                   ToolTip.Tip="{Binding VersionSummary}">
-                            <TextBlock Text="{Binding VersionBadge}" FontSize="10" Foreground="#FFB3BF" />
+                            <TextBlock Text="{Binding VersionBadge}" FontSize="12" Foreground="#FFB3BF" />
                           </Border>
                         </StackPanel>
 
                         <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
                                 Background="#CC3A1D24" CornerRadius="6" Padding="7,2"
                                 IsVisible="{Binding IsIncomplete}">
-                          <TextBlock Text="{Binding IncompleteText}" FontSize="10" Foreground="#FFB3BF" />
+                          <TextBlock Text="{Binding IncompleteText}" FontSize="12" Foreground="#FFB3BF" />
                         </Border>
 
-                        <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8,0,0,26"
+                        <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8,0,0,44"
                                 Background="#B3000000" CornerRadius="6" Padding="7,2"
                                 IsVisible="{Binding IsFavorite}">
-                          <TextBlock Text="♥ 收藏" FontSize="10" Foreground="#FF6B81" />
+                          <TextBlock Text="♥ 收藏" FontSize="12" Foreground="#FF6B81" />
                         </Border>
 
+                        <Border Classes="language-badge" IsVisible="{Binding HasLanguages}">
+                          <TextBlock Classes="language-badge-text" Text="{Binding LanguageText}" />
+                        </Border>
                         <ProgressBar VerticalAlignment="Bottom" Height="3" Minimum="0" Maximum="1"
                                      Value="{Binding ProgressFraction}" />
                       </Grid>
                     </Border>
 
+                    <Button Grid.Row="0" Content="阅读" IsEnabled="{Binding CanRead}" Click="OnReadCard" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="6" AutomationProperties.Name="阅读此作品" />
                     <TextBlock Grid.Row="1" Classes="title" Text="{Binding Title}" TextWrapping="Wrap"
                                MaxLines="2" Height="40" Margin="0,9,0,0" />
                     <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Bottom">
                       <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock Classes="caption" Text="{Binding GidText, StringFormat='#{0}'}" />
-                        <TextBlock Classes="caption" Text="{Binding LanguageText}" IsVisible="{Binding HasLanguages}" />
                       </StackPanel>
                       <TextBlock Grid.Column="1" Classes="caption" Text="{Binding ProgressText}" />
                     </Grid>
@@ -128,15 +131,15 @@
       </ScrollViewer>
 
       <!-- Welcome -->
-      <Border Classes="panel" Width="580" Padding="30" HorizontalAlignment="Center" VerticalAlignment="Center"
+      <Border Classes="panel" MaxWidth="580" Margin="16" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center"
               IsVisible="{Binding ShowWelcome}">
         <StackPanel Spacing="12">
           <TextBlock Text="选择 EhViewer 下载目录" FontSize="20" FontWeight="Bold" />
           <TextBlock Classes="secondary" TextWrapping="Wrap"
-                     Text="支持 EhViewer / Ehviewer_CN_SXJ 的下载目录结构：gid-标题 文件夹、.ehviewer 元数据、.thumb 封面与 8 位数字页文件。也可以直接使用本应用「下载」页产出的目录。目录只会被读取，不会修改。" />
-          <TextBlock Classes="muted" FontSize="11" TextWrapping="Wrap"
-                     Text="设置、阅读进度与缓存写入 %LocalAppData%\EhViewerReader。" />
-          <TextBlock Classes="caption" FontSize="11" TextWrapping="Wrap" Text="{Binding StatusText}" />
+                     Text="支持 EhViewer / Ehviewer_CN_SXJ 的下载目录结构：gid-标题 文件夹、.ehviewer 元数据、.thumb 封面与 8 位数字页文件。也可以直接使用本应用「下载」页产出的目录。导入目录保持只读；本应用的下载内容会自动加入书库。" />
+          <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                     Text="设置、阅读进度与缓存保存在应用数据目录。" />
+          <TextBlock Classes="caption" FontSize="12" TextWrapping="Wrap" Text="{Binding StatusText}" />
           <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
             <Button Classes="primary" Content="选择资料库" Click="OnChooseFolder" />
           </StackPanel>
@@ -149,8 +152,8 @@
         <StackPanel Spacing="10">
           <TextBlock Text="正在扫描资料库…" FontWeight="Bold" />
           <ProgressBar IsIndeterminate="True" Height="4" />
-          <TextBlock Text="{Binding StatusText}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
-          <TextBlock Classes="muted" FontSize="11"
+          <TextBlock Text="{Binding StatusText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          <TextBlock Classes="muted" FontSize="12"
                      Text="首次扫描需要遍历全部页文件；可取消，已扫描部分不会写入资料库。" />
         </StackPanel>
       </Border>
@@ -167,19 +170,19 @@
     <Border Grid.Row="3" x:Name="StatusBar" Padding="22,9" MinHeight="36"
             BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" ClipToBounds="True">
       <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
-        <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center" ClipToBounds="True">
-          <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="11"
+        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" VerticalAlignment="Center" ClipToBounds="True">
+          <TextBlock HorizontalAlignment="Left" Text="{Binding StatusText}" Classes="secondary" FontSize="12"
                      TextTrimming="CharacterEllipsis" MaxWidth="440" />
-          <ProgressBar Width="110" Height="4" Minimum="0" Maximum="100" Value="{Binding ScanPercent}"
+          <ProgressBar Grid.Column="1" Width="80" Height="4" Minimum="0" Maximum="100" Value="{Binding ScanPercent}"
                        IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
-          <Button Content="取消扫描" Classes="ghost" FontSize="11" Padding="8,2" MinHeight="24"
+          <Button Grid.Column="2" Content="取消扫描" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="24"
                   Command="{Binding CancelScanCommand}" IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
-          <TextBlock Text="{Binding ScanPhase}" Classes="muted" FontSize="11" IsVisible="{Binding IsScanning}" />
-        </StackPanel>
+
+        </Grid>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-          <TextBlock Classes="muted" FontSize="11" Text="{Binding FilteredCount, StringFormat='显示 {0:N0}'}" />
-          <TextBlock Classes="muted" FontSize="11" Text="{Binding TotalGalleryCount, StringFormat='共 {0:N0} 个作品'}" />
-          <Button Content="设置" Classes="ghost" FontSize="11" Padding="8,2" MinHeight="24" Click="OnOpenSettings" />
+          <TextBlock Classes="muted" FontSize="12" Text="{Binding FilteredCount, StringFormat='显示 {0:N0}'}" />
+          <TextBlock Classes="muted" FontSize="12" Text="{Binding TotalGalleryCount, StringFormat='共 {0:N0} 个作品'}" />
+          <Button Content="设置" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="24" Click="OnOpenSettings" />
         </StackPanel>
       </Grid>
     </Border>

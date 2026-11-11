@@ -26,10 +26,12 @@ public sealed class DownloadTask
     public string ThumbUrl { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
     public string FolderPath { get; set; } = string.Empty;
+    public string DestinationRoot { get; set; } = string.Empty;
 
     /// <summary>Image size this task was queued with (original vs site-resampled).</summary>
     public ImageQuality Quality { get; set; } = ImageQuality.Original;
 
+    public int ResampledWidth { get; set; } = 1280;
     public int PageCount { get; set; }
     public int DownloadedPages { get; set; }
     public long TotalBytes { get; set; }
@@ -38,6 +40,7 @@ public sealed class DownloadTask
     public string AddedUtc { get; set; } = DateTime.UtcNow.ToString("O");
     public string? FinishedUtc { get; set; }
     public List<int> FailedPages { get; set; } = [];
+    public List<int> ResampledPages { get; set; } = [];
 
     [JsonIgnore]
     public string Id => Gid.ToString(CultureInfo.InvariantCulture);

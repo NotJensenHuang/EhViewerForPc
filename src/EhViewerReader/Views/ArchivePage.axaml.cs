@@ -4,18 +4,17 @@ using EhViewerReader.ViewModels;
 
 namespace EhViewerReader.Views;
 
-public partial class ArchiveWindow : Window
+public partial class ArchivePage : DocumentPage
 {
-    public ArchiveWindow()
+    public ArchivePage()
     {
         InitializeComponent();
-        Icon = AppIcons.Window;
     }
 
-    public ArchiveWindow(ArchiveViewModel viewModel) : this()
+    public ArchivePage(ArchiveViewModel viewModel) : this()
     {
         DataContext = viewModel;
-        Opened += async (_, _) => await viewModel.InitializeAsync();
+        Loaded += async (_, _) => await viewModel.InitializeAsync();
     }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();

@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Avalonia;
@@ -47,10 +48,10 @@ public sealed class CoverService : IDisposable
         // ItemsStretch="Fill" makes the exact card width drift with window width;
         // 64px buckets keep the cache key (and therefore the decode) stable while
         // never losing more than ~32px of sharpness.
-        int width = Bucket(targetWidth);
+        int width = Bucket(Math.Min(targetWidth, _images.CoverDecodeWidth));
         int height = Bucket(targetHeight);
         string cacheKey = AppPaths.Sanitize(gallery.StableId) + "_" + width + "x" + height;
-        CoverPixels? pixels = await _queue
+        using CoverPixels? pixels = await _queue
             .EnqueueAsync(cacheKey, token => ResolveCoverAsync(gallery, cacheKey, width, height, token), cancellationToken)
             .ConfigureAwait(false);
         if (pixels is null) return null;
@@ -83,10 +84,12 @@ public sealed class CoverService : IDisposable
                 .ConfigureAwait(false);
             if (cover is not null)
             {
-                CoverPixels pixels = ExtractPixels(cover, gallery.CoverPath);
-                cover.Dispose();
-                WriteCache(cachePath, gallery.CoverPath, pixels, token);
-                return pixels;
+                using (cover)
+                {
+                    CoverPixels pixels = ExtractPixels(cover, gallery.CoverPath);
+                    try { WriteCache(cachePath, gallery.CoverPath, pixels, token); return pixels; }
+                    catch { pixels.Dispose(); throw; }
+                }
             }
 
             _log.Warn("Cover decode failed, falling back to first readable page: " + gallery.CoverPath);
@@ -169,10 +172,12 @@ public sealed class CoverService : IDisposable
         };
 
         if (image is null) return null;
-        CoverPixels pixels = ExtractPixels(image, image.Path);
-        image.Dispose();
-        WriteCache(cachePath, pixels.SourcePath, pixels, token);
-        return pixels;
+        using (image)
+        {
+            CoverPixels pixels = ExtractPixels(image, image.Path);
+            try { WriteCache(cachePath, pixels.SourcePath, pixels, token); return pixels; }
+            catch { pixels.Dispose(); throw; }
+        }
     }
 
     private string? ProbeSourcePath(GalleryInfo gallery, string fallbackKey)
@@ -196,43 +201,43 @@ public sealed class CoverService : IDisposable
     {
         if (value <= 0) return 256;
         int rounded = (int)Math.Round(value / 64.0) * 64;
-        return Math.Clamp(rounded, 128, 512);
+        return Math.Clamp(rounded, 128, 1024);
     }
 
     private static CoverPixels ExtractPixels(DecodedImage image, string sourcePath)
     {
         int width = image.Bitmap.PixelSize.Width;
         int height = image.Bitmap.PixelSize.Height;
-        var pixels = new byte[width * height * 4];
         if (image.Bitmap is not WriteableBitmap writeable)
         {
             throw new InvalidOperationException("Cover decode did not produce a WriteableBitmap.");
         }
 
-        using (var frame = writeable.Lock())
+        int rowBytes = checked(width * 4);
+        var pixels = ArrayPool<byte>.Shared.Rent(checked(rowBytes * height));
+        try
         {
-            int bytes = Math.Min(pixels.Length, frame.RowBytes * height);
-            Marshal.Copy(frame.Address, pixels, 0, bytes);
+            using var frame = writeable.Lock();
+            for (int row = 0; row < height; row++)
+                Marshal.Copy(IntPtr.Add(frame.Address, checked(row * frame.RowBytes)), pixels, row * rowBytes, rowBytes);
+            return new CoverPixels(width, height, pixels, sourcePath);
         }
-
-        return new CoverPixels(width, height, pixels, sourcePath);
+        catch { ArrayPool<byte>.Shared.Return(pixels); throw; }
     }
 
     private static DecodedImage CreateBitmap(CoverPixels pixels)
     {
-        var bitmap = new WriteableBitmap(
-            new PixelSize(pixels.Width, pixels.Height),
-            new Vector(96, 96),
-            PixelFormat.Bgra8888,
-            AlphaFormat.Premul);
+        var bitmap = ImageMemoryBudget.CreateBitmap(pixels.Width, pixels.Height);
 
-        using (var frame = bitmap.Lock())
+        try
         {
-            int bytes = Math.Min(pixels.Pixels.Length, frame.RowBytes * pixels.Height);
-            Marshal.Copy(pixels.Pixels, 0, frame.Address, bytes);
+            using var frame = bitmap.Lock();
+            int rowBytes = checked(pixels.Width * 4);
+            for (int row = 0; row < pixels.Height; row++)
+                Marshal.Copy(pixels.Pixels, row * rowBytes, IntPtr.Add(frame.Address, checked(row * frame.RowBytes)), rowBytes);
+            return new DecodedImage(bitmap, pixels.Width, pixels.Height, pixels.SourcePath);
         }
-
-        return new DecodedImage(bitmap, pixels.Width, pixels.Height, pixels.SourcePath);
+        catch { ImageMemoryBudget.Release(bitmap); throw; }
     }
 
     /// <summary>
@@ -258,6 +263,7 @@ public sealed class CoverService : IDisposable
             if (stream.Length < 58) return false;
 
             Span<byte> header = stackalloc byte[54];
+            header.Clear();
             stream.ReadExactly(header);
             if (header[0] != (byte)'B' || header[1] != (byte)'M') return false;
 
@@ -268,8 +274,9 @@ public sealed class CoverService : IDisposable
             int pixelBytes = width * height * 4;
             if (stream.Length < 54 + pixelBytes) return false;
 
-            var data = new byte[pixelBytes];
-            stream.ReadExactly(data);
+            var data = ArrayPool<byte>.Shared.Rent(pixelBytes);
+            try { stream.ReadExactly(data.AsSpan(0, pixelBytes)); }
+            catch { ArrayPool<byte>.Shared.Return(data); throw; }
             pixels = new CoverPixels(width, height, data, sourcePath);
             return true;
         }
@@ -288,9 +295,10 @@ public sealed class CoverService : IDisposable
             Directory.CreateDirectory(_cacheDirectory);
             temporary = cachePath + "." + Guid.NewGuid().ToString("N") + ".part";
             Span<byte> header = stackalloc byte[54];
+            header.Clear();
             header[0] = (byte)'B';
             header[1] = (byte)'M';
-            BinaryPrimitives.WriteUInt32LittleEndian(header[2..], (uint)(54 + pixels.Pixels.Length));
+            BinaryPrimitives.WriteUInt32LittleEndian(header[2..], (uint)(54 + pixels.Length));
             BinaryPrimitives.WriteUInt32LittleEndian(header[6..], 0);
             BinaryPrimitives.WriteUInt32LittleEndian(header[10..], 54);
             BinaryPrimitives.WriteUInt32LittleEndian(header[14..], 40);
@@ -299,13 +307,13 @@ public sealed class CoverService : IDisposable
             BinaryPrimitives.WriteUInt16LittleEndian(header[26..], 1);
             BinaryPrimitives.WriteUInt16LittleEndian(header[28..], 32);
             BinaryPrimitives.WriteUInt32LittleEndian(header[30..], 0);
-            BinaryPrimitives.WriteUInt32LittleEndian(header[34..], (uint)pixels.Pixels.Length);
+            BinaryPrimitives.WriteUInt32LittleEndian(header[34..], (uint)pixels.Length);
 
             using (var stream = new FileStream(
                 temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
             {
                 stream.Write(header);
-                stream.Write(pixels.Pixels);
+                stream.Write(pixels.Pixels.AsSpan(0, pixels.Length));
                 stream.Flush();
             }
 

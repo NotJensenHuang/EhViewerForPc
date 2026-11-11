@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using Avalonia.Media;
+using Avalonia.Threading;
+using EhViewerReader.Core.Download;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerReader.Core.Online;
@@ -13,8 +15,9 @@ namespace EhViewerReader.ViewModels;
 /// Online gallery detail: metadata, tags, favourite slot, rating, comments and
 /// the entry points that matter — read online, download, torrents and archive.
 /// </summary>
-public sealed partial class OnlineGalleryViewModel : ObservableObject
+public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposable
 {
+    private readonly CancellationTokenSource _lifetime = new();
     private readonly AppServices _services;
     private readonly IOnlineHost _host;
     private readonly EhGallerySummary _summary;
@@ -42,6 +45,8 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         _services = services;
         _host = host;
         _summary = summary;
+        _host.LocalStateChanged += OnWorkStateChanged;
+        _services.Downloads.Changed += OnWorkStateChanged;
 
         RebuildFavoriteSlots();
         RebuildQualityOptions();
@@ -119,6 +124,22 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
     /// <summary>True when the local library already holds this gallery id.</summary>
     public bool IsInLocalLibrary => _host.HasLocalCopy(_summary.Gid);
 
+    public string DownloadButtonText => _services.Downloads.FindTask(Gid)?.State switch
+    {
+        DownloadState.Completed => "已下载", DownloadState.Running => "下载中", DownloadState.Pending => "等待下载",
+        DownloadState.Paused => "继续下载", DownloadState.Failed => "重试下载", _ => "下载"
+    };
+    public bool CanDownload => _details is not null && _services.Downloads.FindTask(Gid)?.State is not (DownloadState.Completed or DownloadState.Running or DownloadState.Pending);
+    private bool _disposed;
+    private void OnWorkStateChanged(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() =>
+    {
+        if (_disposed) return;
+        OnPropertyChanged(nameof(IsInLocalLibrary)); OnPropertyChanged(nameof(HasPartialLocalCopy));
+        OnPropertyChanged(nameof(ReadButtonText)); OnPropertyChanged(nameof(DownloadButtonText)); OnPropertyChanged(nameof(CanDownload));
+    }, DispatcherPriority.Background);
+
+    public bool HasPartialLocalCopy => !IsInLocalLibrary && _host.HasLocalCopy(_summary.Gid, false);
+
     public bool HasFavoriteCount => FavoriteCountText.Length > 0;
 
     /// <summary>The primary button reads local when the work is already on disk.</summary>
@@ -139,11 +160,9 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
 
             // Remember the choice: it is the default for the next gallery too.
             ImageQuality quality = IsOriginalQuality ? ImageQuality.Original : ImageQuality.Resampled;
-            if (_services.Settings.ImageQuality != quality)
-            {
-                _services.Settings.ImageQuality = quality;
-                _services.TrySaveSettings(out _);
-            }
+            _services.Settings.ImageQuality = quality;
+            if (!IsOriginalQuality && int.TryParse(value.Key.AsSpan(3), out int width)) _services.Settings.ResampledWidth = width;
+            _services.TrySaveSettings(out _);
         }
     }
 
@@ -153,18 +172,14 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         ? (_services.Online.IsSignedIn
             ? "原图：每页单独解析，画质最好、流量最大"
             : "原图需要登录；未登录时会自动改用站点压缩图")
-        : "站点压缩图：宽度约 1280（站点账号可改为 780/980/1600/2400）";
+        : $"请求宽度 {_services.Settings.ResampledWidth}px 的站点压缩图；实际尺寸受站点权限及源图影响";
 
     private void RebuildQualityOptions()
     {
-        _qualityOptions =
-        [
-            new FeedOption("orig", "原图"),
-            new FeedOption("res", "压缩图（约 1280）"),
-        ];
-
-        bool original = _services.Settings.ImageQuality == ImageQuality.Original;
-        _selectedQuality = _qualityOptions[original ? 0 : 1];
+        _qualityOptions = new[] { new FeedOption("orig", "原图") }
+            .Concat(new[] { 780, 980, 1280, 1600, 2400 }.Select(w => new FeedOption("res" + w, "压缩图 " + w + "px"))).ToArray();
+        string key = _services.Settings.ImageQuality == ImageQuality.Original ? "orig" : "res" + _services.Settings.ResampledWidth;
+        _selectedQuality = _qualityOptions.First(o => o.Key == key);
         _selectedQuality.IsActive = true;
     }
 
@@ -285,10 +300,11 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         try
         {
             EhGalleryDetails details = await _services.Online
-                .GetDetailsAsync(_summary.Gid, _summary.Token, CancellationToken.None)
+                .GetDetailsAsync(_summary.Gid, _summary.Token, _lifetime.Token)
                 .ConfigureAwait(true);
 
             _details = details;
+            OnWorkStateChanged(this, EventArgs.Empty);
             Title = details.DisplayTitle.Length > 0 ? details.DisplayTitle : _summary.Title;
             StatusText = string.Empty;
             MyRating = 0;
@@ -311,7 +327,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
                     // #favoritelink proves the state but not the slot; the popup
                     // names the selected one.
                     slot = await _services.Online
-                        .GetFavoriteSlotAsync(_summary.Gid, _summary.Token, CancellationToken.None)
+                        .GetFavoriteSlotAsync(_summary.Gid, _summary.Token, _lifetime.Token)
                         .ConfigureAwait(true);
                 }
             }
@@ -320,6 +336,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
             RebuildComments(details.Comments);
             RaiseMetadata();
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             StatusText = ex.Message;
@@ -460,7 +477,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         {
             StatusText = add ? "正在收藏…" : "正在取消收藏…";
             bool ok = await _services.Online
-                .SetFavoriteAsync(_summary.Gid, _summary.Token, target, add, string.Empty, CancellationToken.None)
+                .SetFavoriteAsync(_summary.Gid, _summary.Token, target, add, string.Empty, _lifetime.Token)
                 .ConfigureAwait(true);
 
             if (ok)
@@ -475,6 +492,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
                 SetFavoriteState(IsFavorite, _favoriteSlot);
             }
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             StatusText = "收藏失败：" + ex.Message;
@@ -529,6 +547,16 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
             return;
         }
 
+        ReadOnline();
+    }
+
+    [RelayCommand]
+    private void ReadPartialLocal() => _host.OpenLocal(_summary.Gid, allowIncomplete: true);
+
+    [RelayCommand]
+    private void ReadOnline()
+    {
+        if (_details is null) return;
         ReadRequested?.Invoke(this, new OnlineReadRequest(_details, SelectedQuality.Key == "orig"
             ? ImageQuality.Original
             : ImageQuality.Resampled));
@@ -604,7 +632,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         try
         {
             (double average, int count, string? error) = await _services.Online
-                .RateGalleryAsync(_details, value, CancellationToken.None)
+                .RateGalleryAsync(_details, value, _lifetime.Token)
                 .ConfigureAwait(true);
 
             if (error is not null)
@@ -619,6 +647,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
             RatingStatus = "已评分";
             RaiseMetadata();
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             RatingStatus = "评分失败：" + ex.Message;
@@ -647,7 +676,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         try
         {
             EhCommentActionResult result = await _services.Online
-                .PostCommentAsync(_details.Gid, _details.Token, text, _editingCommentId, CancellationToken.None)
+                .PostCommentAsync(_details.Gid, _details.Token, text, _editingCommentId, _lifetime.Token)
                 .ConfigureAwait(true);
 
             CommentStatus = result.Message;
@@ -658,6 +687,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
                 await ReloadCommentsAsync().ConfigureAwait(true);
             }
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             CommentStatus = "发布失败：" + ex.Message;
@@ -677,12 +707,13 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         try
         {
             EhCommentList list = await _services.Online
-                .GetCommentsAsync(_details.Gid, _details.Token, CancellationToken.None)
+                .GetCommentsAsync(_details.Gid, _details.Token, _lifetime.Token)
                 .ConfigureAwait(true);
             _details.HasMoreComments = list.HasMore;
             RebuildComments(list.Comments);
             OnPropertyChanged(nameof(HasMoreComments));
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             CommentStatus = "评论加载失败：" + ex.Message;
@@ -729,12 +760,13 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         try
         {
             EhCommentActionResult result = await _services.Online
-                .VoteCommentAsync(_details, item.Id, vote, CancellationToken.None)
+                .VoteCommentAsync(_details, item.Id, vote, _lifetime.Token)
                 .ConfigureAwait(true);
 
             CommentStatus = result.Message;
             if (result.Success) item.ApplyScore(result.Score);
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             CommentStatus = "投票失败：" + ex.Message;
@@ -754,5 +786,12 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject
         {
             OnPropertyChanged(property);
         }
+    }
+    public void Dispose()
+    {
+        _disposed = true;
+        _host.LocalStateChanged -= OnWorkStateChanged;
+        _services.Downloads.Changed -= OnWorkStateChanged;
+        _lifetime.Cancel();
     }
 }

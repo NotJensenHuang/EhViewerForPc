@@ -27,6 +27,7 @@ public sealed class StartupOptions
     /// <summary>Browser/DevTools probe: launch a headless shell, read cookies.</summary>
     public bool LoginProbe { get; private set; }
     public bool UiSmoke { get; private set; }
+    public bool ReaderRegression { get; private set; }
     public bool SkipSnapshot { get; private set; }
     public bool DeepProbe { get; private set; }
     public bool Verbose { get; private set; }
@@ -76,6 +77,10 @@ public sealed class StartupOptions
                     break;
                 case "--login-probe":
                     options.LoginProbe = true;
+                    break;
+                case "--reader-regression":
+                    options.ReaderRegression = true;
+                    options.UiSmoke = true;
                     break;
                 case "--ui-smoke":
                     options.UiSmoke = true;

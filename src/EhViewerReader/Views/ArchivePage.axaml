@@ -1,15 +1,12 @@
-<Window xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:EhViewerReader.ViewModels"
         mc:Ignorable="d" d:DesignWidth="720" d:DesignHeight="560"
-        x:Class="EhViewerReader.Views.ArchiveWindow"
+        x:Class="EhViewerReader.Views.ArchivePage"
         x:DataType="vm:ArchiveViewModel"
-        Title="{Binding Title}"
-        Width="720" Height="560" MinWidth="620" MinHeight="460"
-        Background="{DynamicResource AppBgBrush}"
-        WindowStartupLocation="CenterOwner">
+        Background="{DynamicResource AppBgBrush}">
   <Grid Background="{DynamicResource AppBgBrush}" RowDefinitions="Auto,*,Auto">
     <Border Grid.Row="0" Padding="22,16,22,12" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,0,0,1">
@@ -59,7 +56,7 @@
 
             <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasDownloadUrl}">
               <Button Content="再次下载归档" Command="{Binding SaveAgainCommand}" />
-              <TextBlock Classes="caption" Text="{Binding DownloadUrl}" TextTrimming="CharacterEllipsis"
+              <TextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding DownloadUrl}" TextTrimming="CharacterEllipsis"
                          VerticalAlignment="Center" MaxWidth="420" />
             </StackPanel>
           </StackPanel>
@@ -92,8 +89,8 @@
 
     <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0">
-      <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="11" VerticalAlignment="Center"
+      <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center"
                  TextWrapping="Wrap" />
     </Border>
   </Grid>
-</Window>
+</UserControl>

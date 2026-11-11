@@ -7,21 +7,20 @@ using EhViewerReader.ViewModels;
 
 namespace EhViewerReader.Views;
 
-public partial class TorrentWindow : Window
+public partial class TorrentPage : DocumentPage
 {
     private TorrentViewModel? _viewModel;
 
-    public TorrentWindow()
+    public TorrentPage()
     {
         InitializeComponent();
-        Icon = AppIcons.Window;
     }
 
-    public TorrentWindow(TorrentViewModel viewModel) : this()
+    public TorrentPage(TorrentViewModel viewModel) : this()
     {
         _viewModel = viewModel;
         DataContext = viewModel;
-        Opened += async (_, _) => await viewModel.InitializeAsync();
+        Loaded += async (_, _) => await viewModel.InitializeAsync();
     }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();

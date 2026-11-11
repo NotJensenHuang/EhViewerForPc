@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Buffers;
 using System.Threading.Channels;
 
 namespace EhViewerReader.Services;
@@ -8,7 +9,17 @@ namespace EhViewerReader.Services;
 /// them into its own WriteableBitmap so a recycled container can dispose its
 /// bitmap without pulling the rug from under another visible card.
 /// </summary>
-public sealed record CoverPixels(int Width, int Height, byte[] Pixels, string SourcePath);
+public sealed class CoverPixels(int width, int height, byte[] pixels, string sourcePath) : IDisposable
+{
+    private int _owners = 1;
+    public int Width { get; } = width;
+    public int Height { get; } = height;
+    public byte[] Pixels { get; } = pixels;
+    public int Length => Width * Height * 4;
+    public string SourcePath { get; } = sourcePath;
+    public CoverPixels Acquire() { Interlocked.Increment(ref _owners); return this; }
+    public void Dispose() { if (Interlocked.Decrement(ref _owners) == 0) ArrayPool<byte>.Shared.Return(Pixels); }
+}
 
 /// <summary>
 /// Bounded cover load queue modelled on WinUIMusicPlayer's CoverLoadQueue:
@@ -33,7 +44,9 @@ public sealed class CoverLoadQueue : IDisposable
         FullMode = BoundedChannelFullMode.Wait,
     });
 
-    private readonly ConcurrentDictionary<string, Job> _pending = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Job> _pending = new(StringComparer.Ordinal);
+    private readonly object _pendingGate = new();
+    private int _disposed;
     private readonly List<Thread> _workers = [];
     private readonly CancellationTokenSource _shutdown = new();
     private readonly object _initLock = new();
@@ -94,6 +107,7 @@ public sealed class CoverLoadQueue : IDisposable
             if (Volatile.Read(ref _completed) != 0 && Volatile.Read(ref _waiters) == 0 &&
                 Interlocked.Exchange(ref _disposed, 1) == 0)
             {
+                if (Tcs.Task.Status == TaskStatus.RanToCompletion) Tcs.Task.Result?.Dispose();
                 _workCts.Dispose();
             }
         }
@@ -109,36 +123,26 @@ public sealed class CoverLoadQueue : IDisposable
         Func<CancellationToken, Task<CoverPixels?>> work,
         CancellationToken token)
     {
+        if (Volatile.Read(ref _disposed) != 0) return null;
         EnsureInitialized();
         Job job;
-        bool isNew = false;
-        while (true)
+        bool isNew;
+        lock (_pendingGate)
         {
-            if (_pending.TryGetValue(cacheKey, out Job? existing) &&
-                (!existing.Tcs.Task.IsCompleted || existing.Tcs.Task.Status == TaskStatus.RanToCompletion))
+            if (_pending.TryGetValue(cacheKey, out var existing) && !existing.Token.IsCancellationRequested)
             {
-                job = existing;
-                break;
+                job = existing; isNew = false;
             }
-
-            if (existing is not null)
+            else
             {
-                _pending.TryRemove(cacheKey, out _);
+                job = new Job(cacheKey, work);
+                _pending[cacheKey] = job;
+                isNew = true;
             }
-
-            var candidate = new Job(cacheKey, work);
-            if (!_pending.TryAdd(cacheKey, candidate))
-            {
-                candidate.Abandon();
-                continue;
-            }
-
-            job = candidate;
-            isNew = true;
-            break;
+            // The worker removes a job under this same lock before disposing
+            // its result, so no consumer can join a result whose lease expired.
+            job.AddWaiter();
         }
-
-        job.AddWaiter();
         bool releasedHere = false;
         try
         {
@@ -186,8 +190,8 @@ public sealed class CoverLoadQueue : IDisposable
             }
 
             CoverPixels? pixels = await job.Tcs.Task.WaitAsync(token).ConfigureAwait(false);
-            if (token.IsCancellationRequested) return null;
-            return pixels;
+            token.ThrowIfCancellationRequested();
+            return pixels?.Acquire();
         }
         finally
         {
@@ -260,11 +264,15 @@ public sealed class CoverLoadQueue : IDisposable
         }
     }
 
-    private void Remove(Job job) => _pending.TryRemove(job.CacheKey, out _);
+    private void Remove(Job job)
+    {
+        lock (_pendingGate)
+            if (_pending.TryGetValue(job.CacheKey, out var current) && ReferenceEquals(current, job)) _pending.Remove(job.CacheKey);
+    }
 
     public void Dispose()
     {
-        if (Volatile.Read(ref _initialized) == 0) return;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0 || Volatile.Read(ref _initialized) == 0) return;
         _shutdown.Cancel();
         _channel.Writer.TryComplete();
         while (_channel.Reader.TryRead(out Job? job))

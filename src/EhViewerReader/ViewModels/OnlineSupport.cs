@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -13,6 +13,7 @@ namespace EhViewerReader.ViewModels;
 public interface IOnlineHost
 {
     EhSite Site { get; }
+    event EventHandler? LocalStateChanged;
 
     void OpenGallery(EhGallerySummary summary);
 
@@ -29,10 +30,10 @@ public interface IOnlineHost
     void OpenExternal(string url);
 
     /// <summary>True when the local library already holds this gallery id.</summary>
-    bool HasLocalCopy(long gid);
+    bool HasLocalCopy(long gid, bool requireComplete = true);
 
     /// <summary>Opens the local copy in the reader; false when there is none.</summary>
-    bool OpenLocal(long gid);
+    bool OpenLocal(long gid, bool allowIncomplete = false);
 }
 
 /// <summary>Online reading request: which gallery, at which image size.</summary>
@@ -303,19 +304,23 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public DownloadTask Task { get; }
 
     [RelayCommand]
-    private void Pause() => _owner.PauseTask(this);
+    private System.Threading.Tasks.Task PauseAsync() => _owner.PauseTask(this);
 
     [RelayCommand]
-    private void Resume() => _owner.ResumeTask(this);
+    private System.Threading.Tasks.Task ResumeAsync() => _owner.ResumeTask(this);
 
     [RelayCommand]
-    private void Remove() => _owner.RemoveTask(this);
+    private System.Threading.Tasks.Task RemoveAsync() => _owner.RemoveTask(this);
 
     [RelayCommand]
     private void OpenFolder() => _owner.OpenTaskFolder(this);
 
     [RelayCommand]
-    private void DeleteFiles() => _owner.RemoveWithFiles(this);
+    private System.Threading.Tasks.Task DeleteFilesAsync() { ConfirmDelete = false; return _owner.RemoveWithFiles(this); }
+    [ObservableProperty] private bool _confirmDelete;
+    [RelayCommand] private void RequestDelete() => ConfirmDelete = true;
+    [RelayCommand] private void CancelDelete() => ConfirmDelete = false;
+    [RelayCommand] private void Read() => _owner.ReadTaskCommand.Execute(this);
 
     public string Title => Task.DisplayTitle;
     public string GidText => "#" + Task.Gid;
@@ -325,7 +330,7 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public string SizeText => Task.SizeText;
     public string Message => Task.Message;
     public string Label => Task.Label;
-    public string QualityText => Task.Quality == ImageQuality.Original ? "原图" : "压缩图";
+    public string QualityText => Task.Quality == ImageQuality.Original ? (Task.ResampledPages.Count > 0 ? $"原图（{Task.ResampledPages.Count} 页回退压缩图）" : "原图") : $"压缩图 {Task.ResampledWidth}px";
     public string FolderPath => Task.FolderPath;
 
     public bool IsRunning => Task.State == DownloadState.Running;
@@ -335,7 +340,7 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public bool IsCompleted => Task.State == DownloadState.Completed;
     public bool CanPause => Task.State is DownloadState.Running or DownloadState.Pending;
     public bool CanResume => Task.State is DownloadState.Paused or DownloadState.Failed;
-    public bool HasMessage => Task.Message.Length > 0 && !IsCompleted;
+    public bool HasMessage => Task.Message.Length > 0;
 
     public string StateBadgeColor => Task.State switch
     {

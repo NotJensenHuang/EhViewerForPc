@@ -65,4 +65,30 @@ public static class ImageSignature
         ImageKind.Webp => "webp",
         _ => "unknown",
     };
+
+    /// <summary>Cheap container validation before an image is committed or reused.
+    /// Rejects HTML, empty and truncated transfers without allocating image pixels.</summary>
+    public static bool IsValidFile(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64);
+            if (stream.Length < 16) return false;
+            Span<byte> header = stackalloc byte[32];
+            int read = stream.Read(header);
+            ImageKind kind = Detect(header[..read]);
+            Span<byte> tail = stackalloc byte[12];
+            stream.Seek(-12, SeekOrigin.End);
+            stream.ReadExactly(tail);
+            return kind switch
+            {
+                ImageKind.Jpeg => tail[^2] == 0xff && tail[^1] == 0xd9,
+                ImageKind.Png => tail[4..8].SequenceEqual("IEND"u8),
+                ImageKind.Gif => tail[^1] == 0x3b,
+                ImageKind.Webp => System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header[4..8]) + 8L == stream.Length,
+                _ => false,
+            };
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
 }

@@ -18,7 +18,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     [
         nameof(Info), nameof(StableId), nameof(WorkId), nameof(Title), nameof(FolderName),
         nameof(FolderPath), nameof(FolderPathDisplay), nameof(Gid), nameof(GidText),
-        nameof(PageCount), nameof(PageCountText), nameof(LanguageText), nameof(HasLanguages),
+        nameof(PageCount), nameof(CanRead), nameof(PageCountText), nameof(LanguageText), nameof(HasLanguages),
         nameof(IsIncomplete), nameof(HasMissingPages), nameof(HasZeroByteFiles), nameof(IsEmpty),
         nameof(IsDuplicateGid), nameof(IncompleteText), nameof(MissingText), nameof(ExtensionSummary),
         nameof(ExpectedPagesText), nameof(LastWriteText), nameof(CoverSourceText), nameof(HeaderErrorText),
@@ -84,6 +84,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     public long? Gid => Info.Gid;
     public string GidText => Info.Gid?.ToString() ?? "—";
     public int PageCount => Info.PageCount;
+    public bool CanRead => PageCount > 0;
 
     public string PageCountText => Info.ExpectedPages is int expected && expected != Info.PageCount
         ? $"{Info.PageCount}/{expected} 页"
@@ -283,7 +284,12 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     /// <summary>Legacy progress keys that were used before work-level identity.</summary>
     public static ReadingProgress? LoadProgress(ProgressStore store, GalleryInfo info)
     {
-        ReadingProgress? progress = store.Get(info.WorkId) ?? store.Get(info.StableId);
+        ReadingProgress? progress = store.Get(info.WorkId);
+        if (progress is null && store.Get(info.StableId) is { } legacy)
+        {
+            store.Set(info.WorkId, legacy);
+            progress = legacy;
+        }
         return progress;
     }
 }

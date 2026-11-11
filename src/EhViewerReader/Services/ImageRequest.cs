@@ -60,6 +60,7 @@ public sealed class ImageLoader
 
     public int MaxMegapixels { get; set; } = 24;
     public int MaxDimension { get; set; } = 16000;
+    public int CoverDecodeWidth { get; set; } = 360;
 
     public async Task<DecodedImage?> LoadCandidatesAsync(
         IReadOnlyList<PageCandidate> candidates,

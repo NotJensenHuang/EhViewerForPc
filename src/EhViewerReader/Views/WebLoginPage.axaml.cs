@@ -5,28 +5,30 @@ using EhViewerReader.ViewModels;
 
 namespace EhViewerReader.Views;
 
-public partial class WebLoginWindow : Window
+public partial class WebLoginPage : DocumentPage
 {
     private readonly WebLoginViewModel? _viewModel;
     private bool _closed;
 
-    public WebLoginWindow()
+    public WebLoginPage()
     {
         InitializeComponent();
-        Icon = AppIcons.Window;
     }
 
-    public WebLoginWindow(WebLoginViewModel viewModel) : this()
+    public WebLoginPage(WebLoginViewModel viewModel) : this()
     {
         _viewModel = viewModel;
         DataContext = viewModel;
         viewModel.Completed += OnCompleted;
-        Opened += (_, _) => viewModel.Start();
-        Closed += (_, _) =>
-        {
-            viewModel.Completed -= OnCompleted;
-            viewModel.Dispose();
-        };
+        Loaded += (_, _) => viewModel.Start();
+
+    }
+
+    public override void Dispose()
+    {
+        if (_viewModel is null) return;
+        _viewModel.Completed -= OnCompleted;
+        _viewModel.Dispose();
     }
 
     private void OnCompleted(object? sender, Core.Online.EhLoginResult result)

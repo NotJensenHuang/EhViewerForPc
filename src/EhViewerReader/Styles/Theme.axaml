@@ -13,8 +13,9 @@
           <SolidColorBrush x:Key="AppBorderStrongBrush" Color="#333A47" />
           <SolidColorBrush x:Key="AppTextBrush" Color="#F2F4F8" />
           <SolidColorBrush x:Key="AppTextSecondaryBrush" Color="#9AA3B2" />
-          <SolidColorBrush x:Key="AppTextMutedBrush" Color="#6E7686" />
+          <SolidColorBrush x:Key="AppTextMutedBrush" Color="#9AA3B2" />
           <SolidColorBrush x:Key="AppAccentBrush" Color="#FF6B81" />
+          <SolidColorBrush x:Key="AppAccentTextBrush" Color="#14090C" />
           <SolidColorBrush x:Key="AppAccentSoftBrush" Color="#2A1A20" />
           <SolidColorBrush x:Key="AppSuccessBrush" Color="#5AD1A0" />
           <SolidColorBrush x:Key="AppWarningBrush" Color="#F2C46D" />
@@ -30,8 +31,9 @@
           <SolidColorBrush x:Key="AppBorderStrongBrush" Color="#C6CCD6" />
           <SolidColorBrush x:Key="AppTextBrush" Color="#1A1D23" />
           <SolidColorBrush x:Key="AppTextSecondaryBrush" Color="#5A6372" />
-          <SolidColorBrush x:Key="AppTextMutedBrush" Color="#8A93A2" />
-          <SolidColorBrush x:Key="AppAccentBrush" Color="#E2556B" />
+          <SolidColorBrush x:Key="AppTextMutedBrush" Color="#596273" />
+          <SolidColorBrush x:Key="AppAccentBrush" Color="#B63650" />
+          <SolidColorBrush x:Key="AppAccentTextBrush" Color="#FFFFFF" />
           <SolidColorBrush x:Key="AppAccentSoftBrush" Color="#FDEDF0" />
           <SolidColorBrush x:Key="AppSuccessBrush" Color="#1F9D74" />
           <SolidColorBrush x:Key="AppWarningBrush" Color="#B77A12" />
@@ -39,8 +41,8 @@
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
 
-      <FontFamily x:Key="AppFont">Microsoft YaHei UI, Segoe UI, Inter</FontFamily>
-      <FontFamily x:Key="AppMonoFont">Cascadia Mono, Consolas, Microsoft YaHei UI</FontFamily>
+      <FontFamily x:Key="AppFont">Microsoft YaHei UI, PingFang SC, Noto Sans CJK SC, Segoe UI, Inter</FontFamily>
+      <FontFamily x:Key="AppMonoFont">Cascadia Mono, Menlo, DejaVu Sans Mono, Consolas, Noto Sans CJK SC, Microsoft YaHei UI</FontFamily>
     </ResourceDictionary>
   </Styles.Resources>
 
@@ -70,7 +72,7 @@
   </Style>
 
   <Style Selector="TextBlock.caption">
-    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontSize" Value="12" />
     <Setter Property="Foreground" Value="{DynamicResource AppTextMutedBrush}" />
   </Style>
 
@@ -119,7 +121,7 @@
 
   <Style Selector="Button.primary">
     <Setter Property="Background" Value="{DynamicResource AppAccentBrush}" />
-    <Setter Property="Foreground" Value="#14090C" />
+    <Setter Property="Foreground" Value="{DynamicResource AppAccentTextBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource AppAccentBrush}" />
     <Setter Property="FontWeight" Value="SemiBold" />
   </Style>
@@ -195,7 +197,7 @@
     <Setter Property="Background" Value="{DynamicResource AppSurfaceBrush}" />
     <Setter Property="Foreground" Value="{DynamicResource AppTextBrush}" />
     <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
-    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontSize" Value="12" />
   </Style>
 
   <!-- Navigation rail -->
@@ -290,4 +292,15 @@
     <Setter Property="FontSize" Value="12" />
     <Setter Property="MinHeight" Value="26" />
   </Style>
+  <Style Selector="Window.compact TextBlock.nav-label"><Setter Property="IsVisible" Value="False" /></Style>
+  <Style Selector="Window.compact StackPanel.wide-nav"><Setter Property="IsVisible" Value="False" /></Style>
+  <Style Selector="Window.compact Button.nav"><Setter Property="Padding" Value="4,8" /></Style>
+  <Style Selector="WrapPanel > Button"><Setter Property="Margin" Value="0,0,6,6" /></Style>
+  <Style Selector="WrapPanel > ComboBox"><Setter Property="Margin" Value="0,0,6,6" /></Style>
+  <Style Selector="Border.language-badge">
+    <Setter Property="HorizontalAlignment" Value="Right" /><Setter Property="VerticalAlignment" Value="Bottom" />
+    <Setter Property="Margin" Value="8" /><Setter Property="Background" Value="#CC101317" />
+    <Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="7,2" />
+  </Style>
+  <Style Selector="TextBlock.language-badge-text"><Setter Property="FontSize" Value="10" /><Setter Property="Foreground" Value="#9EC1FF" /></Style>
 </Styles>

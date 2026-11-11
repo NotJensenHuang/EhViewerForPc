@@ -62,16 +62,12 @@ internal static class AnimationFramePool
                 }
 
                 Known.Remove(candidate);
-                candidate.Dispose();
+                ImageMemoryBudget.Release(candidate);
             }
         }
 
         Interlocked.Increment(ref _allocations);
-        var created = new WriteableBitmap(
-            new PixelSize(width, height),
-            new Vector(96, 96),
-            PixelFormat.Bgra8888,
-            AlphaFormat.Premul);
+        var created = ImageMemoryBudget.CreateBitmap(width, height);
         lock (Gate)
         {
             Known.Add(created);
@@ -92,10 +88,10 @@ internal static class AnimationFramePool
             if (Idle.Contains(bitmap)) return true; // already returned; ignore a duplicate
 
             Interlocked.Increment(ref _returns);
-            if (Idle.Count >= MaxIdle)
+            if (Idle.Count >= MaxIdle || (long)bitmap.PixelSize.Width * bitmap.PixelSize.Height * 4 > ImageMemoryBudget.LimitBytes / 8)
             {
                 Known.Remove(bitmap);
-                bitmap.Dispose();
+                ImageMemoryBudget.Release(bitmap);
                 return true;
             }
 
@@ -109,16 +105,14 @@ internal static class AnimationFramePool
     {
         if (bitmap is null) return;
         if (bitmap is WriteableBitmap writeable && TryReturn(writeable)) return;
-        bitmap.Dispose();
+        ImageMemoryBudget.Release(bitmap);
     }
 
     public static void Clear()
     {
         lock (Gate)
         {
-            while (Idle.Count > 0) Idle.Dequeue().Dispose();
-            foreach (WriteableBitmap bitmap in Known) bitmap.Dispose();
-            Known.Clear();
+            while (Idle.Count > 0) { var bitmap = Idle.Dequeue(); Known.Remove(bitmap); ImageMemoryBudget.Release(bitmap); }
         }
     }
 }

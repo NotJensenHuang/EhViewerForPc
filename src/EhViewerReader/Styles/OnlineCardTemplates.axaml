@@ -38,10 +38,8 @@
               <TextBlock Text="{Binding RatingText}" FontSize="10" Foreground="#F2C46D" />
             </Border>
 
-            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="8"
-                    Background="#CC101317" CornerRadius="6" Padding="7,2"
-                    IsVisible="{Binding HasLanguage}">
-              <TextBlock Text="{Binding LanguageText}" FontSize="10" Foreground="#9EC1FF" />
+            <Border Classes="language-badge" IsVisible="{Binding HasLanguage}">
+              <TextBlock Classes="language-badge-text" Text="{Binding LanguageText}" />
             </Border>
           </Grid>
         </Border>

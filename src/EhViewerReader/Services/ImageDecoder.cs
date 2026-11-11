@@ -59,7 +59,7 @@ public sealed class DecodedImage : IDisposable
         if (_disposed) return;
         _disposed = true;
         if (IsPooled) AnimationFramePool.Release(Bitmap);
-        else Bitmap.Dispose();
+        else ImageMemoryBudget.Release(Bitmap);
     }
 }
 
@@ -296,16 +296,13 @@ public sealed class ImageDecoder : IDisposable
         // make playback wait behind page prefetch (the "freezes mid-way" report).
         SemaphoreSlim gate = estimatedBytes >= LargeImageThresholdBytes ? _largeSemaphore : _normalSemaphore;
         bool gated = !pooledBuffer;
+        using var scratchBudget = ImageMemoryBudget.Reserve(direct ? 0 : (long)decodeWidth * decodeHeight * 4, scratch: true);
         if (gated) gate.Wait(cancellationToken);
         try
         {
             WriteableBitmap writeable = pooledBuffer
                 ? AnimationFramePool.Rent(finalWidth, finalHeight)
-                : new WriteableBitmap(
-                    new Avalonia.PixelSize(finalWidth, finalHeight),
-                    new Avalonia.Vector(96, 96),
-                    PixelFormat.Bgra8888,
-                    AlphaFormat.Premul);
+                : ImageMemoryBudget.CreateBitmap(finalWidth, finalHeight);
 
             try
             {
@@ -334,7 +331,7 @@ public sealed class ImageDecoder : IDisposable
             catch
             {
                 if (pooledBuffer) AnimationFramePool.Release(writeable);
-                else writeable.Dispose();
+                else ImageMemoryBudget.Release(writeable);
                 throw;
             }
         }
@@ -366,6 +363,7 @@ public sealed class ImageDecoder : IDisposable
         bool pooledBuffer,
         ref SKBitmap? canvas,
         ref int canvasFrame,
+        ref IDisposable? canvasBudget,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -395,6 +393,8 @@ public sealed class ImageDecoder : IDisposable
         if (canvas is null || canvas.Width != decodeWidth || canvas.Height != decodeHeight)
         {
             canvas?.Dispose();
+            canvasBudget?.Dispose();
+            canvasBudget = ImageMemoryBudget.Reserve((long)decodeWidth * decodeHeight * 4, scratch: true);
             canvas = new SKBitmap(info);
             canvasFrame = -1;
         }
@@ -429,11 +429,7 @@ public sealed class ImageDecoder : IDisposable
 
         WriteableBitmap writeable = pooledBuffer
             ? AnimationFramePool.Rent(finalWidth, finalHeight)
-            : new WriteableBitmap(
-                new Avalonia.PixelSize(finalWidth, finalHeight),
-                new Avalonia.Vector(96, 96),
-                PixelFormat.Bgra8888,
-                AlphaFormat.Premul);
+            : ImageMemoryBudget.CreateBitmap(finalWidth, finalHeight);
 
         try
         {
@@ -470,7 +466,7 @@ public sealed class ImageDecoder : IDisposable
         catch
         {
             if (pooledBuffer) AnimationFramePool.Release(writeable);
-            else writeable.Dispose();
+            else ImageMemoryBudget.Release(writeable);
             throw;
         }
     }
@@ -597,7 +593,6 @@ public sealed class ImageDecoder : IDisposable
         SKCodecOptions options,
         ref SKBitmap? scratch)
     {
-        for (int attempt = 0; attempt < 2; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var info = new SKImageInfo(decodeWidth, decodeHeight, SKColorType.Bgra8888, SKAlphaType.Premul);
@@ -624,11 +619,8 @@ public sealed class ImageDecoder : IDisposable
             }
 
             // Codec cannot scale to the requested size (typically PNG); retry native.
-            decodeWidth = storedWidth;
-            decodeHeight = storedHeight;
+            throw new InvalidOperationException("此图片格式无法在内存预算内缩小解码，请选择压缩图");
         }
-
-        return null;
     }
 
     private static SKMatrix CreateOrientationMatrix(SKEncodedOrigin origin, int width, int height)
@@ -743,6 +735,7 @@ public sealed class AnimationCursor : IDisposable
     /// one, so this must survive between calls (see DecodeAnimationFrame).
     /// </summary>
     private SKBitmap? _canvas;
+    private IDisposable? _canvasBudget;
 
     /// <summary>Frame currently composed into <see cref="_canvas"/>; -1 = empty.</summary>
     private int _canvasFrame = -1;
@@ -788,7 +781,7 @@ public sealed class AnimationCursor : IDisposable
             return await Task.Run(
                 () => _decoder.DecodeAnimationFrame(
                     _codec, _path, frameIndex, _targetWidth, _targetHeight, _maxMegapixels, _maxDimension,
-                    pooledBuffer: true, ref _canvas, ref _canvasFrame, cancellationToken),
+                    pooledBuffer: true, ref _canvas, ref _canvasFrame, ref _canvasBudget, cancellationToken),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -816,6 +809,7 @@ public sealed class AnimationCursor : IDisposable
             _codec.Dispose();
             _stream.Dispose();
             _canvas?.Dispose();
+            _canvasBudget?.Dispose();
             _canvas = null;
         }
         finally

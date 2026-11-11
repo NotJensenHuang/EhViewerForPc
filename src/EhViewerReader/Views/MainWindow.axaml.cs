@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -17,16 +17,17 @@ namespace EhViewerReader.Views;
 public partial class MainWindow : Window
 {
     private readonly Dictionary<object, Control> _views = [];
-    private readonly List<ReaderWindow> _readers = [];
     private ShellViewModel? _shell;
     private LibraryPage? _libraryPage;
     private OnlineFeedPage? _onlinePage;
     private SettingsPage? _settingsPage;
-    private OnlineGalleryWindow? _galleryWindow;
-    private TorrentWindow? _torrentWindow;
-    private ArchiveWindow? _archiveWindow;
-    private WebLoginWindow? _loginWindow;
+    private readonly List<DocumentPage> _documents = [];
+    private WebLoginPage? _loginPage;
+    private readonly CancellationTokenSource _lifetime = new();
+    private readonly HashSet<string> _openingReaders = new(StringComparer.Ordinal);
     private bool _closing;
+    private bool? _sidebarOverride;
+    private bool? _lastNarrow;
 
     public MainWindow()
     {
@@ -35,6 +36,7 @@ public partial class MainWindow : Window
         Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
         KeyDown += OnWindowKeyDown;
         Closing += OnWindowClosing;
+        SizeChanged += (_, _) => UpdateAdaptiveLayout();
     }
 
     public MainWindow(ShellViewModel shell) : this()
@@ -50,7 +52,8 @@ public partial class MainWindow : Window
     public ShellViewModel? Shell => _shell;
 
     /// <summary>Exposed for the UI smoke test (web login window, when open).</summary>
-    public Window? LoginWindow => _loginWindow;
+    public DocumentPage? LoginWindow => _loginPage;
+    public ReaderPage? ActiveReader => _documents.LastOrDefault() as ReaderPage;
 
     public void Attach(ShellViewModel shell)
     {
@@ -58,23 +61,29 @@ public partial class MainWindow : Window
         DataContext = shell;
 
         AppSettings settings = AppServices.Current.Settings;
-        Width = Math.Clamp(settings.WindowWidth, 1000, 10000);
-        Height = Math.Clamp(settings.WindowHeight, 620, 10000);
+        Width = Math.Clamp(settings.WindowWidth, 540, 10000);
+        Height = Math.Clamp(settings.WindowHeight, 420, 10000);
         if (settings.WindowMaximized) WindowState = WindowState.Maximized;
 
         shell.PropertyChanged += OnShellPropertyChanged;
         shell.GalleryRequested += OnGalleryRequested;
         shell.WebLoginRequested += OnWebLoginRequested;
+        shell.Downloads.ArchiveRequested += (_, vm) => PushDocument(new ArchivePage(vm) { Title = vm.Title });
         shell.LocalReadRequested += OnLocalReadRequested;
         // The library view model outlives its page, so reading a local copy must
         // work even when the library page has never been shown.
         shell.Library.OpenGalleryRequested += OnLocalReadRequested;
         ShowPage(shell.CurrentPage);
+        UpdateAdaptiveLayout();
     }
 
     private void OnShellPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ShellViewModel.CurrentPage)) ShowPage(_shell?.CurrentPage);
+        if (e.PropertyName == nameof(ShellViewModel.CurrentPage))
+        {
+            ClearDocuments();
+            ShowPage(_shell?.CurrentPage);
+        }
     }
 
     private void ShowPage(object? page)
@@ -97,6 +106,8 @@ public partial class MainWindow : Window
         {
             case MainViewModel:
                 _libraryPage = new LibraryPage();
+                _libraryPage.LocalDetailsRequested += (_, item) => OpenLocalDetails(item);
+                _libraryPage.VersionsRequested += (_, item) => OpenVersions(item);
                 _libraryPage.SettingsRequested += (_, _) => _shell?.Navigate("settings");
                 return _libraryPage;
             case OnlineFeedViewModel online:
@@ -117,13 +128,17 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void OnSettingsApplied(object? sender, bool sourcesChanged)
+    private async Task OnSettingsApplied(bool sourcesChanged)
     {
         if (_shell is null) return;
         App.ApplyTheme(AppServices.Current.Settings.Theme);
         if (sourcesChanged)
         {
-            await _shell.Library.ReloadSourcesAsync();
+            if (_shell.Settings.LastMovedRoot is { } oldRoot)
+                await _shell.Library.ReloadAfterRelocationAsync(oldRoot, AppServices.Current.Downloads.RootPath);
+            else if (_shell.Settings.PreviousDownloadRoot is { } previous)
+                await _shell.Library.ReloadAfterRelocationAsync(previous, AppServices.Current.Downloads.RootPath, movedFiles: false);
+            else await _shell.Library.ReloadSourcesAsync();
         }
         else
         {
@@ -135,37 +150,18 @@ public partial class MainWindow : Window
 
     private void OnWebLoginRequested(object? sender, EventArgs e)
     {
-        if (_shell is null) return;
-
-        if (_loginWindow is { IsVisible: true } existing)
-        {
-            existing.Activate();
-            return;
-        }
-
-        var viewModel = new WebLoginViewModel(AppServices.Current);
-        var window = new WebLoginWindow(viewModel)
-        {
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-        };
-
-        viewModel.Completed += (_, result) =>
-        {
-            _shell?.ApplyLoginResult(result);
-            window.Close();
-        };
-
-        window.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_loginWindow, window)) _loginWindow = null;
-        };
-
-        _loginWindow = window;
-        window.Show(this);
+        if (_shell is null || _shell.Settings.IsSaving) return;
+        if (_loginPage is not null && _documents.Contains(_loginPage)) { ShowDocument(_loginPage); return; }
+        var vm = new WebLoginViewModel(AppServices.Current);
+        var page = new WebLoginPage(vm) { Title = "登录账号" };
+        _loginPage = page;
+        vm.Completed += (_, result) => { _shell?.ApplyLoginResult(result); if (_documents.LastOrDefault() == page) PopDocument(); };
+        PushDocument(page);
     }
 
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
+        if (_shell?.Settings.IsSaving == true) { e.Cancel = true; _shell.Notify("请等待目录迁移完成，或在设置页取消迁移后退出"); return; }
         _closing = true;
         if (_shell is null) return;
 
@@ -173,15 +169,11 @@ public partial class MainWindow : Window
         settings.WindowWidth = Width;
         settings.WindowHeight = Height;
         settings.WindowMaximized = WindowState == WindowState.Maximized;
-        _shell.Settings.Apply();
         AppServices.Current.TrySaveSettings(out _);
         AppServices.Current.Progress.Save(out _);
 
-        foreach (ReaderWindow reader in _readers.ToArray()) reader.Close();
-        _torrentWindow?.Close();
-        _archiveWindow?.Close();
-        _galleryWindow?.Close();
-        _loginWindow?.Close();
+        _lifetime.Cancel();
+        ClearDocuments();
     }
 
     private void OnNavClick(object? sender, RoutedEventArgs e)
@@ -189,7 +181,9 @@ public partial class MainWindow : Window
         if (_shell is null) return;
         if (sender is Button { Tag: NavItem item })
         {
+            ClearDocuments();
             _shell.SelectedNav = item;
+            ShowPage(item.Page);
         }
     }
 
@@ -200,12 +194,16 @@ public partial class MainWindow : Window
 
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
-        bool control = (e.KeyModifiers & KeyModifiers.Control) != 0;
+        bool control = (e.KeyModifiers & (OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control)) != 0;
+        if ((e.Key == Key.Left && e.KeyModifiers.HasFlag(KeyModifiers.Alt)) || (e.Key == Key.Escape && _documents.Count > 0))
+        {
+            PopDocument(); e.Handled = true; return;
+        }
 
         if (e.Key == Key.F && control)
         {
-            _shell?.Navigate("online");
-            Dispatcher.UIThread.Post(() => _onlinePage?.FocusSearch(), DispatcherPriority.Loaded);
+            if (ContentHost.Content is LibraryPage libraryPage) libraryPage.FocusSearch();
+            else if (ContentHost.Content is OnlineFeedPage onlinePage) onlinePage.FocusSearch();
             e.Handled = true;
             return;
         }
@@ -238,158 +236,129 @@ public partial class MainWindow : Window
 
     private void OnGalleryRequested(object? sender, EhGallerySummary summary)
     {
-        if (_shell is null) return;
-        try
-        {
-            _galleryWindow?.Close();
-
-            var viewModel = new OnlineGalleryViewModel(AppServices.Current, _shell, summary);
-            var window = new OnlineGalleryWindow(viewModel)
-            {
-                WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            };
-
-            viewModel.ReadRequested += OnOnlineReadRequested;
-            viewModel.TagSearchRequested += OnTagSearchRequested;
-            viewModel.TorrentsRequested += OnTorrentsRequested;
-            viewModel.ArchiveRequested += OnArchiveRequested;
-            window.Closed += (_, _) =>
-            {
-                viewModel.ReadRequested -= OnOnlineReadRequested;
-                viewModel.TagSearchRequested -= OnTagSearchRequested;
-                viewModel.TorrentsRequested -= OnTorrentsRequested;
-                viewModel.ArchiveRequested -= OnArchiveRequested;
-                if (ReferenceEquals(_galleryWindow, window)) _galleryWindow = null;
-            };
-
-            _galleryWindow = window;
-            window.Show(this);
-        }
-        catch (Exception ex)
-        {
-            _shell.Notify("打开画廊失败：" + ex.Message);
-        }
+        if (_shell is null || _shell.Settings.IsSaving) return;
+        var vm = new OnlineGalleryViewModel(AppServices.Current, _shell, summary);
+        vm.ReadRequested += OnOnlineReadRequested;
+        vm.TagSearchRequested += (_, term) => _shell.SearchTag(term);
+        vm.TorrentsRequested += (_, details) => PushDocument(new TorrentPage(new TorrentViewModel(AppServices.Current, details)) { Title = "种子" });
+        vm.ArchiveRequested += (_, details) => PushDocument(new ArchivePage(_shell.Downloads.GetArchiveSession(details, _shell)) { Title = "归档下载" });
+        PushDocument(new OnlineGalleryPage(vm) { Title = summary.Title });
     }
 
-    private void OnLocalReadRequested(object? sender, GalleryItemViewModel item)
+    private async void OnLocalReadRequested(object? sender, GalleryItemViewModel item)
     {
+        if (_shell?.Settings.IsSaving == true) return;
+        if (_documents.LastOrDefault() is ReaderPage existing && existing.ViewModel.Source.ProgressKey == item.WorkId) return;
+        if (!_openingReaders.Add(item.WorkId)) return;
         try
         {
-            ReaderWindow? existing = _readers.FirstOrDefault(r =>
-                string.Equals(r.GalleryId, item.StableId, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null)
-            {
-                if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
-                existing.Activate();
-                return;
-            }
-
-            var readerViewModel = new ReaderViewModel(AppServices.Current, item.Info);
-            var window = new ReaderWindow(readerViewModel)
-            {
-                GalleryId = item.StableId,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            };
-
-            _readers.Add(window);
-            window.Closed += (_, _) =>
-            {
-                _readers.Remove(window);
-                if (!_closing) _shell?.Library.RefreshItemProgress(item);
-            };
-
-            window.Show(this);
+            var source = await Task.Run(() => new LocalReaderSource(AppServices.Current, item.Info), _lifetime.Token);
+            if (!_closing && _shell?.Settings.IsSaving != true) PushDocument(new ReaderPage(new ReaderViewModel(AppServices.Current, source)) { Title = item.Title });
         }
-        catch (Exception ex)
-        {
-            _shell?.Notify("打开本地阅读失败：" + ex.Message);
-        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _shell?.Notify("打开本地阅读失败：" + ex.Message); }
+        finally { _openingReaders.Remove(item.WorkId); }
     }
 
     private async void OnOnlineReadRequested(object? sender, OnlineReadRequest request)
     {
-        if (_shell is null) return;
-        EhGalleryDetails details = request.Details;
+        if (_shell is null || _shell.Settings.IsSaving) return;
+        string workId = request.Details.Gid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (_documents.LastOrDefault() is ReaderPage current && current.ViewModel.Source.ProgressKey == workId) return;
+        if (!_openingReaders.Add(workId)) return;
         try
         {
             _shell.Notify("正在读取页面列表…");
-            IReadOnlyList<EhPageRef> pages = await AppServices.Current.Online
-                .GetAllPagesAsync(details.Gid, details.Token, details.Pages, null, CancellationToken.None)
-                .ConfigureAwait(true);
-
-            if (pages.Count == 0)
-            {
-                _shell.Notify("没有可阅读的页面");
-                return;
-            }
-
-            ReaderWindow? existing = _readers.FirstOrDefault(r =>
-                string.Equals(r.GalleryId, "online-" + details.Gid, StringComparison.OrdinalIgnoreCase));
-            if (existing is not null)
-            {
-                existing.Activate();
-                return;
-            }
-
-            var source = new Services.OnlineReaderSource(AppServices.Current, details, pages, request.Quality);
-            var readerViewModel = new ReaderViewModel(AppServices.Current, source);
-            var window = new ReaderWindow(readerViewModel)
-            {
-                GalleryId = source.StableId,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            };
-
-            _readers.Add(window);
-            window.Closed += (_, _) =>
-            {
-                _readers.Remove(window);
-                if (!_closing) _shell?.RaiseAccount();
-            };
-
-            window.Show(this);
-            _shell.Notify($"在线阅读：{pages.Count} 页");
+            var pages = await AppServices.Current.Online.GetAllPagesAsync(request.Details.Gid, request.Details.Token, request.Details.Pages, null, _lifetime.Token);
+            if (_closing || _shell.Settings.IsSaving) return;
+            if (pages.Count == 0) { _shell.Notify("没有可阅读的页面"); return; }
+            var source = new OnlineReaderSource(AppServices.Current, request.Details, pages, request.Quality);
+            PushDocument(new ReaderPage(new ReaderViewModel(AppServices.Current, source)) { Title = request.Details.DisplayTitle });
         }
-        catch (Exception ex) when (ex is EhException or HttpRequestException)
-        {
-            _shell.Notify("在线读取失败：" + ex.Message);
-        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { _shell.Notify("在线读取失败：" + ex.Message); }
+        finally { _openingReaders.Remove(workId); }
     }
 
-    private void OnTagSearchRequested(object? sender, string term)
+    private void OpenLocalDetails(GalleryItemViewModel item)
     {
-        _galleryWindow?.Close();
-        _shell?.SearchTag(term);
+        var page = new GalleryDetailsPage(item, AppServices.Current) { Title = item.Title };
+        page.ReadRequested += OnLocalReadRequested;
+        PushDocument(page);
     }
 
-    private void OnTorrentsRequested(object? sender, EhGalleryDetails details)
+    private void OpenVersions(GalleryItemViewModel item)
     {
-        if (_shell is null) return;
-        _torrentWindow?.Close();
-
-        var viewModel = new TorrentViewModel(AppServices.Current, details);
-        var window = new TorrentWindow(viewModel) { WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        window.Closed += (_, _) =>
+        var vm = new VersionsViewModel(item, AppServices.Current);
+        var page = new VersionsPage(vm) { Title = "本地副本" };
+        page.CloseRequested += (_, _) =>
         {
-            if (ReferenceEquals(_torrentWindow, window)) _torrentWindow = null;
+            if (vm.ReadVersion is { } read) { _shell!.Library.SetPreferredSource(item, read); OnLocalReadRequested(this, item); }
+            else if (vm.DefaultVersion is { } selected) _shell!.Library.SetPreferredSource(item, selected);
         };
-
-        _torrentWindow = window;
-        window.Show(this);
+        PushDocument(page);
     }
 
-    private void OnArchiveRequested(object? sender, EhGalleryDetails details)
+    private void PushDocument(DocumentPage page)
     {
-        if (_shell is null) return;
-        _archiveWindow?.Close();
-
-        var viewModel = new ArchiveViewModel(AppServices.Current, _shell, details);
-        var window = new ArchiveWindow(viewModel) { WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        window.Closed += (_, _) =>
-        {
-            if (ReferenceEquals(_archiveWindow, window)) _archiveWindow = null;
-        };
-
-        _archiveWindow = window;
-        window.Show(this);
+        if (page is ReaderPage reader) reader.ImmersiveChanged += OnReaderImmersiveChanged;
+        _documents.Add(page);
+        page.CloseRequested += OnDocumentClose;
+        ShowDocument(page);
+    }
+    private void OnDocumentClose(object? sender, EventArgs e)
+    {
+        if (ReferenceEquals(sender, _documents.LastOrDefault())) PopDocument();
+    }
+    private void ShowDocument(DocumentPage page)
+    {
+        ContentHost.Content = page;
+        DocumentToolbar.IsVisible = page is not ReaderPage;
+        DocumentTitle.Text = page.Title;
+        UpdateAdaptiveLayout();
+    }
+    private void PopDocument()
+    {
+        if (_documents.Count == 0) return;
+        var page = _documents[^1];
+        _documents.RemoveAt(_documents.Count - 1);
+        page.CloseRequested -= OnDocumentClose;
+        if (page is ReaderPage reader) reader.ImmersiveChanged -= OnReaderImmersiveChanged;
+        page.Dispose();
+        UpdateAdaptiveLayout();
+        if (ReferenceEquals(page, _loginPage)) _loginPage = null;
+        _shell?.Library.RefreshAllProgress();
+        _shell?.History.Reload();
+        if (_documents.Count > 0) ShowDocument(_documents[^1]);
+        else { DocumentToolbar.IsVisible = false; ShowPage(_shell?.CurrentPage); }
+    }
+    private void ClearDocuments()
+    {
+        foreach (var page in _documents) { page.CloseRequested -= OnDocumentClose; if (page is ReaderPage reader) reader.ImmersiveChanged -= OnReaderImmersiveChanged; page.Dispose(); }
+        _documents.Clear(); _loginPage = null;
+        UpdateAdaptiveLayout();
+        DocumentToolbar.IsVisible = false;
+        _shell?.Library.RefreshAllProgress();
+    }
+    private void OnGoBack(object? sender, RoutedEventArgs e) => PopDocument();
+    internal void ShowDiagnosticPage(DocumentPage page) => PushDocument(page);
+    private void OnReaderImmersiveChanged(object? sender, bool immersive) => UpdateAdaptiveLayout();
+    private void OnToggleSidebar(object? sender, RoutedEventArgs e)
+    {
+        bool compact = _sidebarOverride ?? (AppServices.Current.Settings.SidebarCollapsed || Bounds.Width < 920);
+        _sidebarOverride = !compact;
+        AppServices.Current.Settings.SidebarCollapsed = !compact;
+        AppServices.Current.TrySaveSettings(out _);
+        UpdateAdaptiveLayout();
+    }
+    private void UpdateAdaptiveLayout()
+    {
+        bool narrow = Bounds.Width < 920;
+        if (_lastNarrow != narrow) { _sidebarOverride = null; _lastNarrow = narrow; }
+        bool immersive = ActiveReader?.IsImmersive == true;
+        bool compact = _sidebarOverride ?? (AppServices.Current.Settings.SidebarCollapsed || Bounds.Width < 920);
+        NavigationRail.IsVisible = !immersive;
+        LayoutRoot.ColumnDefinitions[0].Width = new GridLength(immersive ? 0 : compact ? 64 : 208);
+        Classes.Set("compact", compact);
     }
 }

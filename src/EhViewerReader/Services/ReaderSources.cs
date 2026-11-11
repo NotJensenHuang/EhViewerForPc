@@ -41,6 +41,7 @@ public sealed class LocalReaderSource : IReaderSource
     {
         _services = services;
         _gallery = gallery;
+        services.Works.Upsert(new WorkRecord { WorkId = gallery.WorkId, Gid = gallery.Gid, Title = gallery.DisplayTitle, PageCount = gallery.PageCount });
 
         IReadOnlyList<GalleryPage> pages = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError).Pages;
         Pages = pages;
@@ -85,18 +86,24 @@ public sealed class OnlineReaderSource : IReaderSource
     private readonly EhGalleryDetails _details;
     private readonly IReadOnlyList<EhPageRef> _refs;
     private readonly bool _originalImages;
+    private readonly int _resampledWidth;
+    private string _actualQuality = string.Empty;
+    public Action? QualityChanged { get; set; }
 
     public OnlineReaderSource(
         AppServices services,
         EhGalleryDetails details,
         IReadOnlyList<EhPageRef> refs,
-        ImageQuality quality = ImageQuality.Original)
+        ImageQuality quality = ImageQuality.Resampled)
     {
         _services = services;
         _details = details;
         _refs = refs;
+        services.Works.Upsert(new WorkRecord { WorkId = details.Gid.ToString(CultureInfo.InvariantCulture), Gid = details.Gid, Token = details.Token,
+            Title = details.DisplayTitle, ThumbnailUrl = details.ThumbUrl, PageCount = details.Pages, Quality = quality });
         // Originals need an account; anonymous browsing always gets the
-        // site-resampled file, so skip the extra nl request in that case.
+        // site-resampled file, so skip the original-file resolution in that case.
+        _resampledWidth = services.Settings.ResampledWidth;
         _originalImages = quality == ImageQuality.Original && services.Online.IsSignedIn;
 
         var pages = new List<GalleryPage>(refs.Count);
@@ -120,7 +127,7 @@ public sealed class OnlineReaderSource : IReaderSource
     public string StableId => "online-" + _details.Gid.ToString(CultureInfo.InvariantCulture);
     public string ProgressKey => _details.Gid.ToString(CultureInfo.InvariantCulture);
     public string Title => _details.DisplayTitle;
-    public string SourceLabel => "在线 · " + EhUrls.SiteName(_services.Online.Site);
+    public string SourceLabel => "在线 · " + EhUrls.SiteName(_services.Online.Site) + " · " + (_actualQuality.Length > 0 ? _actualQuality : _originalImages ? "原图" : $"压缩图 {_resampledWidth}px");
     public string DebugInfo => $"online:{_details.Gid} · {Pages.Count} 页";
     public string MissingSummary => string.Empty;
     public IReadOnlyList<GalleryPage> Pages { get; }
@@ -132,7 +139,8 @@ public sealed class OnlineReaderSource : IReaderSource
         return _services.OnlineImages.CreatePageRequest(
             _refs[index],
             original: _originalImages,
-            (width, height) => DimensionResolved?.Invoke(captured, width, height));
+            (width, height) => DimensionResolved?.Invoke(captured, width, height),
+            original => { _actualQuality = original ? "原图" : _originalImages ? "压缩图（原图不可用）" : $"压缩图 {_resampledWidth}px"; QualityChanged?.Invoke(); }, _resampledWidth);
     }
 
     public Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(

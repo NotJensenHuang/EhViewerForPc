@@ -1,4 +1,6 @@
-﻿using System.Globalization;
+using System.Globalization;
+using EhViewerReader.Core.Format;
+using EhViewerReader.Core.Imaging;
 using System.Text;
 using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Online;
@@ -18,25 +20,30 @@ public sealed class DownloadManager : IDisposable
     private readonly AppPaths _paths;
     private readonly AppSettings _settings;
     private readonly EhClient _client;
+    private readonly GalleryImageStore _images;
     private readonly Action<string>? _log;
     private readonly object _gate = new();
     private readonly List<DownloadTask> _tasks = [];
     private readonly List<DownloadArchiveEntry> _archive = [];
     private readonly Dictionary<string, CancellationTokenSource> _cancellations = new(StringComparer.Ordinal);
-    private readonly SemaphoreSlim _pumpGate = new(1, 1);
+    private readonly Dictionary<string, Task> _running = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _deleteAfterCancel = new(StringComparer.Ordinal);
 
     private bool _disposed;
-    private bool _pumpQueued;
     private int _activeTasks;
+    private bool _relocating;
+    private int _archiveWriters;
     private string? _loadError;
 
-    public DownloadManager(AppPaths paths, AppSettings settings, EhClient client, Action<string>? log = null)
+    public DownloadManager(AppPaths paths, AppSettings settings, EhClient client, Action<string>? log = null, GalleryImageStore? images = null)
     {
         _paths = paths;
         _settings = settings;
         _client = client;
+        _images = images ?? new GalleryImageStore(paths, client);
         _log = log;
         Load();
+        RecoverRootMove();
     }
 
     /// <summary>Raised whenever a task's state/progress changed (any thread).</summary>
@@ -58,6 +65,199 @@ public sealed class DownloadManager : IDisposable
     }
 
     public string? LoadError => _loadError;
+    public bool IsRelocating { get { lock (_gate) return _relocating; } }
+
+    /// <summary>Changes the destination of future tasks only. Existing task and
+    /// archive paths continue to describe where their files actually reside.</summary>
+    public void ChangeRootWithoutMoving(string target, bool registerAsSource, Action? saveSettings = null)
+    {
+        target = AppSettings.NormalizeRoot(target);
+        if (PathIdentity.Comparer.Equals(target, _paths.BaseDirectory) || PathIdentity.IsDescendantOf(target, _paths.BaseDirectory) || PathIdentity.IsDescendantOf(_paths.BaseDirectory, target))
+            throw new IOException("下载目录不能与应用数据目录重叠");
+        if (File.Exists(target)) throw new IOException("下载路径指向一个文件，请选择文件夹");
+        Directory.CreateDirectory(target);
+        lock (_gate)
+        {
+            if (_relocating) throw new IOException("目录迁移尚未完成，请稍后更改保存位置");
+            string oldRoot = RootPath, oldConfigured = _settings.Download.RootPath;
+            bool oldRegistration = _settings.Download.AddAsSource;
+            var sources = _settings.Sources.Select(s => s.Clone()).ToList();
+            try
+            {
+                _settings.Download.RootPath = target;
+                _settings.Download.AddAsSource = registerAsSource;
+                var previous = _settings.Sources.FirstOrDefault(s => PathIdentity.Comparer.Equals(s.RootPath, oldRoot));
+                if (!PathIdentity.Comparer.Equals(oldRoot, target) && previous?.Name == "下载目录")
+                {
+                    bool hasTasks = _archiveWriters != 0 || _tasks.Any(t => t.FolderPath.Length > 0 && PathIdentity.IsDescendantOf(t.FolderPath, oldRoot)) || _archive.Any(a => a.FolderPath.Length > 0 && PathIdentity.IsDescendantOf(a.FolderPath, oldRoot));
+                    bool empty = false;
+                    try { empty = Directory.Exists(oldRoot) && !Directory.EnumerateFileSystemEntries(oldRoot).Any(); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                    if (!hasTasks && empty) _settings.Sources.Remove(previous);
+                    else previous.Name = "旧下载目录";
+                }
+                if (registerAsSource)
+                {
+                    var source = _settings.AddSource(target, "下载目录");
+                    if (source.Name == "旧下载目录") source.Name = "下载目录";
+                }
+                if (saveSettings is not null) saveSettings();
+                else if (!new SettingsStore(_paths).Save(_settings, out var error)) throw new IOException(error);
+            }
+            catch
+            {
+                _settings.Download.RootPath = oldConfigured;
+                _settings.Download.AddAsSource = oldRegistration;
+                _settings.Sources = sources;
+                throw;
+            }
+        }
+        RaiseChanged();
+    }
+
+    public IDisposable AcquireArchiveWrite()
+    {
+        lock (_gate)
+        {
+            if (_relocating) throw new IOException("下载目录正在迁移，请完成后再下载归档");
+            _archiveWriters++;
+            return new ArchiveWriteLease(this);
+        }
+    }
+    private sealed class ArchiveWriteLease(DownloadManager manager) : IDisposable
+    {
+        private int _disposed;
+        public void Dispose() { if (Interlocked.Exchange(ref _disposed, 1) == 0) lock (manager._gate) manager._archiveWriters--; }
+    }
+
+    public async Task<bool> RelocateRootAsync(string target, IProgress<DownloadMoveProgress>? progress,
+        CancellationToken token, Action? saveSettings = null)
+    {
+        string oldRoot = AppSettings.NormalizeRoot(RootPath);
+        target = AppSettings.NormalizeRoot(target);
+        if (PathIdentity.Comparer.Equals(oldRoot, target)) return true;
+        Task[] workers;
+        HashSet<string> resume;
+        lock (_gate)
+        {
+            if (_relocating) throw new IOException("下载目录正在迁移");
+            if (_archiveWriters != 0) throw new IOException("有归档正在下载，请等待归档完成后再迁移目录");
+            _relocating = true;
+            resume = _tasks.Where(t => t.State is DownloadState.Running or DownloadState.Pending).Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
+            workers = _running.Values.ToArray();
+            foreach (var cts in _cancellations.Values) cts.Cancel();
+        }
+        RaiseChanged();
+        DownloadRootMover? move = null;
+        var oldSources = _settings.Sources.Select(s => s.Clone()).ToList();
+        var oldPreferences = new Dictionary<string, string>(_settings.PreferredSourceByWork, StringComparer.OrdinalIgnoreCase);
+        string oldConfiguredRoot = _settings.Download.RootPath;
+        bool metadataChanged = false;
+        try
+        {
+            progress?.Report(new("正在暂停下载并等待文件写入结束", 0, 0));
+            await Task.WhenAll(workers).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            move = await DownloadRootMover.PrepareAsync(_paths, oldRoot, target, progress, token).ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            metadataChanged = true;
+            lock (_gate)
+            {
+                RebaseRoot(oldRoot, target);
+                if (!SaveLocked()) throw new IOException("无法保存迁移后的下载记录");
+            }
+            SaveSettings();
+            move.Commit();
+            progress?.Report(new("正在清理旧目录", 0, 0));
+            return move.Cleanup();
+        }
+        catch
+        {
+            if (move is not null && !move.Journal.MetadataCommitted)
+            {
+                if (metadataChanged)
+                {
+                    try
+                    {
+                        lock (_gate)
+                        {
+                            RebaseRoot(target, oldRoot);
+                            _settings.Download.RootPath = oldConfiguredRoot;
+                            _settings.Sources = oldSources;
+                            _settings.PreferredSourceByWork = oldPreferences;
+                            if (!SaveLocked()) throw new IOException("无法恢复下载记录");
+                        }
+                        // Roll back files only after both old metadata documents are durable.
+                        SaveSettings();
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // Keep runtime paths pointing at the existing prepared files.
+                        // The journal will finish both metadata writes on restart.
+                        lock (_gate) { RebaseRoot(oldRoot, target); SaveLocked(); }
+                        throw new IOException("下载文件已保存在新目录，设置暂时无法保存；恢复写入权限后重新启动会继续同步。", ex);
+                    }
+                }
+                move.Rollback();
+            }
+            throw;
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                foreach (var task in _tasks)
+                    if (resume.Contains(task.Id) && task.State != DownloadState.Completed) { task.State = DownloadState.Pending; task.Message = "等待中"; }
+                _relocating = false;
+                SaveLocked();
+            }
+            SchedulePump();
+            RaiseChanged();
+        }
+        void SaveSettings()
+        {
+            if (saveSettings is not null) saveSettings();
+            else if (!new SettingsStore(_paths).Save(_settings, out var error)) throw new IOException(error);
+        }
+    }
+
+    private static string Rebase(string path, string source, string target) =>
+        PathIdentity.Comparer.Equals(path, source) ? target :
+        !string.IsNullOrEmpty(path) && PathIdentity.IsDescendantOf(path, source) ? Path.Combine(target, Path.GetRelativePath(source, path)) : path;
+
+    private void RebaseRoot(string source, string target)
+    {
+        foreach (var task in _tasks)
+        {
+            task.FolderPath = Rebase(task.FolderPath, source, target);
+            task.DestinationRoot = Rebase(task.DestinationRoot, source, target);
+        }
+        foreach (var item in _archive) item.FolderPath = Rebase(item.FolderPath, source, target);
+        var oldSource = _settings.Sources.FirstOrDefault(s => PathIdentity.Comparer.Equals(s.RootPath, source));
+        var duplicate = _settings.Sources.FirstOrDefault(s => PathIdentity.Comparer.Equals(s.RootPath, target));
+        if (oldSource is not null && duplicate is not null && oldSource != duplicate)
+        {
+            foreach (var key in _settings.PreferredSourceByWork.Where(p => p.Value == duplicate.Id).Select(p => p.Key).ToArray()) _settings.PreferredSourceByWork[key] = oldSource.Id;
+            _settings.Sources.Remove(duplicate);
+        }
+        foreach (var item in _settings.Sources) item.RootPath = Rebase(item.RootPath, source, target);
+        _settings.Download.RootPath = target;
+        if (_settings.Download.AddAsSource && !_settings.Sources.Any(s => PathIdentity.Comparer.Equals(s.RootPath, target))) _settings.AddSource(target, "下载目录");
+    }
+
+    private void RecoverRootMove()
+    {
+        var pending = DownloadRootMover.OpenPending(_paths);
+        if (pending is null) return;
+        if (pending.CompletePreparedFiles())
+        {
+            RebaseRoot(pending.Journal.Source, pending.Journal.Target);
+            if (!SaveLocked() || !new SettingsStore(_paths).Save(_settings, out _)) throw new IOException("下载目录迁移恢复尚未完成，请检查应用数据目录是否可写");
+            pending.Commit();
+            if (!pending.Cleanup()) _log?.Invoke("下载已迁移，旧目录含变化或占用的文件，已保留：" + pending.Journal.Source);
+        }
+        else pending.Rollback();
+    }
 
     public int ActiveCount
     {
@@ -83,6 +283,11 @@ public sealed class DownloadManager : IDisposable
         }
     }
 
+    public DownloadTask? FindTask(long gid)
+    {
+        lock (_gate) return _tasks.FirstOrDefault(t => t.Gid == gid);
+    }
+
     public bool IsQueued(long gid)
     {
         lock (_gate) return _tasks.Any(t => t.Gid == gid);
@@ -91,6 +296,25 @@ public sealed class DownloadManager : IDisposable
     public DownloadArchiveEntry? FindInArchive(long gid)
     {
         lock (_gate) return _archive.FirstOrDefault(e => e.Gid == gid);
+    }
+
+    public string? FindPage(long gid, int page, ImageQuality quality, int resampledWidth)
+    {
+        string folder;
+        lock (_gate)
+        {
+            var task = _tasks.FirstOrDefault(t => t.Gid == gid && t.Quality == quality && (quality == ImageQuality.Original || t.ResampledWidth == resampledWidth) &&
+                (quality != ImageQuality.Original || !t.ResampledPages.Contains(page)));
+            if (task is null) return null;
+            folder = task.FolderPath;
+        }
+        string prefix = page.ToString("D8", CultureInfo.InvariantCulture);
+        foreach (string ext in new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" })
+        {
+            string file = Path.Combine(folder, prefix + ext);
+            if (ImageSignature.IsValidFile(file)) return file;
+        }
+        return null;
     }
 
     // --------------------------------------------------------------- queueing
@@ -108,7 +332,7 @@ public sealed class DownloadManager : IDisposable
             DownloadTask? existing = _tasks.FirstOrDefault(t => t.Gid == details.Gid);
             if (existing is not null)
             {
-                if (existing.State == DownloadState.Completed)
+                if (existing.State is DownloadState.Completed or DownloadState.Running or DownloadState.Pending)
                 {
                     return existing;
                 }
@@ -129,11 +353,13 @@ public sealed class DownloadManager : IDisposable
                     ThumbUrl = details.ThumbUrl,
                     Label = (label ?? _settings.Download.DefaultLabel).Trim(),
                     Quality = quality ?? _settings.ImageQuality,
+                    ResampledWidth = _settings.ResampledWidth,
                     PageCount = details.Pages,
                     State = DownloadState.Pending,
                     Message = "等待中",
                 };
 
+                task.DestinationRoot = RootPath;
                 task.FolderPath = BuildFolderPath(task, RootPath);
                 _tasks.Insert(0, task);
                 changed = true;
@@ -171,7 +397,7 @@ public sealed class DownloadManager : IDisposable
     {
         lock (_gate)
         {
-            if (task.State == DownloadState.Completed) return;
+            if (!_tasks.Contains(task) || task.State is DownloadState.Completed or DownloadState.Running or DownloadState.Pending) return;
             task.State = DownloadState.Pending;
             task.Message = "等待中";
             task.FailedPages.Clear();
@@ -187,19 +413,20 @@ public sealed class DownloadManager : IDisposable
 
     public void Remove(DownloadTask task, bool deleteFiles)
     {
+        bool deleteNow;
         lock (_gate)
         {
-            if (_cancellations.TryGetValue(task.Id, out CancellationTokenSource? cts)) cts.Cancel();
+            if (_relocating) return;
             _tasks.Remove(task);
+            bool active = _cancellations.TryGetValue(task.Id, out var cts);
+            if (active && deleteFiles) _deleteAfterCancel.Add(task.Id);
+            cts?.Cancel();
+            deleteNow = deleteFiles && !active;
+            if (deleteFiles) _archive.RemoveAll(e => PathIdentity.Comparer.Equals(e.FolderPath, task.FolderPath));
             SaveLocked();
         }
-
-        if (deleteFiles)
-        {
-            TryDeleteFolder(task.FolderPath);
-        }
-
-        RaiseTask(task);
+        // Running writers must have closed their files before deletion.
+        if (deleteNow) TryDeleteFolder(task.FolderPath, task.DestinationRoot);
         RaiseChanged();
     }
 
@@ -289,70 +516,28 @@ public sealed class DownloadManager : IDisposable
 
     private void SchedulePump()
     {
-        if (_disposed) return;
         lock (_gate)
         {
-            if (_pumpQueued) return;
-            _pumpQueued = true;
+            if (_disposed || _relocating) return;
+            int limit = Math.Clamp(_settings.Download.MaxConcurrentTasks, 1, 8);
+            while (_activeTasks < limit)
+            {
+                DownloadTask? next = _tasks.FirstOrDefault(t => t.State == DownloadState.Pending && !_cancellations.ContainsKey(t.Id));
+                if (next is null) break;
+                var cts = new CancellationTokenSource();
+                _cancellations.Add(next.Id, cts);
+                _activeTasks++;
+                next.State = DownloadState.Running;
+                next.Message = "准备中";
+                // Reserve both the slot and cancellation before the worker can run.
+                _running[next.Id] = Task.Run(() => RunTaskAsync(next, cts));
+            }
         }
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await PumpAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                _log?.Invoke("Download pump failed: " + ex);
-            }
-            finally
-            {
-                lock (_gate) _pumpQueued = false;
-            }
-        });
+        RaiseChanged();
     }
 
-    private async Task PumpAsync()
+    private async Task RunTaskAsync(DownloadTask task, CancellationTokenSource cts)
     {
-        await _pumpGate.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            while (!_disposed)
-            {
-                DownloadTask? next;
-                lock (_gate)
-                {
-                    int limit = _settings.Download.MaxConcurrentTasks;
-                    if (_activeTasks >= limit) return;
-                    next = _tasks.FirstOrDefault(t => t.State == DownloadState.Pending);
-                    if (next is null) return;
-                    next.State = DownloadState.Running;
-                    next.Message = "准备中";
-                }
-
-                RaiseTask(next);
-                RaiseChanged();
-                _ = Task.Run(() => RunTaskAsync(next));
-            }
-        }
-        finally
-        {
-            _pumpGate.Release();
-        }
-    }
-
-    private async Task RunTaskAsync(DownloadTask task)
-    {
-        CancellationTokenSource cts;
-        lock (_gate)
-        {
-            if (_cancellations.ContainsKey(task.Id)) return;
-            cts = new CancellationTokenSource();
-            _cancellations[task.Id] = cts;
-            _activeTasks++;
-        }
-
         CancellationToken token = cts.Token;
         try
         {
@@ -360,8 +545,10 @@ public sealed class DownloadManager : IDisposable
 
             lock (_gate)
             {
+                token.ThrowIfCancellationRequested();
+                if (!_tasks.Contains(task)) return;
                 task.State = DownloadState.Completed;
-                task.Message = "已完成";
+                task.Message = task.ResampledPages.Count == 0 ? "已完成" : $"已完成（{task.ResampledPages.Count} 页使用压缩图）";
                 task.FinishedUtc = DateTime.UtcNow.ToString("O");
                 task.TotalBytes = FolderSize(task.FolderPath);
                 _archive.RemoveAll(e => e.Gid == task.Gid);
@@ -403,6 +590,7 @@ public sealed class DownloadManager : IDisposable
             _log?.Invoke($"Download failed ({task.Gid}): {ex}");
             lock (_gate)
             {
+                if (!_tasks.Contains(task)) return;
                 task.State = DownloadState.Failed;
                 task.Message = ex.Message;
                 SaveLocked();
@@ -413,13 +601,16 @@ public sealed class DownloadManager : IDisposable
         }
         finally
         {
+            bool delete;
             lock (_gate)
             {
                 _cancellations.Remove(task.Id);
+                _running.Remove(task.Id);
                 _activeTasks--;
+                delete = _deleteAfterCancel.Remove(task.Id);
             }
-
             cts.Dispose();
+            if (delete) TryDeleteFolder(task.FolderPath, task.DestinationRoot);
             SchedulePump();
         }
     }
@@ -441,9 +632,11 @@ public sealed class DownloadManager : IDisposable
             .GetAllPagesAsync(task.Gid, task.Token, task.PageCount, null, token)
             .ConfigureAwait(false);
 
-        if (pages.Count == 0)
+        int expected = task.PageCount;
+        if (pages.Count == 0 || (expected > 0 &&
+            (pages.Count != expected || !pages.Select(p => p.Page).Order().SequenceEqual(Enumerable.Range(1, expected)))))
         {
-            throw new EhException("页面列表为空");
+            throw new EhException($"页面列表不完整：预期 {expected} 页，取得 {pages.Count} 页，请重试");
         }
 
         lock (_gate)
@@ -452,7 +645,10 @@ public sealed class DownloadManager : IDisposable
             SaveLocked();
         }
 
-        int already = CountExistingPages(task.FolderPath);
+        if (_settings.Download.WriteEhviewerHeader)
+            await File.WriteAllTextAsync(Path.Combine(task.FolderPath, ".ehviewer"), BuildEhviewerHeader(task), new UTF8Encoding(false), token).ConfigureAwait(false);
+
+        int already = pages.Count(p => HasPageFile(task.FolderPath, p.Page));
         task.DownloadedPages = already;
         task.Message = "下载中";
         RaiseTask(task);
@@ -475,13 +671,24 @@ public sealed class DownloadManager : IDisposable
             {
                 if (HasPageFile(task.FolderPath, page.Page)) return;
 
-                string imageUrl = await _client
-                    .GetImageUrlAsync(page, task.Quality == ImageQuality.Original, innerToken)
-                    .ConfigureAwait(false);
-
-                string extension = GuessExtension(imageUrl);
+                var cached = await _images.GetAsync(page, task.Quality == ImageQuality.Original, innerToken, task.ResampledWidth).ConfigureAwait(false);
+                string extension = ImageSignature.DetectFile(cached.Path) switch
+                {
+                    ImageKind.Png => ".png", ImageKind.Gif => ".gif", ImageKind.Webp => ".webp", _ => ".jpg"
+                };
                 string target = Path.Combine(task.FolderPath, page.Page.ToString("D8", CultureInfo.InvariantCulture) + extension);
-                await _client.DownloadToFileAsync(imageUrl, pageUrl, target, null, innerToken).ConfigureAwait(false);
+                string temporary = target + ".part";
+                try
+                {
+                    await using (var input = File.OpenRead(cached.Path))
+                    await using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+                        await input.CopyToAsync(output, innerToken).ConfigureAwait(false);
+                    innerToken.ThrowIfCancellationRequested();
+                    File.Move(temporary, target, true);
+                }
+                finally { try { File.Delete(temporary); } catch (IOException) { } }
+                if (task.Quality == ImageQuality.Original && !cached.IsOriginal)
+                    lock (_gate) { if (!task.ResampledPages.Contains(page.Page)) task.ResampledPages.Add(page.Page); }
 
                 int done = Interlocked.Increment(ref completed);
                 lock (_gate)
@@ -507,7 +714,7 @@ public sealed class DownloadManager : IDisposable
         lock (_gate)
         {
             task.FailedPages = failed.OrderBy(p => p).ToList();
-            task.DownloadedPages = CountExistingPages(task.FolderPath);
+            task.DownloadedPages = pages.Count(p => HasPageFile(task.FolderPath, p.Page));
             SaveLocked();
         }
 
@@ -577,6 +784,7 @@ public sealed class DownloadManager : IDisposable
 
     private static string SanitizeLabel(string label)
     {
+        if (string.IsNullOrWhiteSpace(label)) return string.Empty;
         string cleaned = SanitizeFolderName(label);
         return cleaned.Length > 40 ? cleaned[..40] : cleaned;
     }
@@ -621,7 +829,7 @@ public sealed class DownloadManager : IDisposable
             string path = Path.Combine(folder, prefix + candidate);
             try
             {
-                if (File.Exists(path) && new FileInfo(path).Length > 0) return true;
+                if (ImageSignature.IsValidFile(path)) return true;
             }
             catch (IOException)
             {
@@ -683,14 +891,14 @@ public sealed class DownloadManager : IDisposable
         }
     }
 
-    private void TryDeleteFolder(string folder)
+    private void TryDeleteFolder(string folder, string destinationRoot)
     {
         try
         {
             if (folder.Length == 0 || !Directory.Exists(folder)) return;
-            string root = Path.GetFullPath(RootPath);
+            string root = Path.GetFullPath(string.IsNullOrEmpty(destinationRoot) ? RootPath : destinationRoot);
             string target = Path.GetFullPath(folder);
-            if (!target.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return;
+            if (!PathIdentity.IsDescendantOf(target, root)) return;
             Directory.Delete(target, recursive: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -723,6 +931,7 @@ public sealed class DownloadManager : IDisposable
             {
                 if (task.State == DownloadState.Running) task.State = DownloadState.Pending;
                 task.FailedPages ??= [];
+                task.ResampledPages ??= [];
                 _tasks.Add(task);
             }
 
@@ -730,7 +939,7 @@ public sealed class DownloadManager : IDisposable
         }
     }
 
-    private void SaveLocked()
+    private bool SaveLocked()
     {
         var file = new DownloadFile
         {
@@ -738,14 +947,19 @@ public sealed class DownloadManager : IDisposable
             Archive = _archive.ToList(),
         };
 
-        if (!JsonFileStore.Save(_paths.DownloadTasksFile, file, StorageJsonContext.Default.DownloadFile, out string? error) &&
-            error is not null)
+        bool saved = JsonFileStore.Save(_paths.DownloadTasksFile, file, StorageJsonContext.Default.DownloadFile, out string? error);
+        if (!saved && error is not null)
         {
             _log?.Invoke("Download state save failed: " + error);
         }
+        return saved;
     }
 
-    private void RaiseTask(DownloadTask task) => TaskChanged?.Invoke(this, task);
+    private void RaiseTask(DownloadTask task)
+    {
+        lock (_gate) { if (!_tasks.Contains(task)) return; }
+        TaskChanged?.Invoke(this, task);
+    }
 
     private void RaiseChanged() => Changed?.Invoke(this, EventArgs.Empty);
 
@@ -770,6 +984,9 @@ public sealed class DownloadManager : IDisposable
             SaveLocked();
         }
 
-        _pumpGate.Dispose();
+        // Workers own their cancellation sources until they have released all I/O.
+        Task[] pending;
+        lock (_gate) pending = _running.Values.ToArray();
+        try { Task.WhenAll(pending).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
     }
 }

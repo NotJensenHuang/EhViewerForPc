@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+using EhViewerReader.Core.Imaging;
+using EhViewerReader.Core.Format;
 using System.Security.Cryptography;
 using System.Text;
 using EhViewerReader.Core.Online;
@@ -17,14 +18,19 @@ public sealed class OnlineImageService
     private readonly AppPaths _paths;
     private readonly EhClient _client;
     private readonly LogService _log;
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim[] _gates = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1, 1)).ToArray();
+    private readonly GalleryImageStore _pages;
+    private int _writes;
+    private int _pruning;
 
-    public OnlineImageService(AppPaths paths, EhClient client, ImageLoader loader, LogService log)
+    public OnlineImageService(AppPaths paths, EhClient client, ImageLoader loader, LogService log, GalleryImageStore? pages = null)
     {
         _paths = paths;
         _client = client;
         Loader = loader;
         _log = log;
+        _pages = pages ?? new GalleryImageStore(paths, client);
+        _pages.FileCached += CacheWritten;
     }
 
     public ImageLoader Loader { get; }
@@ -45,18 +51,15 @@ public sealed class OnlineImageService
     public IImageRequest CreatePageRequest(
         EhPageRef page,
         bool original,
-        Action<int, int>? resolved)
+        Action<int, int>? resolved, Action<bool>? qualityResolved = null, int? resampledWidth = null)
     {
-        // Original and resampled files differ, so they must not share a cache entry.
-        string key = $"{page.Gid}-{page.Page:D5}" + (original ? "-orig" : string.Empty);
-        string path = Path.Combine(_paths.OnlineCacheDirectory, key + ".img");
-        return new RemoteImageRequest(
-            this,
-            "page:" + key,
-            path,
-            token => _client.GetImageUrlAsync(page, original, token),
-            referer: page.PageUrl,
-            resolved: resolved);
+        return new GalleryPageImageRequest(_pages, Loader, page, original, resolved, CacheWritten, qualityResolved, resampledWidth ?? _client.ResampledWidth);
+    }
+
+    private void CacheWritten()
+    {
+        if (Interlocked.Increment(ref _writes) % 16 != 0 || Interlocked.Exchange(ref _pruning, 1) != 0) return;
+        _ = Task.Run(() => { try { PruneCache(TimeSpan.FromDays(14)); } finally { Volatile.Write(ref _pruning, 0); } });
     }
 
     /// <summary>
@@ -66,40 +69,23 @@ public sealed class OnlineImageService
     /// </summary>
     public void PruneCache(TimeSpan maxAge, long maxBytes = 2L * 1024 * 1024 * 1024)
     {
-        foreach (string directory in new[] { _paths.OnlineCacheDirectory, _paths.ThumbnailCacheDirectory })
+        try
         {
-            try
+            var files = new[] { _paths.OnlineCacheDirectory, _paths.ThumbnailCacheDirectory }
+                .Where(Directory.Exists).SelectMany(d => new DirectoryInfo(d).EnumerateFiles("*.img"))
+                .OrderBy(f => f.LastAccessTimeUtc).ToList();
+            long total = files.Sum(f => f.Length);
+            DateTime cutoff = DateTime.UtcNow - maxAge;
+            foreach (var file in files)
             {
-                if (!Directory.Exists(directory)) continue;
-                List<FileInfo> files = new DirectoryInfo(directory)
-                    .EnumerateFiles("*", SearchOption.TopDirectoryOnly)
-                    .OrderByDescending(f => f.LastAccessTimeUtc)
-                    .ToList();
-
-                long total = files.Sum(f => f.Length);
-                DateTime cutoff = DateTime.UtcNow - maxAge;
-                foreach (FileInfo file in files)
-                {
-                    bool expired = file.LastAccessTimeUtc < cutoff;
-                    if (!expired && total <= maxBytes) continue;
-
-                    total -= file.Length;
-                    try
-                    {
-                        file.Delete();
-                    }
-                    catch (IOException)
-                    {
-                        // A page currently being read keeps the file open; it
-                        // will be pruned on the next run.
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _log.Warn("Online cache prune failed: " + directory + " | " + ex.Message);
+                if (file.LastAccessTimeUtc >= cutoff && total <= maxBytes) continue;
+                try { long length = file.Length; file.Delete(); total -= length; }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { _log.Warn("Online cache prune failed: " + ex.Message); }
     }
 
     /// <summary>Deletes every cached online image (settings → 清除在线缓存).</summary>
@@ -136,20 +122,21 @@ public sealed class OnlineImageService
     /// <summary>Downloads <paramref name="url"/> to <paramref name="path"/> once, even under concurrency.</summary>
     internal async Task EnsureFileAsync(string url, string path, string referer, CancellationToken token)
     {
-        SemaphoreSlim gate = _gates.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
+        SemaphoreSlim gate = _gates[(uint)StringComparer.Ordinal.GetHashCode(path) % (uint)_gates.Length];
         await gate.WaitAsync(token).ConfigureAwait(false);
         try
         {
             if (File.Exists(path))
             {
                 var info = new FileInfo(path);
-                if (info.Length > 0) return;
+                if (ImageSignature.IsValidFile(path)) { try { File.SetLastAccessTimeUtc(path, DateTime.UtcNow); } catch (IOException) { } return; }
             }
 
             string? directory = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
             await _client.DownloadToFileAsync(url, referer, path, null, token).ConfigureAwait(false);
+            CacheWritten();
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException or IOException)
         {
@@ -166,6 +153,21 @@ public sealed class OnlineImageService
     {
         byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
         return Convert.ToHexString(bytes)[..20].ToLowerInvariant();
+    }
+}
+
+public sealed class GalleryPageImageRequest(GalleryImageStore pages, ImageLoader loader, EhPageRef page, bool original,
+    Action<int, int>? resolved, Action cacheWritten, Action<bool>? qualityResolved, int resampledWidth) : IImageRequest
+{
+    public string Key { get; } = $"page:{page.Gid}-{page.Page}:{original}:{resampledWidth}";
+    public async Task<DecodedImage?> LoadAsync(int targetWidth, int targetHeight, CancellationToken token)
+    {
+        var cached = await pages.GetAsync(page, original, token, resampledWidth).ConfigureAwait(false);
+        qualityResolved?.Invoke(cached.IsOriginal);
+        var image = await loader.LoadFileAsync(cached.Path, targetWidth, targetHeight, token).ConfigureAwait(false);
+        if (image is not null) resolved?.Invoke(image.DecodedWidth, image.DecodedHeight);
+        cacheWritten();
+        return image;
     }
 }
 
@@ -197,7 +199,7 @@ public sealed class RemoteImageRequest : IImageRequest
 
     public async Task<DecodedImage?> LoadAsync(int targetWidth, int targetHeight, CancellationToken cancellationToken)
     {
-        if (!File.Exists(_cachePath) || new FileInfo(_cachePath).Length == 0)
+        if (!ImageSignature.IsValidFile(_cachePath))
         {
             string url = await _resolveUrl(cancellationToken).ConfigureAwait(false);
             if (string.IsNullOrEmpty(url)) return null;

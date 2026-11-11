@@ -41,7 +41,7 @@ public static class StableIdFactory
     {
         string full = Path.GetFullPath(path);
         full = full.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return full.ToLowerInvariant();
+        return OperatingSystem.IsWindows() ? full.ToLowerInvariant() : full;
     }
 
     public static string ForGallery(long? gid, int gidUseCount, string folderPath, bool forcePathSuffix)

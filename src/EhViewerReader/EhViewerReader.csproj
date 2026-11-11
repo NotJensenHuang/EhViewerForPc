@@ -1,12 +1,12 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BuiltInComInteropSupport Condition="$([MSBuild]::IsOSPlatform('Windows'))">true</BuiltInComInteropSupport>
+    <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <!-- Windows are created with DI constructors, never through the runtime XAML
@@ -28,7 +28,7 @@
 
   <ItemGroup>
     <PackageReference Include="Avalonia" />
-    <PackageReference Include="Avalonia.Win32" />
+    <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Skia" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
     <PackageReference Include="Avalonia.Controls.ItemsRepeater" />
@@ -49,7 +49,7 @@
        Studio installations ship the headers without the x64 .lib files, which
        makes link.exe fail with LNK1181; the SDK NuGet package supplies them.
        These assets are build-time only and are never copied to the output. -->
-  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+  <ItemGroup Condition="'$(PublishAot)' == 'true' and $([MSBuild]::IsOSPlatform('Windows'))">
     <PackageReference Include="Microsoft.Windows.SDK.CPP.x64" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
     <AdditionalNativeLibraryDirectories Include="$(PkgMicrosoft_Windows_SDK_CPP_x64)\c\um\x64" />
     <AdditionalNativeLibraryDirectories Include="$(PkgMicrosoft_Windows_SDK_CPP_x64)\c\ucrt\x64" />

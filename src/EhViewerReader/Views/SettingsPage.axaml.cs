@@ -13,7 +13,7 @@ public partial class SettingsPage : UserControl
     }
 
     /// <summary>Raised after "保存全部设置"; the shell reloads sources and theme.</summary>
-    public event EventHandler<bool>? SettingsApplied;
+    public event Func<bool, Task>? SettingsApplied;
 
     /// <summary>Raised by the "网页登录" button; the shell owns the login window.</summary>
     public event EventHandler? WebLoginRequested;
@@ -36,12 +36,10 @@ public partial class SettingsPage : UserControl
         if (DataContext is SettingsViewModel viewModel) viewModel.ClearCaches();
     }
 
-    private void OnApplyAll(object? sender, RoutedEventArgs e)
+    private async void OnApplyAll(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not SettingsViewModel viewModel) return;
-        bool sourcesChanged = viewModel.HasSourceChanges;
-        viewModel.Apply();
-        SettingsApplied?.Invoke(this, sourcesChanged);
+        await viewModel.ApplyAsync(changed => SettingsApplied?.Invoke(changed) ?? Task.CompletedTask);
     }
 
     private async void OnPickDownloadRoot(object? sender, RoutedEventArgs e)

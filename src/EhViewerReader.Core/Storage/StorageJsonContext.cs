@@ -20,7 +20,9 @@ namespace EhViewerReader.Core.Storage;
     UseStringEnumConverter = true)]
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(ProgressFile))]
+[JsonSerializable(typeof(WorkCatalogFile))]
 [JsonSerializable(typeof(LibraryCache))]
 [JsonSerializable(typeof(DownloadFile))]
+[JsonSerializable(typeof(DownloadRootMoveJournal))]
 [JsonSerializable(typeof(TagTranslationDatabase))]
 public sealed partial class StorageJsonContext : JsonSerializerContext;

@@ -1,9 +1,11 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Download;
+using EhViewerReader.Core.Storage;
 using EhViewerReader.Core.Online;
 using EhViewerReader.Services;
 
@@ -20,19 +22,21 @@ public sealed class SourceRowViewModel : ObservableObject
         _enabled = source.Enabled;
     }
 
-    public LibrarySource Source { get; }
+    public LibrarySource Source { get; private set; }
     public string DisplayName => Source.DisplayName;
     public string RootPath => Source.RootPath;
     public bool IsMissing => !Source.Exists;
     public string StatusText => Source.Exists ? string.Empty : "目录不可用";
 
+    public void UpdateSource(LibrarySource source) { Source = source; NotifyPathChanged(); }
+    public void NotifyPathChanged() { OnPropertyChanged(nameof(RootPath)); OnPropertyChanged(nameof(DisplayName)); OnPropertyChanged(nameof(IsMissing)); OnPropertyChanged(nameof(StatusText)); }
     public bool Enabled
     {
         get => _enabled;
         set
         {
             if (!SetProperty(ref _enabled, value)) return;
-            Source.Enabled = value;
+
         }
     }
 }
@@ -149,7 +153,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private string _userNameInput = string.Empty;
     private string _passwordInput = string.Empty;
     private string _cookieInput = string.Empty;
-    private string _accountStatus = "推荐使用网页登录：站点对普通 HTTP 登录启用了 Cloudflare 校验";
+    private string _accountStatus = string.Empty;
     private bool _accountBusy;
 
     private int _proxyModeIndex;
@@ -175,6 +179,8 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private string _downloadStatus = string.Empty;
 
     private string _networkSnapshot;
+    private readonly Dictionary<string, object?> _editBaseline = new();
+    private readonly HashSet<string> _removedSources = new(StringComparer.Ordinal);
     private readonly Dictionary<string, bool> _enabledSnapshot = new(StringComparer.OrdinalIgnoreCase);
 
     private bool _showTagTranslations;
@@ -183,6 +189,26 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private bool _updatingTags;
 
     private int _imageQualityIndex;
+    private int _resampledWidthIndex;
+    private bool _isSaving;
+    private CancellationTokenSource? _moveCancellation;
+    public string? LastMovedRoot { get; private set; }
+    public string? PreviousDownloadRoot { get; private set; }
+    private int _downloadDirectoryMode;
+    public string[] DownloadDirectoryModes { get; } = ["仅更改后续下载位置（不搬迁文件）", "搬迁已有下载并同步路径"];
+    public int DownloadDirectoryMode
+    {
+        get => _downloadDirectoryMode;
+        set { if (SetProperty(ref _downloadDirectoryMode, Math.Clamp(value, 0, 1))) { OnPropertyChanged(nameof(SaveLabel)); OnPropertyChanged(nameof(DownloadDirectoryHint)); } }
+    }
+    public string DownloadDirectoryHint => DownloadDirectoryMode == 0
+        ? "仅保存新位置：后续下载使用新目录；已有文件和已有任务保留原位置。注册本地库后，新目录与旧目录都可继续阅读。"
+        : "暂停任务、搬迁已有文件并同步下载记录与本地库，再继续下载。目标目录须为空；取消时保留用户原有的目标文件夹。";
+    public bool CanCancelMove => IsSaving && _moveCancellation is not null;
+    public bool IsSaving { get => _isSaving; private set { if (SetProperty(ref _isSaving, value)) { OnPropertyChanged(nameof(SaveLabel)); OnPropertyChanged(nameof(CanCancelMove)); } } }
+    public string SaveLabel => IsSaving ? "正在保存…" : !IsDownloadRootChanged ? "保存设置" : DownloadDirectoryMode == 1 ? "保存并搬迁下载" : "保存设置（不搬迁）";
+    public bool IsDownloadRootChanged => !PathIdentity.Comparer.Equals(DownloadRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), _services.Downloads.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+    [RelayCommand] private void CancelMove() => _moveCancellation?.Cancel();
     private string _filterStatus = string.Empty;
 
     private string _favoriteSlotStatus = string.Empty;
@@ -212,6 +238,8 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         LoadDownloadFields();
         LoadOnlineFields();
         _networkSnapshot = NetworkSnapshot();
+        RefreshAccount();
+        CaptureBaseline();
     }
 
     public event EventHandler? AccountChanged;
@@ -376,6 +404,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public void RefreshAccount()
     {
         OnPropertyChanged(nameof(IsSignedIn));
+        if (!AccountBusy) AccountStatus = IsSignedIn ? "账号已登录，登录状态已保存。" : "未登录，可通过网页登录或导入 Cookie 登录。";
         OnPropertyChanged(nameof(AccountUserText));
         OnPropertyChanged(nameof(ExAccessText));
         OnPropertyChanged(nameof(LastSignInText));
@@ -703,13 +732,16 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public IReadOnlyList<FeedOption> ImageQualityOptions { get; } =
     [
         new FeedOption("orig", "原图（最大尺寸，需登录）"),
-        new FeedOption("res", "站点压缩图（约 1280 宽）"),
+        new FeedOption("res", "站点压缩图（默认）"),
     ];
 
+    public string[] ResampledWidths { get; } = ["780 px", "980 px", "1280 px", "1600 px", "2400 px"];
+    public int ResampledWidthIndex { get => _resampledWidthIndex; set { if (SetProperty(ref _resampledWidthIndex, Math.Clamp(value, 0, 4))) OnPropertyChanged(nameof(ImageQualityHint)); } }
+    private int SelectedResampledWidth => new[] { 780, 980, 1280, 1600, 2400 }[_resampledWidthIndex];
     public string ImageQualityHint =>
         _imageQualityIndex == 0
             ? "原图每页单独解析，流量最大；未登录或原图不可用时自动回退到站点压缩图。"
-            : "压缩图宽度由站点账号设置决定（780 / 980 / 1280 / 1600 / 2400），默认 1280。";
+            : $"在线阅读与新下载默认请求 {SelectedResampledWidth}px 宽的压缩图。1600/2400px 是否可用取决于站点权限。";
 
     public string FilterStatus
     {
@@ -735,6 +767,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         _showTagTranslations = online.ShowTagTranslations;
         _tagTranslationUrl = online.TagTranslationUrl;
         _imageQualityIndex = _services.Settings.ImageQuality == ImageQuality.Original ? 0 : 1;
+        _resampledWidthIndex = Array.IndexOf(new[] { 780, 980, 1280, 1600, 2400 }, _services.Settings.ResampledWidth);
         // Do not parse the 2.5 MB database just to render the settings page; the
         // stored summary is enough until the user opens a gallery or updates it.
         _tagTranslationStatus = online.TagTranslationCount > 0
@@ -820,7 +853,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public string DownloadRoot
     {
         get => _downloadRoot;
-        set => SetProperty(ref _downloadRoot, value);
+        set { if (SetProperty(ref _downloadRoot, value)) { OnPropertyChanged(nameof(IsDownloadRootChanged)); OnPropertyChanged(nameof(SaveLabel)); } }
     }
 
     public bool DownloadAddAsSource
@@ -905,15 +938,11 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     {
         if (string.IsNullOrWhiteSpace(path)) return;
         DownloadRoot = Path.GetFullPath(path);
-        DownloadStatus = "下载目录已更新，保存后生效";
+        DownloadStatus = "目录已选择；按所选的变更方式点击上方保存后生效";
     }
 
     [RelayCommand]
-    private void ApplyDownload()
-    {
-        ApplyDownloadSettings(save: true);
-        DownloadStatus = "下载设置已保存（进行中的任务继续使用原目录）";
-    }
+    private Task ApplyDownload() => ApplyAsync();
 
     [RelayCommand]
     private void OpenDownloadFolder()
@@ -922,12 +951,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         {
             string root = DownloadRoot.Length > 0 ? DownloadRoot : _services.Downloads.RootPath;
             Directory.CreateDirectory(root);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = "\"" + root + "\"",
-                UseShellExecute = true,
-            });
+            EhViewerReader.Services.PlatformLauncher.Open(root);
         }
         catch (Exception ex)
         {
@@ -938,19 +962,20 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     private void ApplyDownloadSettings(bool save)
     {
         DownloadSettings download = _services.Settings.Download;
-        download.RootPath = DownloadRoot.Trim();
-        download.AddAsSource = DownloadAddAsSource;
-        download.MaxConcurrentTasks = (int)MaxConcurrentTasks;
-        download.MaxConcurrentPages = (int)MaxConcurrentPages;
-        download.WriteThumb = WriteThumb;
-        download.WriteEhviewerHeader = WriteHeader;
-        download.AutoStart = AutoStart;
-        download.RefreshLibraryOnComplete = RefreshAfterDownload;
-        download.DefaultLabel = DefaultDownloadLabel.Trim();
+        if (IsDownloadRootChanged) throw new InvalidOperationException("更改下载目录请使用保存并搬迁下载操作");
+        _editBaseline["Download.RootPath"] = DownloadRoot;
+        ApplyEdited("Download.AddAsSource", DownloadAddAsSource, value => download.AddAsSource = value);
+        ApplyEdited("Download.MaxConcurrentTasks", (int)MaxConcurrentTasks, value => download.MaxConcurrentTasks = value);
+        ApplyEdited("Download.MaxConcurrentPages", (int)MaxConcurrentPages, value => download.MaxConcurrentPages = value);
+        ApplyEdited("Download.WriteThumb", WriteThumb, value => download.WriteThumb = value);
+        ApplyEdited("Download.WriteEhviewerHeader", WriteHeader, value => download.WriteEhviewerHeader = value);
+        ApplyEdited("Download.AutoStart", AutoStart, value => download.AutoStart = value);
+        ApplyEdited("Download.RefreshLibraryOnComplete", RefreshAfterDownload, value => download.RefreshLibraryOnComplete = value);
+        ApplyEdited("Download.DefaultLabel", DefaultDownloadLabel.Trim(), value => download.DefaultLabel = value);
         download.Normalize();
 
         if (save) _services.TrySaveSettings(out _);
-        if (DownloadAddAsSource) _services.EnsureDownloadSource();
+        if (download.AddAsSource) _services.EnsureDownloadSource();
     }
 
     // ------------------------------------------------------------ sources
@@ -958,7 +983,10 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public void AddSource(string path, string? name = null)
     {
         if (string.IsNullOrWhiteSpace(path)) return;
-        LibrarySource source = _services.Settings.AddSource(path, name);
+        string normalized = AppSettings.NormalizeRoot(path);
+        LibrarySource source = _services.Settings.Sources.FirstOrDefault(s => EhViewerReader.Core.Storage.PathIdentity.Comparer.Equals(s.RootPath, normalized))
+            ?? new LibrarySource { Id = "src-" + EhViewerReader.Core.Format.StableIdFactory.PathHash(normalized), RootPath = normalized, Name = name };
+        _removedSources.Remove(source.Id);
         SourcesChanged = true;
         OnPropertyChanged(nameof(HasSourceChanges));
         SourceRowViewModel? row = Sources.FirstOrDefault(r =>
@@ -979,6 +1007,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     {
         if (row is null) return;
         Sources.Remove(row);
+        _removedSources.Add(row.Source.Id);
         SourcesChanged = true;
         OnPropertyChanged(nameof(HasSources));
     }
@@ -988,12 +1017,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         if (row is null || !row.Source.Exists) return;
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = "\"" + row.Source.RootPath + "\"",
-                UseShellExecute = true,
-            });
+            EhViewerReader.Services.PlatformLauncher.Open(row.Source.RootPath);
         }
         catch (Exception ex)
         {
@@ -1026,12 +1050,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     {
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = "\"" + _services.Paths.BaseDirectory + "\"",
-                UseShellExecute = true,
-            });
+            EhViewerReader.Services.PlatformLauncher.Open(_services.Paths.BaseDirectory);
         }
         catch (Exception ex)
         {
@@ -1057,37 +1076,91 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
     // -------------------------------------------------------------- apply
 
+    public async Task<bool> ApplyAsync(Func<bool, Task>? applied = null)
+    {
+        if (IsSaving) return false;
+        bool rootChanged = IsDownloadRootChanged;
+        bool sourcesChanged = HasSourceChanges || rootChanged;
+        IsSaving = true;
+        string? movedStatus = null;
+        LastMovedRoot = null;
+        PreviousDownloadRoot = null;
+        try
+        {
+            if (rootChanged && DownloadDirectoryMode == 1)
+            {
+                _moveCancellation = new CancellationTokenSource();
+                OnPropertyChanged(nameof(CanCancelMove));
+                string oldRoot = _services.Downloads.RootPath;
+                var progress = new Progress<DownloadMoveProgress>(p =>
+                {
+                    if (!IsSaving || _moveCancellation is null) return;
+                    DownloadStatus = p.TotalBytes > 0 ? $"{p.Phase} · {p.Percent:F0}% · {DownloadTask.FormatSize(p.Bytes)} / {DownloadTask.FormatSize(p.TotalBytes)}" : p.Phase;
+                });
+                bool cleaned = await _services.RelocateDownloadsAsync(DownloadRoot, progress, _moveCancellation.Token);
+                _moveCancellation.Dispose(); _moveCancellation = null;
+                OnPropertyChanged(nameof(CanCancelMove));
+                LastMovedRoot = oldRoot;
+                PreviousDownloadRoot = oldRoot;
+                DownloadRoot = _services.Downloads.RootPath;
+                movedStatus = cleaned ? "下载文件与本地库目录已同步迁移" : "迁移完成；旧目录中被占用或变化的文件已保留";
+                foreach (var row in Sources) row.NotifyPathChanged();
+                RefreshSources();
+            }
+            else if (rootChanged)
+            {
+                string previous = _services.Downloads.RootPath;
+                await _services.ChangeDownloadRootWithoutMovingAsync(DownloadRoot, DownloadAddAsSource);
+                PreviousDownloadRoot = previous;
+                DownloadRoot = _services.Downloads.RootPath;
+                movedStatus = "新下载位置已保存；旧文件、旧任务和旧数据源保留原位置";
+                RefreshSources();
+            }
+            Apply();
+            if (rootChanged) DownloadStatus = "下载位置已保存，正在更新本地库索引…";
+            if (applied is not null) await applied(sourcesChanged);
+            DownloadStatus = rootChanged ? movedStatus! : "设置已保存";
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            DownloadStatus = PreviousDownloadRoot is null ? "已取消迁移，原目录与下载记录保持不变；用户原有的目标文件夹已保留"
+                : "目录设置已保存，本地库索引更新已取消，可稍后手动刷新";
+            return PreviousDownloadRoot is not null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+        { DownloadStatus = "保存失败：" + ex.Message; return false; }
+        finally { _moveCancellation?.Dispose(); _moveCancellation = null; RefreshSources(); IsSaving = false; }
+    }
+
     public void Apply()
     {
         AppSettings settings = _services.Settings;
 
-        // The rows hold the same LibrarySource instances, so enabling/disabling
-        // is already applied. Removing a row must also drop it from settings and
-        // from the per-work preferred-source map.
-        var keep = new HashSet<string>(Sources.Select(s => s.Source.Id), StringComparer.OrdinalIgnoreCase);
-        foreach (LibrarySource source in settings.Sources.ToArray())
+        foreach (var row in Sources)
         {
-            if (!keep.Contains(source.Id))
-            {
-                settings.RemoveSource(source.Id);
-            }
+            var source = settings.Sources.FirstOrDefault(s => s.Id == row.Source.Id) ?? settings.AddSource(row.Source.RootPath, row.Source.Name);
+            if (!_enabledSnapshot.TryGetValue(row.Source.Id, out bool before) || before != row.Enabled) source.Enabled = row.Enabled;
         }
-
-        settings.Theme = (AppTheme)_themeIndex;
-        settings.DefaultReadingMode = (ReadingMode)_modeIndex;
-        settings.DefaultFitMode = (FitMode)_fitIndex;
-        settings.ReaderBackground = (ReaderBackground)_backgroundIndex;
-        settings.RightToLeft = _rightToLeft;
-        settings.MaxDecodeMegapixels = (int)_maxMegapixels;
-        settings.PageCacheMegabytes = (int)_pageCacheMegabytes;
-        settings.CoverDecodeWidth = (int)_coverDecodeWidth;
-        settings.Account.Site = (EhSite)_siteIndex;
-        settings.Account.FavoriteSlotNames = FavoriteSlots.Select(f => f.Name.Trim()).ToList();
+        foreach (string id in _removedSources) settings.RemoveSource(id);
+        _removedSources.Clear();
+        ApplyEdited("Theme", (AppTheme)_themeIndex, value => settings.Theme = value);
+        ApplyEdited("DefaultReadingMode", (ReadingMode)_modeIndex, value => settings.DefaultReadingMode = value);
+        ApplyEdited("DefaultFitMode", (FitMode)_fitIndex, value => settings.DefaultFitMode = value);
+        ApplyEdited("ReaderBackground", (ReaderBackground)_backgroundIndex, value => settings.ReaderBackground = value);
+        ApplyEdited("RightToLeft", _rightToLeft, value => settings.RightToLeft = value);
+        ApplyEdited("MaxDecodeMegapixels", (int)_maxMegapixels, value => settings.MaxDecodeMegapixels = value);
+        ApplyEdited("PageCacheMegabytes", (int)_pageCacheMegabytes, value => settings.PageCacheMegabytes = value);
+        ApplyEdited("CoverDecodeWidth", (int)_coverDecodeWidth, value => settings.CoverDecodeWidth = value);
+        ApplyEdited("Account.Site", (EhSite)_siteIndex, value => settings.Account.Site = value);
+        ApplyEdited("favoriteSlots", string.Join("\0", FavoriteSlots.Select(f => f.Name.Trim())),
+            _ => settings.Account.FavoriteSlotNames = FavoriteSlots.Select(f => f.Name.Trim()).ToList());
         settings.Account.Normalize();
 
-        settings.Online.ShowTagTranslations = _showTagTranslations;
-        settings.Online.TagTranslationUrl = TagTranslationUrl.Trim();
-        settings.ImageQuality = ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled;
+        ApplyEdited("Online.ShowTagTranslations", _showTagTranslations, value => settings.Online.ShowTagTranslations = value);
+        ApplyEdited("Online.TagTranslationUrl", TagTranslationUrl.Trim(), value => settings.Online.TagTranslationUrl = value);
+        ApplyEdited("ResampledWidth", SelectedResampledWidth, value => settings.ResampledWidth = value);
+        ApplyEdited("ImageQuality", ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled, value => settings.ImageQuality = value);
         settings.Online.Filters = Filters.Select(f => f.Rule.Clone()).ToList();
         settings.Online.Normalize();
 
@@ -1111,6 +1184,66 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         }
 
         OnPropertyChanged(nameof(HasSourceChanges));
+    }
+
+    private void ApplyEdited<T>(string key, T value, Action<T> apply)
+    {
+        if (!_editBaseline.TryGetValue(key, out object? baseline) || !Equals(baseline, value)) apply(value);
+        _editBaseline[key] = value;
+    }
+
+    private void CaptureBaseline()
+    {
+        _editBaseline["Download.RootPath"] = DownloadRoot;
+        _editBaseline["Download.DefaultLabel"] = _defaultDownloadLabel.Trim();
+        _editBaseline["Download.RefreshLibraryOnComplete"] = _refreshAfterDownload;
+        _editBaseline["Download.AutoStart"] = _autoStart;
+        _editBaseline["Download.WriteEhviewerHeader"] = _writeHeader;
+        _editBaseline["Download.WriteThumb"] = _writeThumb;
+        _editBaseline["Download.MaxConcurrentPages"] = (int)_maxPages;
+        _editBaseline["Download.MaxConcurrentTasks"] = (int)_maxTasks;
+        _editBaseline["Download.AddAsSource"] = _downloadAddAsSource;
+        _editBaseline["favoriteSlots"] = string.Join("\0", FavoriteSlots.Select(f => f.Name.Trim()));
+        _editBaseline["Theme"] = (AppTheme)_themeIndex;
+        _editBaseline["DefaultReadingMode"] = (ReadingMode)_modeIndex;
+        _editBaseline["DefaultFitMode"] = (FitMode)_fitIndex;
+        _editBaseline["ReaderBackground"] = (ReaderBackground)_backgroundIndex;
+        _editBaseline["RightToLeft"] = _rightToLeft;
+        _editBaseline["MaxDecodeMegapixels"] = (int)_maxMegapixels;
+        _editBaseline["PageCacheMegabytes"] = (int)_pageCacheMegabytes;
+        _editBaseline["CoverDecodeWidth"] = (int)_coverDecodeWidth;
+        _editBaseline["Account.Site"] = (EhSite)_siteIndex;
+        _editBaseline["Online.ShowTagTranslations"] = _showTagTranslations;
+        _editBaseline["Online.TagTranslationUrl"] = TagTranslationUrl.Trim();
+        _editBaseline["ResampledWidth"] = SelectedResampledWidth;
+        _editBaseline["ImageQuality"] = ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled;
+    }
+
+    public void RefreshSources()
+    {
+        // A cached page follows effective values until its draft is edited.
+        RefreshUnedited("ImageQuality", ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled,
+            _services.Settings.ImageQuality, value => ImageQualityIndex = value == ImageQuality.Original ? 0 : 1);
+        RefreshUnedited("ResampledWidth", SelectedResampledWidth, _services.Settings.ResampledWidth,
+            value => ResampledWidthIndex = Array.IndexOf(new[] { 780, 980, 1280, 1600, 2400 }, value));
+        RefreshUnedited("Download.RootPath", DownloadRoot, _services.Downloads.RootPath, value => DownloadRoot = value);
+        RefreshUnedited("Download.AddAsSource", DownloadAddAsSource, _services.Settings.Download.AddAsSource, value => DownloadAddAsSource = value);
+        foreach (var source in _services.Settings.Sources)
+        {
+            if (_removedSources.Contains(source.Id)) continue;
+            var existing = Sources.FirstOrDefault(r => r.Source.Id == source.Id);
+            if (existing is not null) existing.UpdateSource(source);
+            else { Sources.Add(new SourceRowViewModel(source)); _enabledSnapshot[source.Id] = source.Enabled; }
+        }
+        foreach (var stale in Sources.Where(r => _enabledSnapshot.ContainsKey(r.Source.Id) && !_services.Settings.Sources.Any(s => s.Id == r.Source.Id)).ToArray()) Sources.Remove(stale);
+        OnPropertyChanged(nameof(HasSources));
+    }
+
+    private void RefreshUnedited<T>(string key, T draft, T effective, Action<T> update)
+    {
+        if (!_editBaseline.TryGetValue(key, out var baseline) || !Equals(baseline, draft) || Equals(draft, effective)) return;
+        update(effective);
+        _editBaseline[key] = effective;
     }
 
     public void Dispose()

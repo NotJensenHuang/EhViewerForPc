@@ -6,18 +6,17 @@ using EhViewerReader.ViewModels;
 
 namespace EhViewerReader.Views;
 
-public partial class VersionsWindow : Window
+public partial class VersionsPage : DocumentPage
 {
     private readonly VersionsViewModel? _viewModel;
 
-    public VersionsWindow()
+    public VersionsPage()
     {
         InitializeComponent();
-        Icon = AppIcons.Window;
         Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
     }
 
-    public VersionsWindow(VersionsViewModel viewModel) : this()
+    public VersionsPage(VersionsViewModel viewModel) : this()
     {
         _viewModel = viewModel;
         DataContext = viewModel;
@@ -48,12 +47,7 @@ public partial class VersionsWindow : Window
         if (sender is not Button { Tag: GalleryVersionViewModel version }) return;
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = "\"" + version.FolderPath + "\"",
-                UseShellExecute = true,
-            });
+            EhViewerReader.Services.PlatformLauncher.Open(version.FolderPath);
         }
         catch (Exception ex)
         {

@@ -30,12 +30,12 @@ public sealed class LibraryCacheStore
         var cache = JsonFileStore.LoadOrDefault(
             file, StorageJsonContext.Default.LibraryCache, () => new LibraryCache(), out error);
         if (cache.SchemaVersion != LibraryCache.CurrentSchemaVersion ||
-            !string.Equals(cache.RootPath, normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            !PathIdentity.Comparer.Equals(cache.RootPath, normalizedRoot))
         {
             cache = new LibraryCache { RootPath = normalizedRoot };
         }
 
-        cache.Entries = new Dictionary<string, GalleryCacheEntry>(cache.Entries, StringComparer.OrdinalIgnoreCase);
+        cache.Entries = new Dictionary<string, GalleryCacheEntry>(cache.Entries, PathIdentity.Comparer);
         return cache;
     }
 

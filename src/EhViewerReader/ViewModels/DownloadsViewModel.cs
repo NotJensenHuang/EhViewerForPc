@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerReader.Core.Download;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Online;
 using EhViewerReader.Services;
 
 namespace EhViewerReader.ViewModels;
@@ -21,6 +22,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, DownloadTaskViewModel> _byId = new(StringComparer.Ordinal);
     private string _statusText = string.Empty;
     private bool _disposed;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DownloadTask> _dirtyTasks = new();
+    private int _updateQueued;
 
     public DownloadsViewModel(AppServices services, MainViewModel library)
     {
@@ -35,7 +38,23 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     }
 
     public ObservableCollection<DownloadTaskViewModel> Tasks { get; } = [];
-    public ObservableCollection<DownloadArchiveViewModel> Archive { get; } = [];
+    public IReadOnlyList<DownloadArchiveViewModel> Archive { get; private set; } = [];
+    public ObservableCollection<ArchiveViewModel> ArchiveTransfers { get; } = [];
+    public event EventHandler<ArchiveViewModel>? ArchiveRequested;
+    public ArchiveViewModel GetArchiveSession(EhGalleryDetails details, IOnlineHost host)
+    {
+        var existing = ArchiveTransfers.FirstOrDefault(a => a.Details.Gid == details.Gid);
+        if (existing is not null) return existing;
+        var created = new ArchiveViewModel(_services, host, details);
+        ArchiveTransfers.Add(created);
+        return created;
+    }
+    [RelayCommand] private void ShowArchive(ArchiveViewModel? session) { if (session is not null) ArchiveRequested?.Invoke(this, session); }
+    [RelayCommand] private void ReadTask(DownloadTaskViewModel? item)
+    {
+        if (item is not null && _library.TryGetLocalCopy(item.Task.Gid, out var local) && local is not null)
+            _library.OpenGalleryCommand.Execute(local);
+    }
 
     public string RootPath => _services.Downloads.RootPath;
     public string RootPathDisplay => RootPath;
@@ -89,33 +108,32 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             _byId.Remove(stale.Task.Id);
         }
 
-        Archive.Clear();
-        foreach (DownloadArchiveEntry entry in _services.Downloads.Archive)
-        {
-            Archive.Add(new DownloadArchiveViewModel(entry, this));
-        }
+        Archive = _services.Downloads.Archive.Select(entry => new DownloadArchiveViewModel(entry, this)).ToArray();
+        OnPropertyChanged(nameof(Archive));
 
         RefreshStatus();
     }
 
     private void OnTaskChanged(object? sender, DownloadTask task)
     {
-        Dispatcher.UIThread.Post(() =>
+        _dirtyTasks[task.Id] = task;
+        if (Interlocked.Exchange(ref _updateQueued, 1) != 0) return;
+        _ = Task.Run(async () =>
         {
-            if (_disposed) return;
-            if (_byId.TryGetValue(task.Id, out DownloadTaskViewModel? vm))
+            await Task.Delay(100);
+            Dispatcher.UIThread.Post(() =>
             {
-                vm.Refresh();
-            }
-            else
-            {
-                var created = new DownloadTaskViewModel(task, this);
-                _byId[task.Id] = created;
-                Tasks.Insert(0, created);
-            }
-
-            RefreshStatus();
-        }, DispatcherPriority.Background);
+                Volatile.Write(ref _updateQueued, 0);
+                if (_disposed) return;
+                foreach (var pair in _dirtyTasks.ToArray())
+                {
+                    if (!_dirtyTasks.TryRemove(pair.Key, out var changed) || !_services.Downloads.IsQueued(changed.Gid)) continue;
+                    if (_byId.TryGetValue(changed.Id, out var vm)) vm.Refresh();
+                    else { vm = new DownloadTaskViewModel(changed, this); _byId[changed.Id] = vm; Tasks.Insert(0, vm); }
+                }
+                RefreshStatus();
+            }, DispatcherPriority.Background);
+        });
     }
 
     private void OnChanged(object? sender, EventArgs e)
@@ -135,7 +153,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             if (_disposed) return;
             try
             {
-                await _library.LoadLibraryAsync(forceRefresh: false, useCacheFirst: true).ConfigureAwait(true);
+                await _library.ImportDownloadAsync(task).ConfigureAwait(true);
             }
             catch (Exception ex)
             {
@@ -145,39 +163,27 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private void StartAll() => _services.Downloads.StartAll();
+    private Task StartAllAsync() => Task.Run(_services.Downloads.StartAll);
 
     [RelayCommand]
-    private void PauseAll() => _services.Downloads.PauseAll();
+    private Task PauseAllAsync() => Task.Run(_services.Downloads.PauseAll);
 
     [RelayCommand]
-    private void ClearFinished() => _services.Downloads.ClearFinished();
+    private Task ClearFinishedAsync() => Task.Run(_services.Downloads.ClearFinished);
 
     [RelayCommand]
-    private void ClearArchive() => _services.Downloads.ClearArchive();
+    private Task ClearArchiveAsync() => Task.Run(_services.Downloads.ClearArchive);
 
     [RelayCommand]
     private void OpenRoot() => OpenFolder(RootPath);
 
-    public void PauseTask(DownloadTaskViewModel item)
-    {
-        _services.Downloads.Pause(item.Task);
-    }
+    public Task PauseTask(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Pause(item.Task));
 
-    public void ResumeTask(DownloadTaskViewModel item)
-    {
-        _services.Downloads.Resume(item.Task);
-    }
+    public Task ResumeTask(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Resume(item.Task));
 
-    public void RemoveTask(DownloadTaskViewModel item)
-    {
-        _services.Downloads.Remove(item.Task, deleteFiles: false);
-    }
+    public Task RemoveTask(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Remove(item.Task, deleteFiles: false));
 
-    public void RemoveWithFiles(DownloadTaskViewModel item)
-    {
-        _services.Downloads.Remove(item.Task, deleteFiles: true);
-    }
+    public Task RemoveWithFiles(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Remove(item.Task, deleteFiles: true));
 
     public void OpenTaskFolder(DownloadTaskViewModel item) => OpenFolder(item.Task.FolderPath);
 
@@ -188,12 +194,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         if (string.IsNullOrWhiteSpace(path)) return;
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = "\"" + path + "\"",
-                UseShellExecute = true,
-            });
+            EhViewerReader.Services.PlatformLauncher.Open(path);
         }
         catch (Exception ex)
         {
@@ -205,6 +206,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        foreach (var session in ArchiveTransfers) session.Dispose();
         _services.Downloads.TaskChanged -= OnTaskChanged;
         _services.Downloads.Changed -= OnChanged;
         _services.Downloads.TaskCompleted -= OnTaskCompleted;

@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using EhViewerReader.Core.Storage;
 using EhViewerReader.Core.Online;
 
 namespace EhViewerReader.Core.Models;
@@ -77,7 +78,7 @@ public enum LibraryFilter
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 4;
+    public int SchemaVersion { get; set; } = 5;
 
     /// <summary>Legacy single-root field; migrated into <see cref="Sources"/> on load.</summary>
     public string? LibraryRoot { get; set; }
@@ -96,7 +97,8 @@ public sealed class AppSettings
     /// Image size shared by the online reader and the download engine; the
     /// gallery detail window can override it for one gallery.
     /// </summary>
-    public ImageQuality ImageQuality { get; set; } = ImageQuality.Original;
+    public ImageQuality ImageQuality { get; set; } = ImageQuality.Resampled;
+    public int ResampledWidth { get; set; } = 1280;
 
     /// <summary>
     /// Work id -> preferred source id. Only populated for works that exist in
@@ -125,6 +127,7 @@ public sealed class AppSettings
     public List<SavedSearchEntry> SavedSearches { get; set; } = [];
     public double WindowWidth { get; set; } = 1200;
     public double WindowHeight { get; set; } = 700;
+    public bool SidebarCollapsed { get; set; }
     public bool WindowMaximized { get; set; }
     public string? LastOpenedStableId { get; set; }
     public bool ShowChromeInReader { get; set; } = true;
@@ -132,19 +135,21 @@ public sealed class AppSettings
 
     public AppSettings Normalize()
     {
+        if (SchemaVersion < 5) { ImageQuality = ImageQuality.Resampled; SchemaVersion = 5; }
+        if (ResampledWidth is not (780 or 980 or 1280 or 1600 or 2400)) ResampledWidth = 1280;
         MaxDecodeMegapixels = Math.Clamp(MaxDecodeMegapixels, 4, 96);
         MaxDecodeDimension = Math.Clamp(MaxDecodeDimension, 2048, 16384);
         PageCacheMegabytes = Math.Clamp(PageCacheMegabytes, 64, 1536);
         CoverDecodeWidth = Math.Clamp(CoverDecodeWidth, 160, 1024);
-        WindowWidth = Math.Clamp(WindowWidth, 960, 10000);
-        WindowHeight = Math.Clamp(WindowHeight, 640, 10000);
+        WindowWidth = Math.Clamp(WindowWidth, 540, 10000);
+        WindowHeight = Math.Clamp(WindowHeight, 420, 10000);
         if (!Enum.IsDefined(Theme)) Theme = AppTheme.Dark;
         if (!Enum.IsDefined(DefaultReadingMode)) DefaultReadingMode = ReadingMode.Single;
         if (!Enum.IsDefined(DefaultFitMode)) DefaultFitMode = FitMode.FitPage;
         if (!Enum.IsDefined(ReaderBackground)) ReaderBackground = ReaderBackground.Black;
         if (!Enum.IsDefined(Sort)) Sort = LibrarySort.RecentlyRead;
         if (!Enum.IsDefined(Filter)) Filter = LibraryFilter.All;
-        if (!Enum.IsDefined(ImageQuality)) ImageQuality = ImageQuality.Original;
+        if (!Enum.IsDefined(ImageQuality)) ImageQuality = ImageQuality.Resampled;
         Account ??= new AccountSettings();
         Account.Normalize();
         Network ??= new NetworkSettings();
@@ -178,7 +183,7 @@ public sealed class AppSettings
             });
         }
 
-        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenPaths = new HashSet<string>(PathIdentity.Comparer);
         var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var kept = new List<LibrarySource>(Sources.Count);
         foreach (LibrarySource source in Sources)
@@ -229,7 +234,7 @@ public sealed class AppSettings
     {
         string full = NormalizeRoot(rootPath);
         LibrarySource? existing = Sources.FirstOrDefault(s =>
-            string.Equals(s.RootPath, full, StringComparison.OrdinalIgnoreCase));
+            PathIdentity.Comparer.Equals(s.RootPath, full));
         if (existing is not null)
         {
             existing.Enabled = true;

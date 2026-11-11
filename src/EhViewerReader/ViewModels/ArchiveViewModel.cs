@@ -12,7 +12,7 @@ namespace EhViewerReader.ViewModels;
 /// files or a resampled set; large archives additionally require an assigned
 /// H@H client. The flow is: load options → request → save the returned link.
 /// </summary>
-public sealed partial class ArchiveViewModel : ObservableObject
+public sealed partial class ArchiveViewModel : ObservableObject, IDisposable
 {
     private readonly AppServices _services;
     private readonly EhGalleryDetails _details;
@@ -29,6 +29,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
     private double _progress;
     private string _progressText = string.Empty;
     private EhArchivePage? _page;
+    private string? _savedFolder;
 
     public ArchiveViewModel(AppServices services, IOnlineHost host, EhGalleryDetails details)
     {
@@ -40,6 +41,8 @@ public sealed partial class ArchiveViewModel : ObservableObject
 
     public ObservableCollection<FeedOption> Options { get; } = [];
 
+    private readonly CancellationTokenSource _lifetime = new();
+    public EhGalleryDetails Details => _details;
     public string Title { get; }
 
     /// <summary>Gallery title without the window's action prefix.</summary>
@@ -145,7 +148,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
         try
         {
             EhArchivePage page = await _services.Online
-                .GetArchivePageAsync(_details, CancellationToken.None)
+                .GetArchivePageAsync(_details, _lifetime.Token)
                 .ConfigureAwait(true);
 
             _page = page;
@@ -178,6 +181,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
                     : page.Message.Length > 0 ? page.Message : "没有可用的归档格式";
             }
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { StatusText = "已取消"; }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             StatusText = "载入失败：" + ex.Message;
@@ -211,7 +215,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
         try
         {
             EhArchiveResult result = await _services.Online
-                .RequestArchiveAsync(_details, _page.Or, SelectedOption.Key, CancellationToken.None)
+                .RequestArchiveAsync(_details, _page.Or, SelectedOption.Key, _lifetime.Token)
                 .ConfigureAwait(true);
 
             NeedsHath = result.NeedsHathClient;
@@ -231,6 +235,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
                 StatusText = result.Message.Length > 0 ? result.Message : "归档请求失败";
             }
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { StatusText = "已取消"; }
         catch (Exception ex) when (ex is EhException or HttpRequestException or IOException)
         {
             StatusText = "归档失败：" + ex.Message;
@@ -247,7 +252,9 @@ public sealed partial class ArchiveViewModel : ObservableObject
         Progress = 0;
         try
         {
+            using var storageLease = _services.Downloads.AcquireArchiveWrite();
             string folder = Path.Combine(_services.Downloads.RootPath, "archives");
+            _savedFolder = folder;
             Directory.CreateDirectory(folder);
             string fileName = FileNameFromUrl(url);
             string target = Path.Combine(folder, fileName);
@@ -264,7 +271,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
 
             StatusText = "正在下载归档…";
             await _services.Online
-                .DownloadArchiveToFileAsync(url, unique, progress, CancellationToken.None)
+                .DownloadArchiveToFileAsync(url, unique, progress, _lifetime.Token)
                 .ConfigureAwait(true);
 
             var info = new FileInfo(unique);
@@ -273,6 +280,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
             Progress = 100;
             ProgressText = "完成";
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { StatusText = "已取消"; }
         catch (Exception ex) when (ex is EhException or IOException or HttpRequestException)
         {
             StatusText = "下载失败：" + ex.Message;
@@ -307,7 +315,7 @@ public sealed partial class ArchiveViewModel : ObservableObject
     [RelayCommand]
     private void OpenDownloadFolder()
     {
-        string folder = Path.Combine(_services.Downloads.RootPath, "archives");
+        string folder = _savedFolder ?? Path.Combine(_services.Downloads.RootPath, "archives");
         try
         {
             Directory.CreateDirectory(folder);
@@ -326,4 +334,5 @@ public sealed partial class ArchiveViewModel : ObservableObject
         if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) name += ".zip";
         return name;
     }
+    public void Dispose() { _lifetime.Cancel(); }
 }
