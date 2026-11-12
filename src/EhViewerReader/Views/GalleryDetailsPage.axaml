@@ -3,7 +3,7 @@
              x:Class="EhViewerReader.Views.GalleryDetailsPage" x:DataType="vm:LocalGalleryDetailsViewModel">
   <controls:GalleryDetailsView Details="{Binding Presentation}">
     <controls:GalleryDetailsView.Actions>
-      <WrapPanel>
+      <WrapPanel Classes="actions">
         <Button Content="开始阅读" Classes="accent" IsEnabled="{Binding Item.CanRead}" Click="OnRead" />
         <Button Content="打开文件夹" Click="OnOpenFolder" />
         <Button Content="{Binding Item.FavoriteText}" Click="OnToggleFavorite" />
@@ -22,7 +22,7 @@
           <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="7" Margin="0,6,0,0">
             <SelectableTextBlock Grid.Row="0" Grid.Column="0" Text="文件夹" Classes="muted" FontSize="12" />
             <SelectableTextBlock HorizontalAlignment="Left" Grid.Row="0" Grid.Column="1" Text="{Binding Item.FolderName}" Classes="secondary" FontSize="12"
-                       MaxWidth="440" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        ToolTip.Tip="{Binding Item.FolderPath}" />
 
             <SelectableTextBlock Grid.Row="1" Grid.Column="0" Text="GID" Classes="muted" FontSize="12" />
@@ -61,7 +61,7 @@
 
             <SelectableTextBlock Grid.Row="11" Grid.Column="0" Text="数据源" Classes="muted" FontSize="12" />
             <SelectableTextBlock HorizontalAlignment="Left" Grid.Row="11" Grid.Column="1" Text="{Binding Item.SourceName}" Classes="secondary" FontSize="12"
-                       MaxWidth="440" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Item.SourceName}" />
 
             <SelectableTextBlock Grid.Row="12" Grid.Column="0" Text="版本" Classes="muted" FontSize="12" />
             <StackPanel Grid.Row="12" Grid.Column="1" Orientation="Horizontal" Spacing="8">

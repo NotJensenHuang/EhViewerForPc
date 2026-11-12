@@ -9,27 +9,27 @@
         x:DataType="vm:TorrentViewModel"
         Background="Transparent">
   <Grid Background="Transparent" RowDefinitions="Auto,Auto,*,Auto">
-    <Border Grid.Row="0" Padding="22,16,22,12" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+    <!-- Page identity comes from the shell ("种子"); this is the work context. -->
+    <Border Grid.Row="0" Classes="page-header">
+      <controls:AdaptiveGrid Breakpoint="620" ColumnDefinitions="*,Auto" ColumnSpacing="12" RowSpacing="8">
         <StackPanel Spacing="3">
-          <SelectableTextBlock Text="种子下载" Classes="h1" />
-          <SelectableTextBlock Text="{Binding GalleryTitle}" Classes="secondary" MaxLines="1" TextTrimming="CharacterEllipsis" />
-          <SelectableTextBlock Text="{Binding Subtitle}" Classes="caption" />
+          <SelectableTextBlock Text="{Binding GalleryTitle}" FontWeight="SemiBold" MaxLines="1"
+                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding GalleryTitle}" />
+          <SelectableTextBlock Text="{Binding Subtitle}" Classes="caption" TextWrapping="Wrap" />
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <WrapPanel Grid.Column="1" Orientation="Horizontal" Classes="actions" VerticalAlignment="Center">
           <Button Content="刷新" Command="{Binding RefreshCommand}" />
           <Button Content="关闭" Click="OnClose" />
-        </StackPanel>
-      </Grid>
+        </WrapPanel>
+      </controls:AdaptiveGrid>
     </Border>
 
-    <Border Grid.Row="1" Margin="22,12,22,0" Classes="row">
+    <Border Grid.Row="1" Margin="24,12,24,0" Classes="row">
       <SelectableTextBlock Classes="caption" TextWrapping="Wrap"
                  Text="使用 BT 客户端打开种子。" />
     </Border>
 
-    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Margin="22,12,22,12">
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Margin="24,12,24,12">
       <ItemsControl ItemsSource="{Binding Items}">
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:TorrentItemViewModel">
@@ -40,7 +40,7 @@
                   <SelectableTextBlock Classes="caption" Text="{Binding StatsLine}" TextWrapping="Wrap" />
                   <SelectableTextBlock Classes="caption" Text="{Binding MetaLine}" TextWrapping="Wrap" />
                 </StackPanel>
-                <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Classes="actions">
                   <Button Classes="accent" Content="保存 .torrent" Tag="{Binding}" Click="OnSaveTorrent" />
                   <Button Content="复制链接" Tag="{Binding}" Click="OnCopyLink" />
                   <Button Content="浏览器" Classes="ghost" Tag="{Binding}" Click="OnOpenLink" />
@@ -54,12 +54,9 @@
     <SelectableTextBlock Grid.Row="2" Text="暂无可显示的种子" Classes="secondary" IsVisible="{Binding ShowEmpty}"
                HorizontalAlignment="Center" VerticalAlignment="Center" />
 
-    <Border Grid.Row="3" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,1,0,0">
-      <Grid ColumnDefinitions="*,Auto">
-        <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center" />
-
-      </Grid>
+    <Border Grid.Row="3" Classes="statusbar">
+      <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
     </Border>
   </Grid>
 </UserControl>

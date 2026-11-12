@@ -90,7 +90,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public event EventHandler<GalleryItemViewModel>? OpenGalleryRequested;
     public event EventHandler<GalleryItemViewModel>? OpenDetailsRequested;
     public event EventHandler<GalleryItemViewModel>? OpenVersionsRequested;
-    public event EventHandler? OpenSettingsRequested;
     public event EventHandler? ChooseFolderRequested;
     public event EventHandler? GalleryListReplaced;
     public event EventHandler? GalleryListRebalanced;
@@ -775,9 +774,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void ChooseFolder() => ChooseFolderRequested?.Invoke(this, EventArgs.Empty);
-
-    [RelayCommand]
-    private void OpenSettings() => OpenSettingsRequested?.Invoke(this, EventArgs.Empty);
 
     [RelayCommand]
     private void OpenGallery(GalleryItemViewModel? item)

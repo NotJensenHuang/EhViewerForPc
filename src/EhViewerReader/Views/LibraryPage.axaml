@@ -7,33 +7,38 @@
              xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.LibraryPage"
              x:DataType="vm:MainViewModel">
-  <Grid RowDefinitions="Auto,Auto,*,Auto" Background="Transparent">
-    <!-- Toolbar -->
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" Margin="22,16,22,10">
-      <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-        <SelectableTextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding RootDisplay}" MaxWidth="200" TextTrimming="CharacterEllipsis" />
-      </StackPanel>
+  <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
+    <!-- Toolbar: search is the primary row; sort and language form one group
+         that moves under the search box when the row gets narrow. -->
+    <StackPanel Grid.Row="0" Spacing="10" Margin="24,16,24,8">
+      <controls:AdaptiveGrid Breakpoint="760" ColumnDefinitions="*,Auto" ColumnSpacing="12" RowSpacing="10">
+        <Grid>
+          <TextBox x:Name="SearchBox" Text="{Binding SearchText}" PlaceholderText="搜索标题、文件夹或 GID（Ctrl+F）" />
+          <Button Content="清除" Classes="ghost" HorizontalAlignment="Right" VerticalAlignment="Center"
+                  Margin="0,0,4,0" FontSize="12" Click="OnClearSearch"
+                  IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        </Grid>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <ComboBox Width="132" ItemsSource="{Binding SortOptions}" SelectedItem="{Binding SelectedSort}"
+                    AutomationProperties.Name="排序方式">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:SortOption">
+                <TextBlock Text="{Binding Label}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <ComboBox Width="132" ItemsSource="{Binding LanguageOptions}" SelectedItem="{Binding SelectedLanguage}"
+                    AutomationProperties.Name="语言筛选">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:LanguageOption">
+                <TextBlock Text="{Binding Label}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+        </StackPanel>
+      </controls:AdaptiveGrid>
 
-      <Grid Grid.Row="1" Grid.ColumnSpan="2" VerticalAlignment="Center" Margin="0,8,0,0">
-        <TextBox x:Name="SearchBox" Text="{Binding SearchText}" PlaceholderText="搜索标题、文件夹或 GID（Ctrl+F）" />
-        <Button Content="清除" Classes="ghost" HorizontalAlignment="Right" VerticalAlignment="Center"
-                Margin="0,0,4,0" FontSize="12" Click="OnClearSearch"
-                IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-      </Grid>
-
-      <ComboBox Grid.Column="1" Width="120" ItemsSource="{Binding SortOptions}"
-                SelectedItem="{Binding SelectedSort}" VerticalAlignment="Center">
-        <ComboBox.ItemTemplate>
-          <DataTemplate x:DataType="vm:SortOption">
-            <TextBlock Text="{Binding Label}" />
-          </DataTemplate>
-        </ComboBox.ItemTemplate>
-      </ComboBox>
-    </Grid>
-
-    <!-- Filters -->
-    <Grid Grid.Row="1" RowDefinitions="Auto,Auto" Margin="22,0,22,8">
-      <ItemsControl Grid.Column="0" ItemsSource="{Binding FilterOptions}" VerticalAlignment="Center">
+      <ItemsControl ItemsSource="{Binding FilterOptions}" VerticalAlignment="Center">
         <ItemsControl.ItemsPanel>
           <ItemsPanelTemplate>
             <WrapPanel Orientation="Horizontal" />
@@ -46,22 +51,13 @@
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
-
-      <ComboBox Grid.Row="1" HorizontalAlignment="Right" Width="126" ItemsSource="{Binding LanguageOptions}"
-                SelectedItem="{Binding SelectedLanguage}" VerticalAlignment="Center">
-        <ComboBox.ItemTemplate>
-          <DataTemplate x:DataType="vm:LanguageOption">
-            <TextBlock Text="{Binding Label}" />
-          </DataTemplate>
-        </ComboBox.ItemTemplate>
-      </ComboBox>
-    </Grid>
+    </StackPanel>
 
     <!-- Grid -->
-    <Grid Grid.Row="2">
+    <Grid Grid.Row="1">
       <ScrollViewer x:Name="LibraryScroll" VerticalScrollBarVisibility="Auto"
                     ScrollChanged="OnLibraryScrollChanged">
-        <Border Padding="22,6,22,20">
+        <Border Padding="24,6,24,20">
           <ir:ItemsRepeater x:Name="LibraryRepeater" ItemsSource="{Binding Galleries}">
             <ir:ItemsRepeater.Layout>
               <layout:UniformGridLayout MinItemWidth="196" MinItemHeight="352"
@@ -73,7 +69,7 @@
                 <Border Classes="card" Height="352" ToolTip.Tip="{Binding TooltipText}"
                         Focusable="True" Tapped="OnCardTapped" ContextRequested="OnCardContextRequested"
                         KeyDown="OnCardKeyDown">
-                  <Grid RowDefinitions="266,Auto,*">
+                  <Grid RowDefinitions="248,Auto,Auto,*" RowSpacing="0">
                     <Border CornerRadius="8" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}"
                             Tapped="OnCoverTapped" ToolTip.Tip="点击封面查看详情">
                       <Grid>
@@ -127,8 +123,8 @@
 
                     <Button Grid.Row="0" Content="阅读" IsEnabled="{Binding CanRead}" Click="OnReadCard" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="6" AutomationProperties.Name="阅读此作品" />
                     <TextBlock Grid.Row="1" Classes="title" Text="{Binding Title}" TextWrapping="Wrap"
-                               MaxLines="2" Height="40" Margin="0,9,0,0" />
-                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Bottom">
+                               MaxLines="2" MinHeight="40" Margin="0,8,0,0" />
+                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Center" Margin="0,6,0,0">
                       <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock Classes="caption" Text="{Binding GidText, StringFormat='#{0}'}" />
                       </StackPanel>
@@ -157,7 +153,7 @@
       </Border>
 
       <!-- Initial scan -->
-      <Border Classes="panel" Width="380" Padding="24,18" HorizontalAlignment="Center" VerticalAlignment="Center"
+      <Border Classes="panel" MaxWidth="380" MinWidth="260" Padding="24,18" HorizontalAlignment="Center" VerticalAlignment="Center"
               IsVisible="{Binding ShowInitialScan}">
         <StackPanel Spacing="10">
           <SelectableTextBlock Text="正在扫描资料库…" FontWeight="Bold" />
@@ -176,24 +172,22 @@
       </StackPanel>
     </Grid>
 
-    <!-- Status bar -->
-    <Border Grid.Row="3" x:Name="StatusBar" Padding="22,9" MinHeight="36"
-            BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" ClipToBounds="True">
-      <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
-        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" VerticalAlignment="Center" ClipToBounds="True">
-          <SelectableTextBlock HorizontalAlignment="Left" Text="{Binding StatusText}" Classes="secondary" FontSize="12"
-                     TextTrimming="CharacterEllipsis" MaxWidth="440" />
-          <ProgressBar Grid.Column="1" Width="80" Height="4" Minimum="0" Maximum="100" Value="{Binding ScanPercent}"
+    <!-- Status bar: scan state and counts share one line. The redundant
+         "设置" shortcut was removed; settings lives in the rail. -->
+    <Border Grid.Row="2" x:Name="StatusBar" Classes="statusbar" ToolTip.Tip="{Binding RootDisplay}">
+      <Grid ColumnDefinitions="*,Auto,14,Auto" VerticalAlignment="Center">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" ClipToBounds="True">
+          <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12"
+                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+          <ProgressBar Width="80" Height="4" Minimum="0" Maximum="100" Value="{Binding ScanPercent}"
                        IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
-          <Button Grid.Column="2" Content="取消扫描" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="24"
+          <Button Content="取消扫描" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="24"
                   Command="{Binding CancelScanCommand}" IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
-
-        </Grid>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-          <SelectableTextBlock Classes="muted" FontSize="12" Text="{Binding FilteredCount, StringFormat='显示 {0:N0}'}" />
-          <SelectableTextBlock Classes="muted" FontSize="12" Text="{Binding TotalGalleryCount, StringFormat='共 {0:N0} 个作品'}" />
-          <Button Content="设置" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="24" Click="OnOpenSettings" />
         </StackPanel>
+        <SelectableTextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center"
+                             Text="{Binding FilteredCount, StringFormat='显示 {0:N0}'}" />
+        <SelectableTextBlock Grid.Column="3" Classes="muted" FontSize="12" VerticalAlignment="Center"
+                             Text="{Binding TotalGalleryCount, StringFormat='共 {0:N0}'}" />
       </Grid>
     </Border>
   </Grid>

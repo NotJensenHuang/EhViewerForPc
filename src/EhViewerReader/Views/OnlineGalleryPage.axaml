@@ -3,7 +3,7 @@
              x:Class="EhViewerReader.Views.OnlineGalleryPage" x:DataType="vm:OnlineGalleryViewModel">
   <controls:GalleryDetailsView Details="{Binding Presentation}">
     <controls:GalleryDetailsView.Actions>
-        <WrapPanel Orientation="Horizontal">
+        <WrapPanel Orientation="Horizontal" Classes="actions">
           <Button Classes="accent" Content="{Binding ReadButtonText}" Command="{Binding ReadCommand}" MinWidth="96"
                   ToolTip.Tip="本地库已有该作品时直接打开本地副本" />
           <Button Content="在线阅读" Command="{Binding ReadOnlineCommand}" IsVisible="{Binding IsInLocalLibrary}" />
@@ -40,7 +40,7 @@
       <StackPanel Spacing="24">
           <!-- Rating -->
           <Border Classes="tile" Padding="16,14">
-            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
+            <controls:AdaptiveGrid Breakpoint="520" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" RowSpacing="10">
               <StackPanel Spacing="2">
                 <SelectableTextBlock Text="我的评分" Classes="h2" />
                 <SelectableTextBlock Text="{Binding RatingStatus}" Classes="caption"
@@ -62,7 +62,7 @@
                 <SelectableTextBlock Text="{Binding MyRatingText}" Classes="secondary" HorizontalAlignment="Right" />
                 <SelectableTextBlock Text="{Binding RatingCountText}" Classes="caption" HorizontalAlignment="Right" />
               </StackPanel>
-            </Grid>
+            </controls:AdaptiveGrid>
           </Border>
 
           <!-- Comments -->
@@ -111,14 +111,14 @@
               <StackPanel Spacing="6">
                 <TextBox Text="{Binding CommentText}" AcceptsReturn="True" Height="72" TextWrapping="Wrap"
                          PlaceholderText="写下评论（需要登录）" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
+                <WrapPanel Orientation="Horizontal" Classes="actions">
                   <Button Classes="accent" Content="{Binding CommentSubmitText}" Command="{Binding PostCommentCommand}"
                           IsEnabled="{Binding CanPostComment}" />
                   <Button Content="取消编辑" Classes="ghost" Command="{Binding CancelEditCommand}"
                           IsVisible="{Binding IsEditingComment}" />
                   <SelectableTextBlock Text="{Binding CommentStatus}" Classes="caption" VerticalAlignment="Center"
                              TextWrapping="Wrap" />
-                </StackPanel>
+                </WrapPanel>
               </StackPanel>
             </StackPanel>
           </Border>

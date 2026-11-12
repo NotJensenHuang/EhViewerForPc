@@ -1,51 +1,51 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EhViewerReader.ViewModels"
+             xmlns:controls="using:EhViewerReader.Controls"
              xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
              xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.OnlineFeedPage"
              x:DataType="vm:OnlineFeedViewModel">
   <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Background="Transparent">
-    <!-- Header -->
-    <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,8">
-      <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-        </StackPanel>
+    <!-- Toolbar: one row of actions plus the page position next to the paging
+         buttons, so the reader never has to hunt for the page number. -->
+    <WrapPanel Grid.Row="0" Classes="actions" Orientation="Horizontal" Margin="24,16,24,8">
+      <Button Content="高级选项" Classes="chip" Classes.active="{Binding ShowAdvanced}"
+              Command="{Binding ToggleAdvancedCommand}" IsVisible="{Binding ShowSearchBar}" />
+      <ComboBox Width="104" ItemsSource="{Binding ToplistOptions}" SelectedItem="{Binding SelectedToplistOption}"
+                IsVisible="{Binding ShowToplistSelector}" VerticalAlignment="Center">
+        <ComboBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:FeedOption">
+            <TextBlock Text="{Binding Label}" />
+          </DataTemplate>
+        </ComboBox.ItemTemplate>
+      </ComboBox>
+      <Button Content="刷新" Command="{Binding RefreshCommand}" />
+      <Button Content="上一页" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoBack}" />
+      <Button Content="下一页" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" />
+      <SelectableTextBlock Text="{Binding PageLabel}" Classes="caption" VerticalAlignment="Center" MinWidth="52" />
+    </WrapPanel>
 
-      <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
-        <Button Content="高级选项" Classes="chip" Classes.active="{Binding ShowAdvanced}"
-                Command="{Binding ToggleAdvancedCommand}" IsVisible="{Binding ShowSearchBar}" />
-        <ComboBox Width="104" ItemsSource="{Binding ToplistOptions}" SelectedItem="{Binding SelectedToplistOption}"
-                  IsVisible="{Binding ShowToplistSelector}" VerticalAlignment="Center">
-          <ComboBox.ItemTemplate>
-            <DataTemplate x:DataType="vm:FeedOption">
-              <TextBlock Text="{Binding Label}" />
-            </DataTemplate>
-          </ComboBox.ItemTemplate>
-        </ComboBox>
-        <Button Content="刷新" Command="{Binding RefreshCommand}" />
-        <Button Content="上一页" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoBack}" />
-        <Button Content="下一页" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" />
-        <SelectableTextBlock Text="{Binding PageLabel}" Classes="caption" VerticalAlignment="Center" MinWidth="52" />
-      </WrapPanel>
-    </Grid>
-
-    <!-- Search bar (browse page) / favourite-slot search -->
-    <Grid Grid.Row="1" ColumnDefinitions="*,10,Auto" Margin="22,0,22,8" IsVisible="{Binding ShowSearchBar}">
+    <!-- Search bar (browse page) -->
+    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="24,0,24,8" IsVisible="{Binding ShowSearchBar}">
       <TextBox x:Name="SearchBox" Text="{Binding Query}" KeyDown="OnSearchKeyDown"
                PlaceholderText="搜索关键词、标签或 GID" />
-      <Button Grid.Column="2" Classes="accent" Content="搜索" Command="{Binding SearchCommand}" MinWidth="88" />
+      <Button Grid.Column="1" Classes="accent" Content="搜索" Command="{Binding SearchCommand}" MinWidth="88" />
     </Grid>
 
-    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="22,0,22,8"
-                IsVisible="{Binding ShowFavoriteSearch}">
-      <TextBox Width="260" Text="{Binding FavoriteQuery}" PlaceholderText="在收藏夹中搜索标签或关键词…"
+    <!-- Favourite search: elastic input, actions wrap as a group. -->
+    <controls:AdaptiveGrid Grid.Row="1" Breakpoint="560" ColumnDefinitions="*,Auto" ColumnSpacing="10" RowSpacing="8"
+                           Margin="24,0,24,8" IsVisible="{Binding ShowFavoriteSearch}">
+      <TextBox Text="{Binding FavoriteQuery}" PlaceholderText="在收藏夹中搜索标签或关键词…"
                KeyDown="OnFavoriteSearchKeyDown" />
-      <Button Content="搜索" Command="{Binding SearchFavoritesCommand}" />
-      <Button Content="清除" Classes="ghost" Command="{Binding ClearFavoriteSearchCommand}" />
-    </StackPanel>
+      <WrapPanel Grid.Column="1" Classes="actions" VerticalAlignment="Center">
+        <Button Content="搜索" Command="{Binding SearchFavoritesCommand}" />
+        <Button Content="清除" Classes="ghost" Command="{Binding ClearFavoriteSearchCommand}" />
+      </WrapPanel>
+    </controls:AdaptiveGrid>
 
     <!-- Feed tabs -->
-    <ItemsControl Grid.Row="2" ItemsSource="{Binding Tabs}" Margin="22,0,22,10" IsVisible="{Binding ShowTabs}">
+    <ItemsControl Grid.Row="2" ItemsSource="{Binding Tabs}" Margin="24,0,24,10" IsVisible="{Binding ShowTabs}">
       <ItemsControl.ItemsPanel>
         <ItemsPanelTemplate>
           <WrapPanel Orientation="Horizontal" />
@@ -59,19 +59,20 @@
       </ItemsControl.ItemTemplate>
     </ItemsControl>
 
-    <!-- Search result header -->
-    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="22,0,22,10"
-          IsVisible="{Binding ShowSearchResultHeader}">
+    <!-- Search result header: summary on the left, save/clear as one group
+         that moves under the summary when the row is narrow. -->
+    <controls:AdaptiveGrid Grid.Row="2" Breakpoint="600" ColumnDefinitions="*,Auto" ColumnSpacing="12" RowSpacing="8"
+                           Margin="24,0,24,10" IsVisible="{Binding ShowSearchResultHeader}">
       <SelectableTextBlock Text="{Binding SearchResultText}" Classes="secondary" VerticalAlignment="Center"
                  TextTrimming="CharacterEllipsis" />
-      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+      <WrapPanel Grid.Column="1" Classes="actions" VerticalAlignment="Center">
         <Button Content="保存当前搜索" Command="{Binding SaveSearchCommand}" />
         <Button Content="清除搜索" Classes="ghost" Command="{Binding ClearSearchCommand}" />
-      </StackPanel>
-    </Grid>
+      </WrapPanel>
+    </controls:AdaptiveGrid>
 
     <!-- Advanced search options -->
-    <Border Grid.Row="3" Classes="tile" Margin="22,0,22,10" Padding="16,14" IsVisible="{Binding ShowAdvancedPanel}">
+    <Border Grid.Row="3" Classes="tile" Margin="24,0,24,10" Padding="16,14" IsVisible="{Binding ShowAdvancedPanel}">
       <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
         <StackPanel Spacing="12">
           <StackPanel Spacing="6">
@@ -170,7 +171,7 @@
     <!-- Grid -->
     <Grid Grid.Row="4">
       <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <Border Padding="22,0,22,20">
+        <Border Padding="24,0,24,20">
           <ir:ItemsRepeater ItemsSource="{Binding Items}" ItemTemplate="{StaticResource OnlineGalleryCard}">
             <ir:ItemsRepeater.Layout>
               <layout:UniformGridLayout MinItemWidth="196" MinItemHeight="352"
@@ -192,9 +193,8 @@
     </Grid>
 
     <!-- Status bar -->
-    <Border Grid.Row="5" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,1,0,0">
-      <Grid ColumnDefinitions="*,Auto">
+    <Border Grid.Row="5" Classes="statusbar">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
         <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12"
                    TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
         <SelectableTextBlock Grid.Column="1" Classes="muted" FontSize="12"

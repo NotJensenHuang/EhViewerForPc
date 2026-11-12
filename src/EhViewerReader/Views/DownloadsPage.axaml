@@ -1,29 +1,35 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EhViewerReader.ViewModels"
- xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
- xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
+             xmlns:controls="using:EhViewerReader.Controls"
+             xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
+             xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.DownloadsPage"
              x:DataType="vm:DownloadsViewModel">
   <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
-    <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,10">
-      <StackPanel Spacing="2">
-
-        <SelectableTextBlock HorizontalAlignment="Left" Text="{Binding RootPathDisplay}" Classes="caption" TextTrimming="CharacterEllipsis" MaxWidth="560" />
-      </StackPanel>
-      <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
+    <StackPanel Grid.Row="0" Spacing="10" Margin="24,16,24,10">
+      <SelectableTextBlock HorizontalAlignment="Left" Text="{Binding RootPathDisplay}" Classes="caption"
+                           TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding RootPathDisplay}" />
+      <WrapPanel Orientation="Horizontal" Classes="actions">
         <Button Content="全部开始" Classes="accent" Command="{Binding StartAllCommand}" />
         <Button Content="全部暂停" Command="{Binding PauseAllCommand}" />
         <Button Content="清除已完成" Command="{Binding ClearFinishedCommand}" />
         <Button Content="打开目录" Command="{Binding OpenRootCommand}" />
       </WrapPanel>
-    </Grid>
+    </StackPanel>
 
-    <TabControl Grid.Row="1" Margin="22,0,22,10">
+    <TabControl Grid.Row="1" Margin="24,0,24,10">
       <TabItem><TabItem.Header><TextBlock Text="画廊下载" FontSize="14" /></TabItem.Header>
         <Grid RowDefinitions="Auto,*" RowSpacing="10">
-          <StackPanel Spacing="8"><SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" />
-            <StackPanel IsVisible="{Binding !HasTasks}" Spacing="8"><SelectableTextBlock Text="还没有下载任务" Classes="h2" /><WrapPanel><Button Content="浏览作品" Click="OnBrowse" /><Button Content="设置下载目录" Click="OnSettings" /></WrapPanel></StackPanel>
+          <StackPanel Spacing="8">
+            <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" TextWrapping="Wrap" />
+            <StackPanel IsVisible="{Binding !HasTasks}" Spacing="8">
+              <SelectableTextBlock Text="还没有下载任务" Classes="h2" />
+              <WrapPanel Classes="actions">
+                <Button Content="浏览作品" Click="OnBrowse" />
+                <Button Content="设置下载目录" Click="OnSettings" />
+              </WrapPanel>
+            </StackPanel>
           </StackPanel>
           <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><ir:ItemsRepeater ItemsSource="{Binding Tasks}">
             <ir:ItemsRepeater.Layout><layout:StackLayout /></ir:ItemsRepeater.Layout>
@@ -42,7 +48,8 @@
                   </Border.ContextMenu>
                   <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
                     <StackPanel Spacing="5">
-                      <SelectableTextBlock Text="{Binding Title}" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                      <SelectableTextBlock Text="{Binding Title}" FontWeight="Bold" TextTrimming="CharacterEllipsis"
+                                           ToolTip.Tip="{Binding Title}" />
                       <WrapPanel Orientation="Horizontal">
                         <SelectableTextBlock Classes="caption" Text="{Binding GidText}" Margin="0,0,10,4" />
                         <SelectableTextBlock Classes="caption" Text="{Binding StateText}" Margin="0,0,10,4" Foreground="{Binding StateBadgeColor}" />
@@ -50,7 +57,7 @@
                         <SelectableTextBlock Classes="caption" Text="{Binding QualityText}" Margin="0,0,10,4" />
                       </WrapPanel>
                       <SelectableTextBlock Classes="caption" Text="{Binding Message}" IsVisible="{Binding HasMessage}" TextWrapping="Wrap" />
-                      <Border IsVisible="{Binding ConfirmDelete}" BorderThickness="1" BorderBrush="{DynamicResource AppWarningBrush}" Padding="10"><StackPanel Spacing="6"><SelectableTextBlock Text="删除该任务的全部下载文件？" /><WrapPanel><Button Content="删除文件" Command="{Binding DeleteFilesCommand}" /><Button Content="取消" Command="{Binding CancelDeleteCommand}" /></WrapPanel></StackPanel></Border>
+                      <Border IsVisible="{Binding ConfirmDelete}" BorderThickness="1" BorderBrush="{DynamicResource AppWarningBrush}" Padding="10"><StackPanel Spacing="6"><SelectableTextBlock Text="删除该任务的全部下载文件？" TextWrapping="Wrap" /><WrapPanel Classes="actions"><Button Content="删除文件" Command="{Binding DeleteFilesCommand}" /><Button Content="取消" Command="{Binding CancelDeleteCommand}" /></WrapPanel></StackPanel></Border>
 <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}" />
                       <StackPanel Orientation="Horizontal" Spacing="12">
                         <SelectableTextBlock Classes="caption" Text="{Binding ProgressText}" />
@@ -58,13 +65,12 @@
                       </StackPanel>
                     </StackPanel>
 
-                    <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Classes="actions">
                       <Button Content="暂停" Command="{Binding PauseCommand}" IsVisible="{Binding CanPause}" />
                       <Button Content="继续 / 重试" Command="{Binding ResumeCommand}" IsVisible="{Binding CanResume}" />
-
                       <Button Content="阅读" Command="{Binding ReadCommand}" IsVisible="{Binding CanRead}"
                               ToolTip.Tip="{Binding ReadHint}" />
-<Button Content="目录" Command="{Binding OpenFolderCommand}" />
+                      <Button Content="目录" Command="{Binding OpenFolderCommand}" />
                       <Button Content="移除" Command="{Binding RemoveCommand}" IsVisible="{Binding !IsCompleted}" />
                     </WrapPanel>
                   </Grid>
@@ -75,15 +81,16 @@
         </Grid>
       </TabItem>
       <TabItem><TabItem.Header><TextBlock Text="已完成" FontSize="14" /></TabItem.Header>
-        <Grid RowDefinitions="Auto,*"><Button Content="清空记录（保留文件）" Command="{Binding ClearArchiveCommand}" HorizontalAlignment="Right" />
+        <Grid RowDefinitions="Auto,*" RowSpacing="8">
+          <Button Content="清空记录（保留文件）" Command="{Binding ClearArchiveCommand}" HorizontalAlignment="Right" />
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><ir:ItemsRepeater ItemsSource="{Binding Archive}">
             <ir:ItemsRepeater.Layout><layout:StackLayout /></ir:ItemsRepeater.Layout>
 <ir:ItemsRepeater.ItemTemplate>
               <DataTemplate x:DataType="vm:DownloadArchiveViewModel">
                 <Border Classes="row" Margin="0,0,0,6">
-                  <Grid ColumnDefinitions="*,Auto">
+                  <controls:AdaptiveGrid Breakpoint="520" ColumnDefinitions="*,Auto" ColumnSpacing="12" RowSpacing="8">
                     <StackPanel Spacing="3">
-                      <SelectableTextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                      <SelectableTextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
                       <WrapPanel Orientation="Horizontal">
                         <SelectableTextBlock Classes="caption" Text="{Binding GidText}" Margin="0,0,10,4" />
                         <SelectableTextBlock Classes="caption" Text="{Binding PagesText}" Margin="0,0,10,4" />
@@ -93,7 +100,7 @@
                     </StackPanel>
                     <Button Grid.Column="1" Content="打开目录" Command="{Binding OpenFolderCommand}"
                             VerticalAlignment="Center" />
-                  </Grid>
+                  </controls:AdaptiveGrid>
                 </Border>
               </DataTemplate>
             </ir:ItemsRepeater.ItemTemplate>
@@ -104,13 +111,13 @@
       </TabItem>
       <TabItem><TabItem.Header><TextBlock Text="归档传输" FontSize="14" /></TabItem.Header>
         <ListBox ItemsSource="{Binding ArchiveTransfers}">
-          <ListBox.ItemTemplate><DataTemplate x:DataType="vm:ArchiveViewModel"><StackPanel Spacing="6" Margin="8"><TextBlock Text="{Binding GalleryTitle}" FontWeight="SemiBold" /><TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" /><ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" /><Button Content="查看 / 管理" Tag="{Binding}" Click="OnArchive" /></StackPanel></DataTemplate></ListBox.ItemTemplate>
+          <ListBox.ItemTemplate><DataTemplate x:DataType="vm:ArchiveViewModel"><StackPanel Spacing="6" Margin="8"><TextBlock Text="{Binding GalleryTitle}" FontWeight="SemiBold" TextWrapping="Wrap" /><TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" /><ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" /><Button Content="查看 / 管理" Tag="{Binding}" Click="OnArchive" HorizontalAlignment="Left" /></StackPanel></DataTemplate></ListBox.ItemTemplate>
         </ListBox>
       </TabItem>
     </TabControl>
-    <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,1,0,0">
-      <SelectableTextBlock Text="{Binding ActiveText}" Classes="secondary" FontSize="12" VerticalAlignment="Center" />
+    <Border Grid.Row="2" Classes="statusbar">
+      <SelectableTextBlock Text="{Binding ActiveText}" Classes="secondary" FontSize="12" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
     </Border>
   </Grid>
 </UserControl>

@@ -183,12 +183,12 @@ public static class UiSmokeService
             succeeded &= navigation.IsBackButtonVisible && navigation.IsBackEnabled && window.OwnedWindows.Count == 0;
             report["readerNavigation"] = new { backEnabled = navigation.IsBackEnabled,
                 independentWindows = window.OwnedWindows.Count };
-            reader.FindControl<Button>("ImmersiveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            reader.ToggleImmersive();
             await Task.Delay(300);
             succeeded &= reader.IsImmersive && !navigation.IsPaneVisible;
             report["immersive"] = new { reader.IsImmersive, railHidden = !navigation.IsPaneVisible };
             SaveScreenshot(window, Path.Combine(output, "reader-immersive.png"));
-            reader.FindControl<Button>("ImmersiveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            reader.ToggleImmersive();
 
             readerViewModel.Step(1);
             await Task.Delay(500);
@@ -634,7 +634,7 @@ public static class UiSmokeService
             }
             shell.Online.ShowAdvanced = false;
 
-            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } onlineSettingsTabs) onlineSettingsTabs.SelectedIndex = 2;
+            SelectSettingsCategory(window, 2);
             // Online gallery detail (network dependent): validates the XAML and
             // the scrape → view model path. A failure is recorded, not fatal.
             if (shell.Online.Items.FirstOrDefault() is { } first)
@@ -848,7 +848,7 @@ public static class UiSmokeService
             {
                 finalShell.Navigate(key);
                 await Task.Delay(500);
-                if (key == "settings" && window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } tabs) tabs.SelectedIndex = 4;
+                if (key == "settings") SelectSettingsCategory(window, 4);
                 await Task.Delay(300);
                 SaveScreenshot(window, Path.Combine(output, "narrow-" + key + ".png"));
             }
@@ -883,14 +883,14 @@ public static class UiSmokeService
             report["sidebarToggle"] = !navigation.IsPaneOpen;
             navigation.IsPaneOpen = true;
             updatedShell.Navigate("settings");
-            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } currentTabs) currentTabs.SelectedIndex = 0;
+            SelectSettingsCategory(window, 0);
             AppServices.Current.Online.Session.Import(new Dictionary<string, string> { ["ipb_member_id"] = "42", ["ipb_pass_hash"] = "synthetic-ui-only" });
             updatedShell.RaiseAccount();
             await Task.Delay(300);
             report["signedInSettings"] = new { updatedShell.Settings.IsSignedIn, updatedShell.Settings.AccountStatus };
             SaveScreenshot(window, Path.Combine(output, "settings-signed-in.png"));
             AppServices.Current.Online.SignOut(); updatedShell.Settings.RefreshAccount();
-            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } qualityTabs) qualityTabs.SelectedIndex = 2;
+            SelectSettingsCategory(window, 2);
             await Task.Delay(200); SaveScreenshot(window, Path.Combine(output, "settings-image-sizes.png"));
             string oldRoot = viewModel.Services.Downloads.RootPath;
             string targetRoot = oldRoot + "-moved";
@@ -921,7 +921,7 @@ public static class UiSmokeService
                 oldRootRemoved = !Directory.Exists(oldRoot), sameSourceIdentity = viewModel.Services.Settings.Sources.Any(s => s.Id == sourceId && s.RootPath == targetRoot),
                 taskUpdated = Core.Storage.PathIdentity.IsDescendantOf(task.FolderPath, targetRoot), progressPreserved = after?.ProgressPage == 1 && after.IsFavorite,
                 status = updatedShell.Settings.DownloadStatus };
-            if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } moveTabs) moveTabs.SelectedIndex = 3;
+            SelectSettingsCategory(window, 3);
             await Task.Delay(300); SaveScreenshot(window, Path.Combine(output, "settings-download-moved.png"));
         }
 
@@ -958,6 +958,14 @@ public static class UiSmokeService
             if (condition()) return;
             await Task.Delay(150);
         }
+    }
+
+    /// <summary>Selects a settings category through the page view model; the
+    /// category bar is a ListBox, not a TabControl.</summary>
+    private static void SelectSettingsCategory(MainWindow window, int index)
+    {
+        if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.DataContext is SettingsViewModel vm)
+            vm.SelectedCategoryIndex = index;
     }
 
     internal static void SaveScreenshot(ContentControl window, string path)

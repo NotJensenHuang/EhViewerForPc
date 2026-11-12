@@ -1,26 +1,21 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EhViewerReader.ViewModels"
+             xmlns:controls="using:EhViewerReader.Controls"
              xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
              xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
-             xmlns:controls="using:EhViewerReader.Controls"
              x:Class="EhViewerReader.Views.HistoryPage"
              x:DataType="vm:HistoryViewModel">
   <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
-    <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,10">
-      <StackPanel Spacing="2">
-
-        </StackPanel>
-      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-        <Button Content="刷新" Command="{Binding RefreshCommand}" />
-        <Button Content="打开本地库" Command="{Binding OpenLibraryCommand}" />
-        <Button Content="站点历史" Classes="ghost" Command="{Binding OpenSiteHistoryCommand}"
-                ToolTip.Tip="在浏览器中打开 E-Hentai 的账号浏览记录" />
-      </StackPanel>
-    </Grid>
+    <WrapPanel Grid.Row="0" Classes="actions" Orientation="Horizontal" Margin="24,16,24,10">
+      <Button Content="刷新" Command="{Binding RefreshCommand}" />
+      <Button Content="打开本地库" Command="{Binding OpenLibraryCommand}" />
+      <Button Content="站点历史" Classes="ghost" Command="{Binding OpenSiteHistoryCommand}"
+              ToolTip.Tip="在浏览器中打开 E-Hentai 的账号浏览记录" />
+    </WrapPanel>
 
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-      <StackPanel Margin="22,0,22,20" Spacing="10">
+      <StackPanel Margin="24,0,24,20" Spacing="10">
 
         <Border Classes="tile" Padding="18" IsVisible="{Binding ShowEmpty}">
           <StackPanel Spacing="6">
@@ -41,25 +36,30 @@
                     <MenuItem Header="移出历史" Command="{Binding RemoveCommand}" />
                   </ContextMenu>
                 </Border.ContextMenu>
-                <Grid ColumnDefinitions="Auto,14,*,Auto" ColumnSpacing="0">
+                <Grid ColumnDefinitions="Auto,14,*" ColumnSpacing="0">
                   <Border Width="68" Height="92" CornerRadius="6" ClipToBounds="True"
                           Background="{DynamicResource AppBgAltBrush}">
                     <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="UniformToFill" />
                   </Border>
 
-                  <StackPanel Grid.Column="2" Spacing="5" VerticalAlignment="Center">
-                    <SelectableTextBlock Text="{Binding Title}" FontWeight="Bold" TextWrapping="Wrap" MaxLines="2" />
-                    <SelectableTextBlock Classes="caption" Text="{Binding MetaText}" TextTrimming="CharacterEllipsis" />
-                    <ProgressBar Height="3" Minimum="0" Maximum="1" Value="{Binding ProgressFraction}" />
-                    <SelectableTextBlock Classes="caption"
-                               Text="{Binding LastReadText, StringFormat='最近阅读：{0}'}"
-                               Foreground="{DynamicResource AppAccentBrush}" />
-                  </StackPanel>
+                  <!-- Text first, actions second: below the breakpoint the
+                       buttons move under the title instead of squeezing it. -->
+                  <controls:AdaptiveGrid Grid.Column="2" Breakpoint="480" ColumnDefinitions="*,Auto"
+                                         ColumnSpacing="12" RowSpacing="8">
+                    <StackPanel Spacing="5" VerticalAlignment="Center">
+                      <SelectableTextBlock Text="{Binding Title}" FontWeight="Bold" TextWrapping="Wrap" MaxLines="2" />
+                      <SelectableTextBlock Classes="caption" Text="{Binding MetaText}" TextTrimming="CharacterEllipsis" />
+                      <ProgressBar Height="3" Minimum="0" Maximum="1" Value="{Binding ProgressFraction}" />
+                      <SelectableTextBlock Classes="caption"
+                                 Text="{Binding LastReadText, StringFormat='最近阅读：{0}'}"
+                                 Foreground="{DynamicResource AppAccentBrush}" />
+                    </StackPanel>
 
-                  <StackPanel Grid.Column="3" Spacing="6" VerticalAlignment="Center" Margin="12,0,0,0">
-                    <Button Content="继续阅读" Classes="accent" Command="{Binding OpenCommand}" MinWidth="88" />
-                    <Button Content="移出历史" Classes="ghost" FontSize="12" Command="{Binding RemoveCommand}" />
-                  </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                      <Button Content="继续阅读" Classes="accent" Command="{Binding OpenCommand}" MinWidth="88" />
+                      <Button Content="移出历史" Classes="ghost" FontSize="12" Command="{Binding RemoveCommand}" />
+                    </StackPanel>
+                  </controls:AdaptiveGrid>
                 </Grid>
               </Border>
             </DataTemplate>
@@ -68,10 +68,10 @@
       </StackPanel>
     </ScrollViewer>
 
-    <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,1,0,0">
-      <Grid ColumnDefinitions="*,Auto">
-        <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center" />
+    <Border Grid.Row="2" Classes="statusbar">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center"
+                             TextTrimming="CharacterEllipsis" />
         <SelectableTextBlock Grid.Column="1" Text="{Binding CountText}" Classes="muted" FontSize="12"
                    VerticalAlignment="Center" />
       </Grid>

@@ -5,6 +5,7 @@ using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using EhViewerReader.Core.Download;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Controls;
 using EhViewerReader.Core.Online;
 using EhViewerReader.ViewModels;
 using EhViewerReader.Views;
@@ -56,6 +57,11 @@ public static class UiAuditService
 
         async Task Capture(string scenario, string variant)
         {
+            double? Bottom(Control? control)
+            {
+                if (control is null || !control.IsEffectivelyVisible || control.Bounds.Height <= 0) return null;
+                return control.TranslatePoint(new Point(0, control.Bounds.Height), window)?.Y;
+            }
             await Task.Delay(220);
             string name = scenario + "-" + variant + ".png";
             UiSmokeService.SaveScreenshot(window, Path.Combine(output, name));
@@ -64,6 +70,27 @@ public static class UiAuditService
             var titlePoint = title?.TranslatePoint(default, window);
             var framePoint = window.NavigationFrame.TranslatePoint(default, window);
             report.Measurements[name] = $"titleY={titlePoint?.Y:F1}; frameY={framePoint?.Y:F1}; viewport={window.ClientSize}";
+            if (scenario is "settings-reader" or "settings-downloads")
+            {
+                var rows = window.GetVisualDescendants().OfType<SettingsRow>()
+                    .Where(r => r.IsEffectivelyVisible && r.Bounds.Height > 0).ToArray();
+                var row = rows.FirstOrDefault();
+                if (row is not null)
+                    report.Measurements[name + ":row"] =
+                        $"count={rows.Length}; header='{row.Header}'; height={row.Bounds.Height:F0}; hasDescription={row.HasDescription}";
+            }
+            if (scenario == "library")
+            {
+                double? accountBottom = Bottom(window.AccountLineControl);
+                double? statusBottom = Bottom(window.LibraryStatusBar);
+                double delta = accountBottom is { } a && statusBottom is { } b ? Math.Abs(a - b) : double.NaN;
+                report.Measurements[name + ":bottoms"] =
+                    $"accountBottom={accountBottom:F1}; statusBottom={statusBottom:F1}; delta={delta:F1}; paneOpen={window.IsPaneOpenForAudit}";
+                // Window decoration evidence: the client area is smaller than the
+                // frame, which proves the OS (not the app) draws the title bar.
+                report.Measurements[name + ":window"] =
+                    $"decor={window.WindowDecorations}; extend={window.ExtendClientAreaToDecorationsHint}; client={window.ClientSize}; frame={window.FrameSize}";
+            }
             foreach (var control in window.GetVisualDescendants().Where(v => v is Button or ComboBox or TextBox or Slider or CheckBox).OfType<Control>())
             {
                 if (!control.IsEffectivelyVisible || control.Bounds.Width <= 0) continue;
@@ -122,6 +149,8 @@ public static class UiAuditService
             App.ApplyTheme(theme);
             window.Width = width;
             window.Height = 760;
+            window.SetPaneOpenForAudit(width > 920);
+            await Task.Delay(200);
             string variant = themeName + "-" + sizeName;
             SeedFeed(shell.Online); shell.Navigate("online"); await Task.Delay(250);
             await Capture("online", variant);
@@ -137,9 +166,18 @@ public static class UiAuditService
             var downloadTabs = window.GetVisualDescendants().OfType<DownloadsPage>().FirstOrDefault()?.GetVisualDescendants().OfType<TabControl>().FirstOrDefault();
             for (int i = 0; i < 3; i++) { if (downloadTabs is not null) downloadTabs.SelectedIndex = i; await Capture(new[] { "downloads-tasks", "downloads-completed", "downloads-transfers" }[i], variant); }
             shell.Navigate("settings"); await Task.Delay(250);
-            var settingsTabs = window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs");
+            var settingsPage = window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault();
+            var categories = settingsPage?.FindControl<ListBox>("SettingsCategories");
             string[] names = ["account", "network", "browse", "downloads", "reader", "library", "maintenance"];
-            for (int i = 0; i < names.Length; i++) { if (settingsTabs is not null) settingsTabs.SelectedIndex = i; await Capture("settings-" + names[i], variant); }
+            for (int i = 0; i < names.Length; i++)
+            {
+                if (categories is not null) categories.SelectedIndex = i;
+                else report.Uncovered.Add("settings-" + names[i] + ": SettingsCategories not found");
+                await Task.Delay(120);
+                if (window.Shell?.Settings.SelectedCategoryIndex != i)
+                    report.Uncovered.Add("settings-" + names[i] + ": category " + i + " was not selected");
+                await Capture("settings-" + names[i], variant);
+            }
 
             shell.Navigate("library"); await Task.Delay(250);
             var item = shell.Library.Galleries.FirstOrDefault(g => g.PageCount > 3);
@@ -162,8 +200,10 @@ public static class UiAuditService
                     window.ShowDiagnosticPage(reader); await Capture("reader-single", variant);
                     await readerVm.SetModeAsync(ReadingMode.Continuous); await Task.Delay(500); await Capture("reader-continuous", variant);
                     await readerVm.SetModeAsync(ReadingMode.Double); await Task.Delay(500); await Capture("reader-horizontal", variant);
-                    reader.FindControl<Button>("ImmersiveButton")?.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                    await Capture("reader-immersive", variant); reader.Close(); await Task.Delay(200);
+                    reader.ToggleImmersive();
+                    await Capture("reader-immersive", variant);
+                    reader.ToggleImmersive(); await Task.Delay(150);
+                    reader.Close(); await Task.Delay(200);
                 }
             }
             var onlineVm = new OnlineGalleryViewModel(AppServices.Current, shell, summary);
@@ -185,6 +225,36 @@ public static class UiAuditService
             await Document(new WebLoginPage(loginVm, false), "web-login", variant);
         }
         missing.Add("欢迎和扫描中状态未模拟；实际网络提交和键盘辅助技术需另行验证。");
+
+        // Extra boundary pass: compact rail (640-920) and the minimum height.
+        foreach (var (extraWidth, extraHeight, extraName) in new[] { (800d, 760d, "compact"), (540d, 420d, "short") })
+        {
+            App.ApplyTheme(AppTheme.Dark);
+            window.Width = extraWidth;
+            window.Height = extraHeight;
+            window.SetPaneOpenForAudit(extraWidth > 920);
+            await Task.Delay(300);
+            shell.Navigate("online"); await Task.Delay(200); await Capture("online", extraName);
+            shell.Navigate("library"); await Task.Delay(250); await Capture("library", extraName);
+            shell.Navigate("settings"); await Task.Delay(200);
+            shell.Settings.SelectedCategoryIndex = 4; await Task.Delay(150);
+            await Capture("settings-reader", extraName);
+            shell.Settings.SelectedCategoryIndex = 5; await Task.Delay(150);
+            await Capture("settings-library", extraName);
+            shell.Navigate("library"); await Task.Delay(200);
+            var extraItem = shell.Library.Galleries.FirstOrDefault(g => g.PageCount > 3);
+            if (extraItem is not null)
+            {
+                var extraVm = new ReaderViewModel(shell.Library.Services, extraItem.Info);
+                await extraVm.SetModeAsync(ReadingMode.Single);
+                var extraReader = new ReaderPage(extraVm) { Title = extraItem.Title };
+                window.ShowDiagnosticPage(extraReader);
+                await Capture("reader-single", extraName);
+                extraReader.Close();
+                await Task.Delay(200);
+            }
+        }
+
         await File.WriteAllTextAsync(Path.Combine(output, "audit.json"), JsonSerializer.Serialize(report, ReaderJsonContext.Default.UiAuditReport));
         return 0;
     }

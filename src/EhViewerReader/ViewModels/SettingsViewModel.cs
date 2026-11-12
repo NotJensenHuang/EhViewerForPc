@@ -260,6 +260,19 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public string[] ProxyModeLabels { get; } = ["不使用代理", "跟随系统", "HTTP 代理", "SOCKS5 代理"];
     public string[] FilterTargetLabels { get; } = ["标签", "标题", "上传者"];
 
+    /// <summary>Settings categories, in the order the page presents them.</summary>
+    public string[] Categories { get; } = ["账号", "网络", "浏览", "下载", "阅读", "资料库", "维护"];
+
+    private int _selectedCategoryIndex;
+
+    /// <summary>Selected category of the settings page. UI state only; unsaved
+    /// edits live in the individual fields and survive category switches.</summary>
+    public int SelectedCategoryIndex
+    {
+        get => _selectedCategoryIndex;
+        set => SetProperty(ref _selectedCategoryIndex, Math.Clamp(value, 0, Categories.Length - 1));
+    }
+
     public ObservableCollection<SourceRowViewModel> Sources { get; } = [];
     public ObservableCollection<FilterRuleViewModel> Filters { get; } = [];
     public ObservableCollection<FavoriteSlotRowViewModel> FavoriteSlots { get; } = [];

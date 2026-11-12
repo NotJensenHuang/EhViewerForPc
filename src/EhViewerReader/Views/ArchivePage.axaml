@@ -3,36 +3,39 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:EhViewerReader.ViewModels"
+        xmlns:controls="using:EhViewerReader.Controls"
         mc:Ignorable="d" d:DesignWidth="720" d:DesignHeight="560"
         x:Class="EhViewerReader.Views.ArchivePage"
         x:DataType="vm:ArchiveViewModel"
         Background="Transparent">
   <Grid Background="Transparent" RowDefinitions="Auto,*,Auto">
-    <Border Grid.Row="0" Padding="22,16,22,12" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,0,0,1">
-      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+    <!-- The page identity comes from the shell header ("归档下载"); this row
+         carries the work title and the page actions only. -->
+    <Border Grid.Row="0" Classes="page-header">
+      <controls:AdaptiveGrid Breakpoint="620" ColumnDefinitions="*,Auto" ColumnSpacing="12" RowSpacing="8">
         <StackPanel Spacing="3">
-          <SelectableTextBlock Text="归档下载" Classes="h1" />
-          <SelectableTextBlock Text="{Binding GalleryTitle}" Classes="secondary" MaxLines="1" TextTrimming="CharacterEllipsis" />
-          <SelectableTextBlock Text="{Binding Subtitle}" Classes="caption" />
+          <SelectableTextBlock Text="{Binding GalleryTitle}" FontWeight="SemiBold" MaxLines="1"
+                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding GalleryTitle}" />
+          <SelectableTextBlock Text="{Binding Subtitle}" Classes="caption" TextWrapping="Wrap" />
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+        <WrapPanel Grid.Column="1" Orientation="Horizontal" Classes="actions" VerticalAlignment="Center">
           <Button Content="刷新" Command="{Binding RefreshCommand}" />
           <Button Content="关闭" Click="OnClose" />
-        </StackPanel>
-      </Grid>
+        </WrapPanel>
+      </controls:AdaptiveGrid>
     </Border>
 
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-      <StackPanel Margin="22,14,22,18" Spacing="12">
+      <StackPanel Margin="24,14,24,18" Spacing="12">
         <Border Classes="tile">
           <StackPanel Spacing="10">
             <SelectableTextBlock Text="归档格式" Classes="h2" />
             <SelectableTextBlock Classes="caption" TextWrapping="Wrap"
                        Text="选择原图或压缩图归档。" />
 
-            <ComboBox ItemsSource="{Binding Options}" SelectedItem="{Binding SelectedOption}" MinWidth="320"
-                      HorizontalAlignment="Left" IsVisible="{Binding HasOptions}">
+            <ComboBox ItemsSource="{Binding Options}" SelectedItem="{Binding SelectedOption}"
+                      HorizontalAlignment="Stretch" AutomationProperties.Name="归档格式"
+                      IsVisible="{Binding HasOptions}">
               <ComboBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:FeedOption">
                   <TextBlock Text="{Binding Label}" />
@@ -40,7 +43,7 @@
               </ComboBox.ItemTemplate>
             </ComboBox>
 
-            <WrapPanel Orientation="Horizontal">
+            <WrapPanel Orientation="Horizontal" Classes="actions">
               <Button Classes="accent" Content="请求归档" Command="{Binding RequestCommand}"
                       IsEnabled="{Binding CanRequest}" />
               <Button Content="下载链接 / 打开页面" Command="{Binding OpenInBrowserCommand}" />
@@ -54,11 +57,13 @@
               <SelectableTextBlock Classes="caption" Text="{Binding ProgressText}" />
             </StackPanel>
 
-            <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasDownloadUrl}">
+            <controls:AdaptiveGrid Breakpoint="560" ColumnDefinitions="Auto,*" ColumnSpacing="10" RowSpacing="8"
+                                   IsVisible="{Binding HasDownloadUrl}">
               <Button Content="再次下载归档" Command="{Binding SaveAgainCommand}" />
-              <SelectableTextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding DownloadUrl}" TextTrimming="CharacterEllipsis"
-                         VerticalAlignment="Center" MaxWidth="420" />
-            </StackPanel>
+              <SelectableTextBlock Grid.Column="1" Classes="caption" Text="{Binding DownloadUrl}"
+                         TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                         ToolTip.Tip="{Binding DownloadUrl}" />
+            </controls:AdaptiveGrid>
           </StackPanel>
         </Border>
 
@@ -87,8 +92,7 @@
       </StackPanel>
     </ScrollViewer>
 
-    <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,1,0,0">
+    <Border Grid.Row="2" Classes="statusbar">
       <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center"
                  TextWrapping="Wrap" />
     </Border>

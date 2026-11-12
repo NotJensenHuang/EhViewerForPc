@@ -56,9 +56,11 @@ public partial class MainWindow : Window
         };
         Navigation.PropertyChanged += (sender, e) =>
         {
-            if (e.Property != FANavigationView.IsPaneOpenProperty || _updatingLayout || _shell is null || Bounds.Width < 920 || ActiveReader?.IsImmersive == true) return;
-            AppServices.Current.Settings.SidebarCollapsed = !Navigation.IsPaneOpen;
-            AppServices.Current.TrySaveSettings(out _);
+            if (e.Property != FANavigationView.IsPaneOpenProperty) return;
+            // Only the account area reacts here. Persisting the pane preference
+            // is done on close: the control also flips IsPaneOpen while it
+            // switches display modes, which must not look like a user choice.
+            UpdateAccountArea();
         };
         Icon = AppIcons.Window;
         Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
@@ -76,6 +78,16 @@ public partial class MainWindow : Window
     public ScrollViewer? LibraryScroll => _libraryPage?.Scroller;
 
     public Control? LibraryStatusBar => _libraryPage?.StatusBarControl;
+
+    /// <summary>Exposed for the layout audit: the bottom account bar.</summary>
+    public Control AccountLineControl => AccountBar;
+
+    /// <summary>Exposed for the layout audit: whether the navigation pane is open.</summary>
+    public bool IsPaneOpenForAudit => Navigation.IsPaneOpen;
+
+    /// <summary>Exposed for the layout audit so both pane states are captured
+    /// deterministically instead of depending on the persisted preference.</summary>
+    internal void SetPaneOpenForAudit(bool open) => Navigation.IsPaneOpen = open;
 
     public ShellViewModel? Shell => _shell;
 
@@ -135,7 +147,6 @@ public partial class MainWindow : Window
                 _libraryPage = new LibraryPage();
                 _libraryPage.LocalDetailsRequested += (_, item) => OpenLocalDetails(item);
                 _libraryPage.VersionsRequested += (_, item) => OpenVersions(item);
-                _libraryPage.SettingsRequested += (_, _) => _shell?.Navigate("settings");
                 return _libraryPage;
             case OnlineFeedViewModel online:
                 var onlineView = new OnlineFeedPage();
@@ -198,6 +209,9 @@ public partial class MainWindow : Window
         settings.WindowWidth = Width;
         settings.WindowHeight = Height;
         settings.WindowMaximized = WindowState == WindowState.Maximized;
+        // The pane preference only means something in the wide (rail-capable)
+        // layout; closing a narrow window must not overwrite it.
+        if (Width >= 920) settings.SidebarCollapsed = !Navigation.IsPaneOpen;
         AppServices.Current.TrySaveSettings(out _);
         AppServices.Current.Progress.Save(out _);
 
@@ -447,9 +461,23 @@ public partial class MainWindow : Window
         finally { _syncingNavigation = false; }
         DocumentTitle.Text = view is ReaderPage ? "阅读" : view is OnlineGalleryPage or GalleryDetailsPage ? "详情"
             : view is DocumentPage document ? document.Title : target.Section.Label;
+        UpdateHeaderForContent();
         _shell?.Library.RefreshAllProgress();
         _shell?.History.Reload();
         UpdateAdaptiveLayout();
+    }
+
+    /// <summary>
+    /// The reader owns the shell header: the work title and the reading commands
+    /// replace the generic section title, so the page body can start at the
+    /// canvas without a second title bar of its own.
+    /// </summary>
+    private void UpdateHeaderForContent()
+    {
+        bool reader = ContentHost.Content is ReaderPage;
+        NavigationHeader.IsVisible = !reader;
+        ReaderHeader.IsVisible = reader;
+        ReaderHeader.DataContext = reader ? (ContentHost.Content as ReaderPage)?.DataContext : null;
     }
     private void PopDocument()
     {
@@ -491,6 +519,19 @@ public partial class MainWindow : Window
     private void OnGoBack(object? sender, FANavigationViewBackRequestedEventArgs e) => PopDocument();
     internal void ShowDiagnosticPage(DocumentPage page) => PushDocument(page);
     private void OnReaderImmersiveChanged(object? sender, bool immersive) => UpdateAdaptiveLayout();
+
+    // ------------------------------------------------- reader header commands
+    private async void OnReaderSingleMode(object? sender, RoutedEventArgs e) { if (ActiveReader is { } r) await r.SetSingleModeAsync(); }
+    private async void OnReaderContinuousMode(object? sender, RoutedEventArgs e) { if (ActiveReader is { } r) await r.ToggleContinuousModeAsync(); }
+    private async void OnReaderHorizontalMode(object? sender, RoutedEventArgs e) { if (ActiveReader is { } r) await r.ToggleHorizontalModeAsync(); }
+    private void OnReaderImmersive(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleImmersive();
+    private void OnReaderFullscreen(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleFullscreen();
+    private void OnReaderDirection(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleDirection();
+    private void OnReaderBackground(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleBackground();
+    private void OnReaderRetry(object? sender, RoutedEventArgs e) => ActiveReader?.RetryCurrentPage();
+    private void OnReaderHelp(object? sender, RoutedEventArgs e) => ActiveReader?.ShowHelpFlyout();
+    private void OnReaderClose(object? sender, RoutedEventArgs e) => ActiveReader?.Close();
+
     private void UpdateAdaptiveLayout()
     {
         _updatingLayout = true;
@@ -502,13 +543,38 @@ public partial class MainWindow : Window
             Navigation.IsPaneToggleButtonVisible = !immersive;
             Navigation.IsBackButtonVisible = !immersive;
             Navigation.AlwaysShowHeader = !immersive;
-            Navigation.Header = immersive ? null : NavigationHeader;
+            Navigation.Header = immersive ? null : HeaderHost;
+            if (!immersive) UpdateHeaderForContent();
+            // Narrow headers keep icons only so the command row always fits;
+            // the labels stay available as tooltips and in the overflow menu.
+            ReaderCommands.DefaultLabelPosition = narrow
+                ? FACommandBarDefaultLabelPosition.Collapsed
+                : FACommandBarDefaultLabelPosition.Right;
             if (_lastNarrow != narrow)
             {
                 Navigation.IsPaneOpen = !narrow && !AppServices.Current.Settings.SidebarCollapsed;
                 _lastNarrow = narrow;
             }
+            UpdateAccountArea();
         }
         finally { _updatingLayout = false; }
+    }
+
+    /// <summary>
+    /// One account row when the pane is expanded, one icon when it is a rail.
+    /// In minimal mode a closed pane is off-canvas, so nothing is drawn there;
+    /// the hamburger reveals the full row.
+    /// </summary>
+    private void UpdateAccountArea()
+    {
+        bool open = Navigation.IsPaneOpen;
+        bool immersive = ActiveReader?.IsImmersive == true;
+        bool minimal = Bounds.Width < Navigation.CompactModeThresholdWidth;
+
+        AccountBar.Width = open ? Navigation.OpenPaneLength : Navigation.CompactPaneLength;
+        AccountRow.IsVisible = open;
+        AccountCompactButton.Width = Navigation.CompactPaneLength;
+        AccountCompactButton.IsVisible = !open && !minimal;
+        AccountBar.IsVisible = !immersive && (open || !minimal);
     }
 }

@@ -16,6 +16,7 @@ public partial class ReaderPage : DocumentPage
     private readonly DispatcherTimer _resizeTimer;
     private int _scrollRequestSequence;
     private int _horizontalScrollSequence;
+    private WindowState _stateBeforeFullscreen = WindowState.Normal;
     private bool _initialized;
     private bool _disposed;
 
@@ -45,13 +46,15 @@ public partial class ReaderPage : DocumentPage
     public ReaderViewModel ViewModel => _viewModel;
     public bool IsImmersive { get; private set; }
     public event EventHandler<bool>? ImmersiveChanged;
-    private void OnToggleImmersive(object? sender, RoutedEventArgs e) => SetImmersive(!IsImmersive);
+
+    private void OnExitImmersive(object? sender, RoutedEventArgs e) => SetImmersive(false);
+
+    internal void ToggleImmersive() => SetImmersive(!IsImmersive);
+
     private void SetImmersive(bool value)
     {
         IsImmersive = value;
-        ReaderHeading.IsVisible = !value;
-        ImmersiveButton.Content = value ? "退出沉浸" : "沉浸模式";
-        ImmersiveButton.Classes.Set("active", value);
+        ImmersiveExit.IsVisible = value;
         ImmersiveChanged?.Invoke(this, value);
         FocusReader();
     }
@@ -199,45 +202,53 @@ public partial class ReaderPage : DocumentPage
 
     private void OnBack(object? sender, RoutedEventArgs e) => Close();
 
-    // Mode chips toggle: clicking the active mode returns to single-page mode,
-    // so a second click on "横向" (or "连续") leaves that mode again.
-    private async void OnSingleMode(object? sender, RoutedEventArgs e)
-    {
-        await _viewModel.SetModeAsync(ReadingMode.Single);
-        SingleView.Focus();
-    }
+    // Mode commands live in the shell header; the page owns the async switch so
+    // the continuous viewports can be re-measured right after the mode change.
+    internal Task SetSingleModeAsync() => SwitchModeAsync(ReadingMode.Single);
 
-    private async void OnContinuousMode(object? sender, RoutedEventArgs e)
+    internal Task ToggleContinuousModeAsync() => SwitchModeAsync(_viewModel.IsContinuousMode
+        ? ReadingMode.Single
+        : ReadingMode.Continuous);
+
+    internal Task ToggleHorizontalModeAsync() => SwitchModeAsync(_viewModel.IsHorizontalMode
+        ? ReadingMode.Single
+        : ReadingMode.Double);
+
+    private async Task SwitchModeAsync(ReadingMode mode)
     {
-        await _viewModel.SetModeAsync(_viewModel.IsContinuousMode
-            ? ReadingMode.Single
-            : ReadingMode.Continuous);
+        await _viewModel.SetModeAsync(mode);
         if (_viewModel.IsContinuousMode) UpdateContinuousWidth();
+        else if (_viewModel.IsHorizontalMode) UpdateContinuousHeight();
         FocusReader();
     }
 
-    private async void OnDoubleMode(object? sender, RoutedEventArgs e)
+    internal void ToggleDirection() => _viewModel.ToggleDirection();
+
+    internal void ToggleBackground() => _viewModel.ToggleBackground();
+
+    internal void RetryCurrentPage() => _viewModel.RetryCurrentCommand.Execute(null);
+
+    internal void ToggleFullscreen() => SetFullscreen(WindowState != WindowState.FullScreen);
+
+    internal void ShowHelpFlyout() => ShowHelp();
+
+    private void SetFullscreen(bool fullScreen)
     {
-        await _viewModel.SetModeAsync(_viewModel.IsHorizontalMode
-            ? ReadingMode.Single
-            : ReadingMode.Double);
-        if (_viewModel.IsHorizontalMode) UpdateContinuousHeight();
-        FocusReader();
-    }
-
-    private void OnToggleDirection(object? sender, RoutedEventArgs e) => _viewModel.ToggleDirection();
-
-    private void OnToggleBackground(object? sender, RoutedEventArgs e) => _viewModel.ToggleBackground();
-
-    private void OnToggleFullscreen(object? sender, RoutedEventArgs e) => ToggleFullscreen();
-
-    private void OnShowHelp(object? sender, RoutedEventArgs e) => ShowHelp();
-
-    private void ToggleFullscreen()
-    {
-        WindowState = WindowState == WindowState.FullScreen
-            ? WindowState.Normal
-            : WindowState.FullScreen;
+        if (TopLevel.GetTopLevel(this) is not Window window) return;
+        if (fullScreen)
+        {
+            if (window.WindowState == WindowState.FullScreen) return;
+            // Remember Normal vs Maximized so leaving full screen restores the
+            // window the user actually had before.
+            _stateBeforeFullscreen = window.WindowState;
+            window.WindowState = WindowState.FullScreen;
+        }
+        else
+        {
+            window.WindowState = _stateBeforeFullscreen == WindowState.Maximized
+                ? WindowState.Maximized
+                : WindowState.Normal;
+        }
     }
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
@@ -250,7 +261,7 @@ public partial class ReaderPage : DocumentPage
                 if (IsImmersive) { SetImmersive(false); e.Handled = true; return; }
                 if (WindowState == WindowState.FullScreen)
                 {
-                    WindowState = WindowState.Normal;
+                    SetFullscreen(false);
                 }
                 else
                 {

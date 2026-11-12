@@ -24,7 +24,6 @@ public partial class LibraryPage : UserControl
         InitializeComponent();
     }
 
-    public event EventHandler? SettingsRequested;
     public event EventHandler<GalleryItemViewModel>? LocalDetailsRequested;
     public event EventHandler<GalleryItemViewModel>? VersionsRequested;
 
@@ -216,9 +215,6 @@ public partial class LibraryPage : UserControl
         item.Click += (_, _) => action();
         return item;
     }
-
-    private void OnOpenSettings(object? sender, RoutedEventArgs e) =>
-        SettingsRequested?.Invoke(this, EventArgs.Empty);
 
     private async void OnChooseFolderRequested(object? sender, EventArgs e) => await PickFolderAsync();
 

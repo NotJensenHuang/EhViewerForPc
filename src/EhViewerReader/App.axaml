@@ -1,6 +1,7 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:fa="using:FluentAvalonia.Styling"
+             xmlns:controls="using:EhViewerReader.Controls"
              x:Class="EhViewerReader.App"
              RequestedThemeVariant="Dark">
   <Application.Resources>
@@ -12,6 +13,7 @@
       <Color x:Key="SystemAccentColorDark1">#E2556B</Color>
       <Color x:Key="SystemAccentColorDark2">#C2465B</Color>
       <Color x:Key="SystemAccentColorDark3">#A2384B</Color>
+      <controls:IndexMatchConverter x:Key="IndexMatch" />
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://EhViewerReader/Styles/OnlineCardTemplates.axaml" />
       </ResourceDictionary.MergedDictionaries>

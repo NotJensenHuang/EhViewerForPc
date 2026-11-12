@@ -108,7 +108,7 @@ internal static class NavigationRegressionService
         window.ShowDiagnosticPage(reader);
         window.Width = 540;
         await Task.Delay(250);
-        reader.FindControl<Button>("ImmersiveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+        reader.ToggleImmersive();
         await Task.Delay(150);
         Check("minimal immersive reader removes the navigation header", frame.TranslatePoint(default, window) is { Y: <= 2 });
         UiSmokeService.SaveScreenshot(window, Path.Combine(output, "reader-immersive-narrow.png"));

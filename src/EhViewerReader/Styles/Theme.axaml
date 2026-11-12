@@ -43,6 +43,13 @@
 
       <FontFamily x:Key="AppFont">Segoe UI Variable, Segoe UI, Microsoft YaHei UI, Noto Sans CJK SC</FontFamily>
       <FontFamily x:Key="AppMonoFont">Cascadia Mono, Menlo, DejaVu Sans Mono, Consolas, Noto Sans CJK SC, Microsoft YaHei UI</FontFamily>
+
+      <!-- Layout tokens. Pages share these values so headers, toolbars, lists
+           and status bars start on the same vertical guide. -->
+      <Thickness x:Key="AppPagePadding">24,16,24,0</Thickness>
+      <Thickness x:Key="AppListPadding">24,0,24,20</Thickness>
+      <Thickness x:Key="AppBottomBarPadding">24,0</Thickness>
+      <CornerRadius x:Key="AppRowRadius">6</CornerRadius>
     </ResourceDictionary>
   </Styles.Resources>
 
@@ -198,8 +205,65 @@
     <Setter Property="FontSize" Value="12" />
     <Setter Property="MinHeight" Value="26" />
   </Style>
-  <Style Selector="WrapPanel > Button"><Setter Property="Margin" Value="0,0,6,6" /></Style>
-  <Style Selector="WrapPanel > ComboBox"><Setter Property="Margin" Value="0,0,6,6" /></Style>
+  <!-- Explicit action rows. The global "all children of a WrapPanel" margin was
+       removed because it silently combined with per-control margins; containers
+       that pack buttons declare Classes="actions" instead. -->
+  <Style Selector="WrapPanel.actions > :is(Button)">
+    <Setter Property="Margin" Value="0,0,8,8" />
+  </Style>
+  <Style Selector="WrapPanel.actions > :is(ComboBox)">
+    <Setter Property="Margin" Value="0,0,8,8" />
+  </Style>
+  <Style Selector="WrapPanel.actions > :is(CheckBox)">
+    <Setter Property="Margin" Value="0,0,16,8" />
+  </Style>
+
+  <!-- Shared page chrome -->
+  <Style Selector="Border.statusbar">
+    <Setter Property="Padding" Value="24,6" />
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="0,1,0,0" />
+    <Setter Property="ClipToBounds" Value="True" />
+  </Style>
+
+  <Style Selector="Border.page-header">
+    <Setter Property="Padding" Value="24,16,24,12" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+  </Style>
+
+  <!-- Settings: one row = label/description on the left, control on the right.
+       Border.settings-group stacks rows that belong to the same heading. -->
+  <Style Selector="Border.settings-row">
+    <Setter Property="Background" Value="{DynamicResource AppCardBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="6" />
+    <Setter Property="Padding" Value="16,12" />
+    <Setter Property="MinHeight" Value="56" />
+  </Style>
+
+  <Style Selector="TextBlock.group-title">
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Margin" Value="2,4,0,0" />
+  </Style>
+
+  <!-- Category selector of the settings page: a flat, wrapping chip bar. -->
+  <Style Selector="ListBox.categories">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0" />
+  </Style>
+  <Style Selector="ListBox.categories ListBoxItem">
+    <Setter Property="Padding" Value="12,6" />
+    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="Margin" Value="0,0,4,4" />
+    <Setter Property="CornerRadius" Value="6" />
+    <Setter Property="FontSize" Value="13" />
+  </Style>
+
   <Style Selector="Border.language-badge">
     <Setter Property="HorizontalAlignment" Value="Right" /><Setter Property="VerticalAlignment" Value="Bottom" />
     <Setter Property="Margin" Value="8" /><Setter Property="Background" Value="#CC101317" />
