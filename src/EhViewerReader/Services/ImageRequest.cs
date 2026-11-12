@@ -1,4 +1,5 @@
 using EhViewerReader.Core.Format;
+using EhViewerReader.Core.Imaging;
 using EhViewerReader.Core.Models;
 
 namespace EhViewerReader.Services;
@@ -6,7 +7,17 @@ namespace EhViewerReader.Services;
 public interface IImageRequest
 {
     string Key { get; }
-    Task<DecodedImage?> LoadAsync(int targetWidth, int targetHeight, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads and decodes the image. <paramref name="progress"/> may receive
+    /// resolving/downloading (with byte counts) and decoding states; it is
+    /// optional and must never be required for correctness.
+    /// </summary>
+    Task<DecodedImage?> LoadAsync(
+        int targetWidth,
+        int targetHeight,
+        CancellationToken cancellationToken,
+        IProgress<ImageLoadStatus>? progress = null);
 }
 
 public sealed class PageImageRequest : IImageRequest
@@ -23,8 +34,22 @@ public sealed class PageImageRequest : IImageRequest
 
     public string Key { get; }
 
-    public Task<DecodedImage?> LoadAsync(int targetWidth, int targetHeight, CancellationToken cancellationToken) =>
-        _loader.LoadCandidatesAsync(_candidates, targetWidth, targetHeight, cancellationToken);
+    public async Task<DecodedImage?> LoadAsync(
+        int targetWidth,
+        int targetHeight,
+        CancellationToken cancellationToken,
+        IProgress<ImageLoadStatus>? progress = null)
+    {
+        PageCandidate? candidate = _candidates.FirstOrDefault(c => c.Length > 0);
+        progress?.Report(ImageLoadStatus.Decoding(candidate?.Length ?? 0));
+        DecodedImage? image = await _loader
+            .LoadCandidatesAsync(_candidates, targetWidth, targetHeight, cancellationToken)
+            .ConfigureAwait(false);
+        progress?.Report(image is null
+            ? ImageLoadStatus.Failed(_candidates.Count == 0 ? "没有可读页面文件" : "无法解码页面文件")
+            : ImageLoadStatus.Ready(candidate?.Length ?? 0));
+        return image;
+    }
 }
 
 public sealed class CoverImageRequest : IImageRequest
@@ -40,8 +65,19 @@ public sealed class CoverImageRequest : IImageRequest
 
     public string Key => _gallery.StableId;
 
-    public Task<DecodedImage?> LoadAsync(int targetWidth, int targetHeight, CancellationToken cancellationToken) =>
-        _covers.LoadCoverAsync(_gallery, targetWidth, targetHeight, cancellationToken);
+    public async Task<DecodedImage?> LoadAsync(
+        int targetWidth,
+        int targetHeight,
+        CancellationToken cancellationToken,
+        IProgress<ImageLoadStatus>? progress = null)
+    {
+        progress?.Report(ImageLoadStatus.Decoding());
+        DecodedImage? image = await _covers
+            .LoadCoverAsync(_gallery, targetWidth, targetHeight, cancellationToken)
+            .ConfigureAwait(false);
+        progress?.Report(image is null ? ImageLoadStatus.Failed("无法读取封面") : ImageLoadStatus.Ready());
+        return image;
+    }
 }
 
 public sealed class ImageLoader

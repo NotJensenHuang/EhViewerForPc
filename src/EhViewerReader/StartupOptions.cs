@@ -28,6 +28,8 @@ public sealed class StartupOptions
     public bool LoginProbe { get; private set; }
     public bool UiSmoke { get; private set; }
     public bool ReaderRegression { get; private set; }
+    public bool NavigationRegression { get; private set; }
+    public bool UiAudit { get; private set; }
     public bool SkipSnapshot { get; private set; }
     public bool DeepProbe { get; private set; }
     public bool Verbose { get; private set; }
@@ -80,6 +82,14 @@ public sealed class StartupOptions
                     break;
                 case "--reader-regression":
                     options.ReaderRegression = true;
+                    options.UiSmoke = true;
+                    break;
+                case "--navigation-regression":
+                    options.NavigationRegression = true;
+                    options.UiSmoke = true;
+                    break;
+                case "--ui-audit":
+                    options.UiAudit = true;
                     options.UiSmoke = true;
                     break;
                 case "--ui-smoke":

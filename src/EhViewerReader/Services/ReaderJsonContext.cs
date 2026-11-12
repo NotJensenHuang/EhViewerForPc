@@ -15,4 +15,5 @@ namespace EhViewerReader.Services;
     AllowTrailingCommas = true,
     UseStringEnumConverter = true)]
 [JsonSerializable(typeof(PageDimensionCacheFile))]
+[JsonSerializable(typeof(UiAuditReport))]
 internal sealed partial class ReaderJsonContext : JsonSerializerContext;

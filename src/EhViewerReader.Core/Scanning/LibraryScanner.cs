@@ -220,6 +220,7 @@ public sealed partial class LibraryScanner
         {
             StableId = string.Empty,
             Gid = resolvedGid,
+            Token = header?.Token ?? string.Empty,
             DirectoryGid = nameGid,
             HeaderGid = header is { HasGid: true } ? header.Gid : null,
             Title = string.IsNullOrWhiteSpace(nameTitle) ? directory.Name : nameTitle,
@@ -252,6 +253,7 @@ public sealed partial class LibraryScanner
         {
             StableId = string.Empty,
             Gid = entry.DirectoryGid ?? entry.HeaderGid,
+            Token = entry.Token,
             DirectoryGid = entry.DirectoryGid,
             HeaderGid = entry.HeaderGid,
             Title = entry.Title,
@@ -296,6 +298,7 @@ public sealed partial class LibraryScanner
             PageMtimeMaxTicks = snapshot.PageMtimeMaxTicks,
             DirectoryGid = gallery.DirectoryGid,
             HeaderGid = gallery.HeaderGid,
+            Token = gallery.Token,
             Title = gallery.Title,
             PageCount = gallery.PageCount,
             MaxPageNumber = gallery.MaxPageNumber,

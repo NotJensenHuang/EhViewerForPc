@@ -18,20 +18,30 @@ public sealed class ContinuousPageItem : ObservableObject
 
     private double _displayWidth;
     private double _displayHeight;
+    private IImageRequest _request;
     private int _originalWidth;
     private int _originalHeight;
 
     public ContinuousPageItem(GalleryPage page, IImageRequest request, int originalWidth, int originalHeight, bool known)
     {
         Page = page;
-        Request = request;
+        _request = request;
         _originalWidth = originalWidth > 0 ? originalWidth : (int)PlaceholderWidth;
         _originalHeight = originalHeight > 0 ? originalHeight : (int)PlaceholderHeight;
         Known = known;
     }
 
     public GalleryPage Page { get; }
-    public IImageRequest Request { get; }
+
+    public IImageRequest Request
+    {
+        get => _request;
+        private set => SetProperty(ref _request, value);
+    }
+
+    /// <summary>Swaps the request so a failed page can retry without rebuilding
+    /// the whole strip (which would move the scroll position).</summary>
+    public void UpdateRequest(IImageRequest request) => Request = request;
     public int OriginalWidth => _originalWidth;
     public int OriginalHeight => _originalHeight;
     public bool Known { get; private set; }

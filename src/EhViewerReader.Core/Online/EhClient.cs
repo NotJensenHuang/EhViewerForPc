@@ -60,6 +60,14 @@ public sealed class EhClient : IDisposable
 
     public bool IsSignedIn => _session.HasCredentials;
 
+    /// <summary>
+    /// Identity of the browsing context (site + account) used to scope on-disk
+    /// image caches. Reading the same gallery while signed in as another account
+    /// must not reuse the previous account's resampled/original bytes.
+    /// </summary>
+    public string CacheScope => (Site == EhSite.ExHentai ? "ex" : "eh") + "|" +
+                                (IsSignedIn ? "u:" + _settings.Account.LastUserName : "anon");
+
     public bool ExAccess => _settings.Account.ExAccess;
 
     public string UserName => _settings.Account.LastUserName;
@@ -400,24 +408,41 @@ public sealed class EhClient : IDisposable
         return 0;
     }
 
-    public async Task<int> GetFavoriteSlotAsync(long gid, string token, CancellationToken cancellationToken)
+    /// <summary>
+    /// Reads the addfav popup: the selected category and the stored note. The
+    /// popup's default selection alone does not prove the gallery is favourited;
+    /// callers must combine it with <see cref="EhGalleryDetails.IsFavorited"/>.
+    /// </summary>
+    public async Task<EhFavoritePopup?> GetFavoritePopupAsync(long gid, string token, CancellationToken cancellationToken)
     {
         try
         {
-            // The favourite popup is the addfav form; it preselects the slot
-            // the gallery currently sits in (only meaningful when favourited).
             string url = EhUrls.GalleryPopup(Site, gid, token, "addfav");
             string html = await GetStringAsync(url, EhUrls.Detail(Site, gid, token), cancellationToken).ConfigureAwait(false);
-            return EhParser.ParseFavoriteSlot(html);
+            return new EhFavoritePopup(EhParser.ParseFavoriteSlot(html), EhParser.ParseFavoriteNote(html));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException or TaskCanceledException)
         {
             _log?.Invoke("Favorite popup failed: " + ex.Message);
-            return -1;
+            return null;
         }
     }
 
-    public async Task<bool> SetFavoriteAsync(
+    public async Task<int> GetFavoriteSlotAsync(long gid, string token, CancellationToken cancellationToken) =>
+        (await GetFavoritePopupAsync(gid, token, cancellationToken).ConfigureAwait(false))?.Slot ?? -1;
+
+    /// <summary>
+    /// Adds, moves or removes a favourite and then reads the gallery state back.
+    /// The POST answer alone is not trusted: the site can apply the change and
+    /// still return the popup form (the historic "reported failure but the
+    /// gallery was favourited" case), so a single read-only verification decides
+    /// between success, rejection and "unknown" (no retry, no false failure).
+    /// </summary>
+    public async Task<FavoriteUpdateResult> SetFavoriteAsync(
         long gid,
         string token,
         int slot,
@@ -436,19 +461,102 @@ public sealed class EhClient : IDisposable
             ["update"] = "1",
         };
 
-        string body = await PostFormAsync(url, form, EhUrls.Detail(Site, gid, token), cancellationToken)
-            .ConfigureAwait(false);
-
-        if (body.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase))
+        bool postApplied;
+        try
         {
-            _log?.Invoke("Favorite update rejected: session expired");
-            return false;
+            string body = await PostFormAsync(url, form, EhUrls.Detail(Site, gid, token), cancellationToken)
+                .ConfigureAwait(false);
+
+            if (body.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase))
+            {
+                _log?.Invoke("Favorite update rejected: session expired");
+                return new FavoriteUpdateResult(FavoriteUpdateOutcome.Rejected, "登录已失效，请重新登录", false, -1, false);
+            }
+
+            // The popup answers with a tiny confirmation page; a page that still
+            // shows the form is inconclusive (the change may already be applied).
+            postApplied = !body.Contains("<form", StringComparison.OrdinalIgnoreCase) ||
+                          body.Contains("favorites.php", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is TaskCanceledException or HttpRequestException)
+        {
+            _log?.Invoke("Favorite update interrupted: " + ex.Message);
+            return FavoriteUpdateResult.Unknown("提交中断，结果未知；可重新检查收藏状态");
+        }
+        catch (EhException ex)
+        {
+            _log?.Invoke("Favorite update failed: " + ex.Message);
+            return FavoriteUpdateResult.Unknown("提交结果未知：" + ex.Message);
         }
 
-        // The popup answers with a tiny confirmation page; anything that still
-        // shows the form means the request was not applied.
-        return !body.Contains("<form", StringComparison.OrdinalIgnoreCase) ||
-               body.Contains("favorites.php", StringComparison.OrdinalIgnoreCase);
+        (bool Favorited, int Slot)? state = await TryReadFavoriteStateAsync(gid, token, cancellationToken)
+            .ConfigureAwait(false);
+        if (state is { } verified)
+        {
+            if (!add)
+            {
+                return verified.Favorited
+                    ? new FavoriteUpdateResult(FavoriteUpdateOutcome.Rejected, "服务器仍显示已收藏", true,
+                        verified.Slot, true)
+                    : new FavoriteUpdateResult(FavoriteUpdateOutcome.Succeeded, "已取消收藏", false, -1, true);
+            }
+
+            if (!verified.Favorited)
+            {
+                return new FavoriteUpdateResult(FavoriteUpdateOutcome.Rejected, "服务器未应用收藏", false, -1, true);
+            }
+
+            // Applied. The site may have stored a different slot than requested
+            // (for example when the requested slot no longer exists).
+            string message = verified.Slot >= 0 && verified.Slot != slot
+                ? $"已收藏到分类 {verified.Slot}"
+                : "已收藏";
+            return new FavoriteUpdateResult(FavoriteUpdateOutcome.Succeeded, message, true, verified.Slot, true);
+        }
+
+        return postApplied
+            ? new FavoriteUpdateResult(FavoriteUpdateOutcome.Succeeded, "已提交（未能核验分类）", add, add ? slot : -1, false)
+            : FavoriteUpdateResult.Unknown("提交结果未知；可重新检查收藏状态");
+    }
+
+    /// <summary>
+    /// Read-only favourite state: <c>#favoritelink</c> proves whether the gallery
+    /// is in a slot, the popup names the slot. Returns null when the page could
+    /// not be read (network error, login expired), never a guessed state.
+    /// </summary>
+    public async Task<(bool Favorited, int Slot)?> TryReadFavoriteStateAsync(
+        long gid,
+        string token,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            string html = await GetStringAsync(EhUrls.Detail(Site, gid, token), null, cancellationToken)
+                .ConfigureAwait(false);
+            EhGalleryDetails details = EhParser.ParseGalleryDetail(html, Site, gid, token);
+            if (details.Title.Length == 0 && details.JapaneseTitle.Length == 0) return null;
+
+            int slot = details.FavoriteSlot;
+            if (details.IsFavorited && slot < 0)
+            {
+                slot = await GetFavoriteSlotAsync(gid, token, cancellationToken).ConfigureAwait(false);
+            }
+
+            return (details.IsFavorited, slot);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException or TaskCanceledException)
+        {
+            _log?.Invoke("Favorite state check failed: " + ex.Message);
+            return null;
+        }
     }
 
     // -------------------------------------------------- comments & rating
@@ -669,7 +777,8 @@ public sealed class EhClient : IDisposable
         string targetPath,
         IProgress<long>? progress,
         CancellationToken cancellationToken) =>
-        DownloadToFileCoreAsync(_web, url, EhUrls.Base(Site) + "/", targetPath, progress, cancellationToken);
+        DownloadToFileCoreAsync(_web, url, EhUrls.Base(Site) + "/", targetPath,
+            progress is null ? null : (received, _) => progress.Report(received), cancellationToken);
 
     // ------------------------------------------------------------ page list
 
@@ -803,14 +912,33 @@ public sealed class EhClient : IDisposable
         string targetPath,
         IProgress<long>? progress,
         CancellationToken cancellationToken) =>
-        DownloadToFileCoreAsync(_images, url, referer, targetPath, progress, cancellationToken, imageAccept: true);
+        DownloadToFileAsync(url, referer, targetPath,
+            progress is null ? null : new Progress<Imaging.ImageLoadStatus>(s => progress.Report(s.ReceivedBytes)),
+            cancellationToken);
+
+    /// <summary>
+    /// Streams <paramref name="url"/> to <paramref name="targetPath"/> and reports
+    /// received bytes together with the server's Content-Length (null when the
+    /// response has no trustworthy length). The file only appears at the target
+    /// path once the transfer is complete and the signature is verified.
+    /// </summary>
+    public Task DownloadToFileAsync(
+        string url,
+        string referer,
+        string targetPath,
+        IProgress<Imaging.ImageLoadStatus>? progress,
+        CancellationToken cancellationToken) =>
+        DownloadToFileCoreAsync(_images, url, referer, targetPath,
+            progress is null ? null : (received, total) =>
+                progress.Report(new Imaging.ImageLoadStatus(Imaging.ImageLoadPhase.Downloading, received, total)),
+            cancellationToken, imageAccept: true);
 
     private static async Task DownloadToFileCoreAsync(
         HttpClient client,
         string url,
         string referer,
         string targetPath,
-        IProgress<long>? progress,
+        Action<long, long?>? progress,
         CancellationToken cancellationToken,
         bool imageAccept = false)
     {
@@ -833,6 +961,7 @@ public sealed class EhClient : IDisposable
             throw new EhException($"下载失败：HTTP {(int)response.StatusCode}");
         }
 
+        long? contentLength = response.Content.Headers.ContentLength;
         string tempPath = targetPath + "." + Guid.NewGuid().ToString("N") + ".part";
         byte[] buffer = ArrayPool<byte>.Shared.Rent(64 * 1024);
         try
@@ -848,12 +977,12 @@ public sealed class EhClient : IDisposable
                     await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
                     total += read;
                     long now = Environment.TickCount64;
-                    if (now - lastReport >= 100) { progress?.Report(total); lastReport = now; }
+                    if (now - lastReport >= 100) { progress?.Invoke(total, contentLength); lastReport = now; }
                 }
             }
-            progress?.Report(total);
+            progress?.Invoke(total, contentLength);
             cancellationToken.ThrowIfCancellationRequested();
-            if (response.Content.Headers.ContentLength is long expected && total != expected)
+            if (contentLength is long expected && total != expected)
                 throw new IOException("下载数据不完整，请重试");
             if (total == 0 || (imageAccept && !ImageSignature.IsValidFile(tempPath)))
                 throw new EhException("下载结果不是完整的受支持图片，请重试");

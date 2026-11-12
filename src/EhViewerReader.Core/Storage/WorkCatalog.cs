@@ -42,6 +42,7 @@ public sealed class WorkCatalog
             {
                 if (string.IsNullOrEmpty(work.Token)) work.Token = previous.Token;
                 if (string.IsNullOrEmpty(work.ThumbnailUrl)) work.ThumbnailUrl = previous.ThumbnailUrl;
+                work.Metadata ??= previous.Metadata?.Clone();
             }
             _works[work.WorkId] = work.Clone();
         }

@@ -722,7 +722,9 @@ public static partial class EhParser
         }
 
         list.Pages.Sort((a, b) => a.Page.CompareTo(b.Page));
-        list.HasMore = HasNextPreviewPage(document, pageIndex, list.Pages.Count);
+        (bool hasMore, int lastPageIndex) = NextPreviewPage(document, pageIndex, list.Pages.Count);
+        list.HasMore = hasMore;
+        list.LastPageIndex = lastPageIndex;
         if (list.Pages.Count == 0)
         {
             error = DetectMessage(html) ?? "页面列表为空";
@@ -732,7 +734,7 @@ public static partial class EhParser
         return true;
     }
 
-    private static bool HasNextPreviewPage(HtmlNode document, int pageIndex, int itemsOnPage)
+    private static (bool HasMore, int LastPageIndex) NextPreviewPage(HtmlNode document, int pageIndex, int itemsOnPage)
     {
         int maxPage = -1;
         foreach (HtmlNode anchor in document.Descendants("a"))
@@ -742,16 +744,16 @@ public static partial class EhParser
             if (int.TryParse(match.Groups[1].Value, out int page) && page > maxPage) maxPage = page;
         }
 
-        if (maxPage >= 0) return maxPage > pageIndex;
+        if (maxPage >= 0) return (maxPage > pageIndex, maxPage);
 
         Match total = TotalImagesRegex().Match(document.InnerText);
         if (total.Success &&
             int.TryParse(total.Groups[1].Value.Replace(",", string.Empty), out int images))
         {
-            return (pageIndex + 1) * Math.Max(itemsOnPage, 1) < images;
+            return ((pageIndex + 1) * Math.Max(itemsOnPage, 1) < images, -1);
         }
 
-        return itemsOnPage >= 15;
+        return (itemsOnPage >= 15, -1);
     }
 
     // ------------------------------------------------------------ image page
@@ -820,6 +822,19 @@ public static partial class EhParser
         }
 
         return -1;
+    }
+
+    /// <summary>
+    /// Reads the existing favourite note (textarea[name=favnote]) so a category
+    /// change never silently clears the note the user wrote on the site.
+    /// </summary>
+    public static string ParseFavoriteNote(string html)
+    {
+        HtmlNode document = HtmlLite.Parse(html);
+        HtmlNode? area = document.Descendants("textarea")
+            .FirstOrDefault(n => string.Equals(n.GetAttribute("name"), "favnote", StringComparison.OrdinalIgnoreCase));
+        if (area is null) return string.Empty;
+        return System.Net.WebUtility.HtmlDecode(area.InnerText).Trim();
     }
 
     public static string? DetectMessage(string html)

@@ -1,3 +1,4 @@
+using EhViewerReader.Core.Download;
 using EhViewerReader.Core.Format;
 using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Scanning;
@@ -35,6 +36,8 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     private DateTime? _lastReadUtc;
     private GalleryInfo _info;
     private IImageRequest _coverRequest;
+    private DownloadProjection? _download;
+    private bool _downloadIsPrimary = true;
 
     public GalleryItemViewModel(
         GalleryGroup group,
@@ -49,7 +52,18 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
         ApplyProgress(progress);
     }
 
-    public IReadOnlyList<GalleryInfo> Versions { get; }
+    public IReadOnlyList<GalleryInfo> Versions { get; private set; }
+
+    public void UpdateGroup(GalleryGroup group)
+    {
+        string selected = StableId;
+        Versions = group.Versions;
+        var primary = IsPrimaryVersionPreferred
+            ? Versions.FirstOrDefault(v => v.StableId == selected) ?? group.Primary
+            : group.Primary;
+        SetPrimary(primary, IsPrimaryVersionPreferred);
+        OnPropertyChanged(nameof(SourceCount));
+    }
     public string WorkId { get; }
 
     public GalleryInfo Info => _info;
@@ -213,6 +227,75 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     {
         get => _progressFraction;
         private set => SetProperty(ref _progressFraction, value);
+    }
+
+    // ------------------------------------------------- download projection
+
+    /// <summary>Download-engine state shown as an overlay on the cover. Kept
+    /// separate from reading progress; a task never overwrites it.</summary>
+    public readonly record struct DownloadProjection(DownloadState State, int DownloadedPages, int TotalPages);
+
+    public bool HasActiveDownload => _download is not null;
+
+    public bool IsDownloadActive => _download is { State: DownloadState.Running or DownloadState.Pending };
+
+    public bool IsDownloadPaused => _download is { State: DownloadState.Paused };
+
+    public bool IsDownloadFailed => _download is { State: DownloadState.Failed };
+
+    public bool IsDownloadIndeterminate => _download is { TotalPages: <= 0 };
+
+    public double DownloadFraction => _download is { TotalPages: > 0 } d
+        ? Math.Clamp(d.DownloadedPages / (double)d.TotalPages, 0, 1)
+        : 0;
+
+    public string DownloadStatusText
+    {
+        get
+        {
+            if (_download is not { } d) return string.Empty;
+            string state = d.State switch
+            {
+                DownloadState.Running => "下载中",
+                DownloadState.Pending => "等待下载",
+                DownloadState.Paused => "已暂停",
+                DownloadState.Failed => "下载失败",
+                _ => d.State.ToString(),
+            };
+            string pages = d.TotalPages > 0 ? $" · {d.DownloadedPages}/{d.TotalPages}" : $" · {d.DownloadedPages} 页";
+            string prefix = _downloadIsPrimary ? string.Empty : "其他版本 · ";
+            return prefix + state + pages;
+        }
+    }
+
+    /// <summary>Accessible description for the cover overlay.</summary>
+    public string DownloadAutomationText => HasActiveDownload
+        ? $"下载状态：{DownloadStatusText}"
+        : string.Empty;
+
+    /// <summary>
+    /// Applies the download task that writes into this card's folder. Null (or a
+    /// completed task) removes the overlay and leaves reading progress untouched.
+    /// </summary>
+    public void ApplyDownload(DownloadTask? task, bool isPrimaryVersion)
+    {
+        DownloadProjection? projection = task is null || task.State == DownloadState.Completed
+            ? null
+            : new DownloadProjection(task.State, task.DownloadedPages, task.PageCount);
+        bool primary = projection is null || isPrimaryVersion;
+
+        if (projection == _download && primary == _downloadIsPrimary) return;
+        _download = projection;
+        _downloadIsPrimary = primary;
+
+        OnPropertyChanged(nameof(HasActiveDownload));
+        OnPropertyChanged(nameof(IsDownloadActive));
+        OnPropertyChanged(nameof(IsDownloadPaused));
+        OnPropertyChanged(nameof(IsDownloadFailed));
+        OnPropertyChanged(nameof(IsDownloadIndeterminate));
+        OnPropertyChanged(nameof(DownloadFraction));
+        OnPropertyChanged(nameof(DownloadStatusText));
+        OnPropertyChanged(nameof(DownloadAutomationText));
     }
 
     public string ProgressText

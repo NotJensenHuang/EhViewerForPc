@@ -230,6 +230,11 @@ public sealed class EhPageList
     public List<EhPageRef> Pages { get; } = [];
     public bool HasMore { get; set; }
     public bool RequiresHath { get; set; }
+
+    /// <summary>Last preview-pagination index advertised by the page links, -1
+    /// when the site renders no pagination. Lets the reader size the page slider
+    /// for galleries whose detail page omitted the page count.</summary>
+    public int LastPageIndex { get; set; } = -1;
 }
 
 /// <summary>A parsed gallery listing (front page, search, favorites, …).</summary>
@@ -369,6 +374,39 @@ public sealed class EhCommentList
     public bool HasMore { get; set; }
     public bool CanPost { get; set; }
 }
+
+/// <summary>High-level outcome of a favourite change.</summary>
+public enum FavoriteUpdateOutcome
+{
+    /// <summary>The site (or a following read-only check) confirms the change.</summary>
+    Succeeded = 0,
+
+    /// <summary>The site did not apply the change.</summary>
+    Rejected = 1,
+
+    /// <summary>The request did not produce a verifiable answer; do not retry blindly.</summary>
+    Unknown = 2,
+}
+
+/// <summary>
+/// Result of adding/removing a favourite. <see cref="IsFavorited"/> and
+/// <see cref="Slot"/> carry the state read back from the site; they are only
+/// meaningful when <see cref="Verified"/> is true.
+/// </summary>
+public sealed record FavoriteUpdateResult(
+    FavoriteUpdateOutcome Outcome,
+    string Message,
+    bool IsFavorited,
+    int Slot,
+    bool Verified)
+{
+    public bool SlotKnown => Slot >= 0;
+
+    public static FavoriteUpdateResult Unknown(string message) => new(FavoriteUpdateOutcome.Unknown, message, false, -1, false);
+}
+
+/// <summary>Favourite popup state: selected category and the stored note.</summary>
+public sealed record EhFavoritePopup(int Slot, string Note);
 
 /// <summary>One archive flavour offered by archiver.php.</summary>
 public sealed class EhArchiveOption

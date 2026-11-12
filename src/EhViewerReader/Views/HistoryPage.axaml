@@ -9,10 +9,8 @@
   <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
     <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,10">
       <StackPanel Spacing="2">
-        <TextBlock Text="阅读历史" Classes="h1" />
-        <TextBlock HorizontalAlignment="Left" Classes="caption" TextWrapping="Wrap" MaxWidth="620"
-                   Text="在线和本地的阅读记录，按最近阅读时间排序。" />
-      </StackPanel>
+
+        </StackPanel>
       <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
         <Button Content="刷新" Command="{Binding RefreshCommand}" />
         <Button Content="打开本地库" Command="{Binding OpenLibraryCommand}" />
@@ -26,9 +24,7 @@
 
         <Border Classes="tile" Padding="18" IsVisible="{Binding ShowEmpty}">
           <StackPanel Spacing="6">
-            <TextBlock Text="还没有阅读记录" Classes="h2" />
-            <TextBlock Classes="secondary" TextWrapping="Wrap"
-                       Text="阅读在线或本地作品后，这里会记录最近阅读时间与进度；「继续阅读」会直接跳到上次的页面。" />
+            <SelectableTextBlock Text="还没有阅读记录" Classes="h2" />
             <Button Content="去本地库" Classes="ghost" HorizontalAlignment="Left"
                     Command="{Binding OpenLibraryCommand}" />
           </StackPanel>
@@ -52,16 +48,16 @@
                   </Border>
 
                   <StackPanel Grid.Column="2" Spacing="5" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Title}" FontWeight="Bold" TextWrapping="Wrap" MaxLines="2" />
-                    <TextBlock Classes="caption" Text="{Binding MetaText}" TextTrimming="CharacterEllipsis" />
+                    <SelectableTextBlock Text="{Binding Title}" FontWeight="Bold" TextWrapping="Wrap" MaxLines="2" />
+                    <SelectableTextBlock Classes="caption" Text="{Binding MetaText}" TextTrimming="CharacterEllipsis" />
                     <ProgressBar Height="3" Minimum="0" Maximum="1" Value="{Binding ProgressFraction}" />
-                    <TextBlock Classes="caption"
+                    <SelectableTextBlock Classes="caption"
                                Text="{Binding LastReadText, StringFormat='最近阅读：{0}'}"
                                Foreground="{DynamicResource AppAccentBrush}" />
                   </StackPanel>
 
                   <StackPanel Grid.Column="3" Spacing="6" VerticalAlignment="Center" Margin="12,0,0,0">
-                    <Button Content="继续阅读" Classes="primary" Command="{Binding OpenCommand}" MinWidth="88" />
+                    <Button Content="继续阅读" Classes="accent" Command="{Binding OpenCommand}" MinWidth="88" />
                     <Button Content="移出历史" Classes="ghost" FontSize="12" Command="{Binding RemoveCommand}" />
                   </StackPanel>
                 </Grid>
@@ -75,8 +71,8 @@
     <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0">
       <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center" />
-        <TextBlock Grid.Column="1" Text="{Binding CountText}" Classes="muted" FontSize="12"
+        <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center" />
+        <SelectableTextBlock Grid.Column="1" Text="{Binding CountText}" Classes="muted" FontSize="12"
                    VerticalAlignment="Center" />
       </Grid>
     </Border>

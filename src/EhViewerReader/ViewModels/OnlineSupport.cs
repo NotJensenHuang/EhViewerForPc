@@ -39,6 +39,9 @@ public interface IOnlineHost
 /// <summary>Online reading request: which gallery, at which image size.</summary>
 public sealed record OnlineReadRequest(EhGalleryDetails Details, ImageQuality Quality);
 
+/// <summary>Download reading request: the task and the folder snapshot to read.</summary>
+public sealed record DownloadReadRequest(EhViewerReader.Core.Download.DownloadTask Task, GalleryInfo Info);
+
 /// <summary>
 /// Plain string wrapper used by the search history / saved-search chips. Binding
 /// raw strings would force a reflection binding, which is not AOT-safe.
@@ -338,6 +341,14 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public bool IsPaused => Task.State == DownloadState.Paused;
     public bool IsFailed => Task.State == DownloadState.Failed;
     public bool IsCompleted => Task.State == DownloadState.Completed;
+    public bool HasDownloadedPages => Task.DownloadedPages > 0;
+
+    /// <summary>Reading is offered whenever the task folder already holds valid
+    /// pages, even if the persisted counter has not caught up yet.</summary>
+    public bool CanRead => HasDownloadedPages ||
+                           (Task.FolderPath.Length > 0 && Directory.Exists(Task.FolderPath));
+
+    public string ReadHint => CanRead ? "阅读该任务目录中已完成的页面" : "尚无已完成的页面";
     public bool CanPause => Task.State is DownloadState.Running or DownloadState.Pending;
     public bool CanResume => Task.State is DownloadState.Paused or DownloadState.Failed;
     public bool HasMessage => Task.Message.Length > 0;

@@ -74,11 +74,15 @@ public enum LibraryFilter
     Completed = 3,
     Favorite = 4,
     Incomplete = 5,
+
+    /// <summary>Works that exist in more than one local copy. Appended last so
+    /// persisted values from older versions keep their meaning.</summary>
+    Duplicates = 6,
 }
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 5;
+    public int SchemaVersion { get; set; } = 6;
 
     /// <summary>Legacy single-root field; migrated into <see cref="Sources"/> on load.</summary>
     public string? LibraryRoot { get; set; }
@@ -114,7 +118,22 @@ public sealed class AppSettings
     public ReaderBackground ReaderBackground { get; set; } = ReaderBackground.Black;
     public int MaxDecodeMegapixels { get; set; } = 24;
     public int MaxDecodeDimension { get; set; } = 16000;
+
+    /// <summary>Decoded-bitmap memory budget (not the online disk cache).</summary>
     public int PageCacheMegabytes { get; set; } = 256;
+
+    /// <summary>
+    /// On-disk budget for online pages and thumbnails. Separate from
+    /// <see cref="PageCacheMegabytes"/>, which only covers decoded bitmaps.
+    /// </summary>
+    public int OnlineCacheMegabytes { get; set; } = 512;
+
+    /// <summary>
+    /// Days an unused online cache entry is kept before pruning; 0 means no
+    /// time limit, so entries are only evicted when the disk budget is exceeded.
+    /// </summary>
+    public int OnlineCacheDays { get; set; }
+
     public int CoverDecodeWidth { get; set; } = 360;
     public LibrarySort Sort { get; set; } = LibrarySort.RecentlyRead;
     public LibraryFilter Filter { get; set; } = LibraryFilter.All;
@@ -136,10 +155,22 @@ public sealed class AppSettings
     public AppSettings Normalize()
     {
         if (SchemaVersion < 5) { ImageQuality = ImageQuality.Resampled; SchemaVersion = 5; }
+
+        if (SchemaVersion < 6)
+        {
+            // New online-cache defaults: 512 MiB and no retention limit. Only
+            // values still equal to the old defaults are rewritten, so an
+            // explicit choice made by the user survives the upgrade.
+            if (OnlineCacheMegabytes == 2048) OnlineCacheMegabytes = 512;
+            if (OnlineCacheDays == 14) OnlineCacheDays = 0;
+            SchemaVersion = 6;
+        }
         if (ResampledWidth is not (780 or 980 or 1280 or 1600 or 2400)) ResampledWidth = 1280;
         MaxDecodeMegapixels = Math.Clamp(MaxDecodeMegapixels, 4, 96);
         MaxDecodeDimension = Math.Clamp(MaxDecodeDimension, 2048, 16384);
         PageCacheMegabytes = Math.Clamp(PageCacheMegabytes, 64, 1536);
+        OnlineCacheMegabytes = Math.Clamp(OnlineCacheMegabytes, 128, 32768);
+        OnlineCacheDays = Math.Clamp(OnlineCacheDays, 0, 90);
         CoverDecodeWidth = Math.Clamp(CoverDecodeWidth, 160, 1024);
         WindowWidth = Math.Clamp(WindowWidth, 540, 10000);
         WindowHeight = Math.Clamp(WindowHeight, 420, 10000);

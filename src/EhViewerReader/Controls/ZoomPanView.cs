@@ -1,11 +1,12 @@
-using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using EhViewerReader.Core.Imaging;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Online;
 using EhViewerReader.Services;
 
 namespace EhViewerReader.Controls;
@@ -48,7 +49,6 @@ public sealed class ZoomPanView : Control
     private static readonly IBrush PlaceholderBrush = new SolidColorBrush(Color.Parse("#0F1216"));
     private static readonly IBrush MutedTextBrush = new SolidColorBrush(Color.Parse("#8A93A6"));
     private static readonly IBrush ErrorBrush = new SolidColorBrush(Color.Parse("#FF6B81"));
-    private static readonly Typeface TextTypeface = new("Microsoft YaHei UI, Segoe UI");
 
     private Bitmap? _bitmap;
     private Bitmap? _retiredBitmap;
@@ -76,6 +76,9 @@ public sealed class ZoomPanView : Control
     private Point _pressPoint;
     private Point _lastPoint;
     private DispatcherTimer? _zoomReloadTimer;
+    private ImageLoadStatus _status;
+    private long _lastStatusTick;
+    private string? _error;
 
     public ZoomPanView()
     {
@@ -305,6 +308,8 @@ public sealed class ZoomPanView : Control
 
         _loading = true;
         _failed = false;
+        _status = default;
+        _error = null;
         InvalidateVisual();
         _ = LoadAsync(request, targetWidth, targetHeight, generation, token);
     }
@@ -326,7 +331,8 @@ public sealed class ZoomPanView : Control
     {
         try
         {
-            DecodedImage? image = await request.LoadAsync(width, height, token).ConfigureAwait(false);
+            var progress = new UiImageProgress(status => OnStatus(generation, status));
+            DecodedImage? image = await request.LoadAsync(width, height, token, progress).ConfigureAwait(false);
             if (token.IsCancellationRequested)
             {
                 image?.Dispose();
@@ -362,16 +368,31 @@ public sealed class ZoomPanView : Control
         catch (OperationCanceledException)
         {
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 if (generation != _generation) return;
                 _loading = false;
                 _failed = true;
+                _error = ex is EhException or IOException ? ex.Message : null;
+                _status = ImageLoadStatus.Failed(_error ?? "此页无法加载");
                 InvalidateVisual();
             });
         }
+    }
+
+    /// <summary>Throttled status updates; terminal states always apply.</summary>
+    private void OnStatus(int generation, ImageLoadStatus status)
+    {
+        if (generation != _generation || !_loading) return;
+        bool terminal = status.Phase is ImageLoadPhase.Ready or ImageLoadPhase.Failed;
+        long now = Environment.TickCount64;
+        if (!terminal && now - _lastStatusTick < 140) return;
+        _lastStatusTick = now;
+        _status = status;
+        if (status.Phase == ImageLoadPhase.Failed) _error = status.Message;
+        InvalidateVisual();
     }
 
     /// <summary>
@@ -500,13 +521,9 @@ public sealed class ZoomPanView : Control
         Bitmap? bitmap = _bitmap;
         if (bitmap is null || Bounds.Width <= 0 || Bounds.Height <= 0)
         {
-            if (_failed)
+            if (_failed || _loading)
             {
-                DrawStatus(context, bounds, "此页无法加载");
-            }
-            else if (_loading)
-            {
-                DrawStatus(context, bounds, "载入中…");
+                ImageStatusOverlay.Draw(context, bounds, _status, _failed, _error, MutedTextBrush, ErrorBrush);
             }
 
             return;
@@ -524,18 +541,6 @@ public sealed class ZoomPanView : Control
         {
             context.DrawImage(bitmap, new Rect(bitmap.PixelSize.ToSize(1)), new Rect(left, top, width, height));
         }
-    }
-
-    private static void DrawStatus(DrawingContext context, Rect bounds, string text)
-    {
-        var formatted = new FormattedText(
-            text,
-            CultureInfo.CurrentUICulture,
-            FlowDirection.LeftToRight,
-            TextTypeface,
-            12,
-            MutedTextBrush);
-        context.DrawText(formatted, new Point((bounds.Width - formatted.Width) / 2, (bounds.Height - formatted.Height) / 2));
     }
 
     public void ResetView()

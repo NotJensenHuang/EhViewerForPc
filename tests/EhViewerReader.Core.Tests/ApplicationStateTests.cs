@@ -202,4 +202,67 @@ public sealed class ApplicationStateTests : IDisposable
     }
 
     public void Dispose() { _services.Dispose(); Directory.Delete(_root, true); }
+
+    [Fact]
+    public async Task LocalDetailsUseCachedMetadataAndKeepExactTagSearchTerms()
+    {
+        var details = new Core.Online.EhGalleryDetails { Gid = 42, Token = "token", Title = "Cached title", Pages = 3 };
+        details.Tags.Add(new() { Namespace = "artist", Name = "test artist" });
+        _services.Works.Upsert(WorkRecord.FromDetails(details));
+        var info = new GalleryInfo { StableId = "42", WorkId = "42", Gid = 42, Title = "Local title", FolderName = "42-Local", FolderPath = _root, PageCount = 1, ExpectedPages = 3 };
+        var item = new GalleryItemViewModel(Core.Scanning.LibraryMerger.Group([info]).Single(),
+            g => new CoverImageRequest(g, _services.Covers), null);
+        using var vm = new LocalGalleryDetailsViewModel(item, _services);
+        string? query = null;
+        vm.TagSearchRequested += (_, term) => query = term;
+        await vm.InitializeAsync();
+        Assert.False(vm.Presentation.IsLoading);
+        Assert.Equal("Cached title", vm.Presentation.Title);
+        Assert.Equal("1/3 页", vm.Presentation.PagesText);
+        var tag = Assert.Single(vm.Presentation.Tags);
+        tag.Command!.Execute(null);
+        Assert.Equal("artist:test artist", query);
+    }
+
+    [Fact]
+    public void ReadingAnOfflineCopyDoesNotEraseCachedTagsOrExposeMutableSnapshots()
+    {
+        var details = new Core.Online.EhGalleryDetails { Gid = 42, Token = "token", Title = "Cached title", Pages = 3 };
+        details.Tags.Add(new() { Namespace = "language", Name = "chinese" });
+        _services.Works.Upsert(WorkRecord.FromDetails(details));
+        _services.Works.Upsert(new WorkRecord { WorkId = "42", Gid = 42, Title = "Local title", PageCount = 1 });
+        var snapshot = _services.Works.Get("42")!;
+        Assert.Equal("token", snapshot.Token);
+        Assert.Equal("language:chinese", Assert.Single(snapshot.Metadata!.Tags));
+        snapshot.Metadata.Tags[0] = "modified";
+        Assert.Equal("language:chinese", Assert.Single(_services.Works.Get("42")!.Metadata!.Tags));
+    }
+
+    [Fact]
+    public void ReadingTheLastDownloadedPageDoesNotCompleteAnUnfinishedWork()
+    {
+        string folder = Path.Combine(_root, "partial");
+        Directory.CreateDirectory(folder);
+        File.WriteAllBytes(Path.Combine(folder, "00000001.jpg"), [0xFF, 0xD8, 0xFF, 0xE0]);
+        var info = new GalleryInfo { StableId = "42", WorkId = "42", Gid = 42, Title = "Partial",
+            FolderName = "partial", FolderPath = folder, PageCount = 1, ExpectedPages = 3, IsIncomplete = true };
+        using var reader = new ReaderViewModel(_services, info);
+        reader.SaveProgress();
+        var progress = _services.Progress.Get("42")!;
+        Assert.False(progress.Completed);
+        Assert.Equal(3, progress.PageCountAtSave);
+        Assert.Equal(3, _services.Works.Get("42")!.PageCount);
+    }
+
+    [Fact]
+    public void HistoryWithoutReadablePagesDoesNotPretendToBeComplete()
+    {
+        using var library = new MainViewModel(_services);
+        using var history = new HistoryViewModel(_services, library);
+        var entry = new HistoryEntryViewModel(null, new WorkRecord { WorkId = "empty", Title = "Empty", PageCount = 0 },
+            new ReadingProgress { PageNumber = 1, Completed = true }, _services, history);
+        Assert.Equal("无可读页面", entry.ProgressDetail);
+        Assert.Equal(0, entry.ProgressFraction);
+        Assert.False(entry.OpenCommand.CanExecute(null));
+    }
 }

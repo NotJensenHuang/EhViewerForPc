@@ -151,35 +151,7 @@ public sealed partial class ArchiveViewModel : ObservableObject, IDisposable
                 .GetArchivePageAsync(_details, _lifetime.Token)
                 .ConfigureAwait(true);
 
-            _page = page;
-            NeedsSignIn = page.RequiresSignIn;
-            // The sign-in card already explains the state; do not repeat it.
-            DetailText = page.RequiresSignIn ? string.Empty : page.Message;
-
-            Options.Clear();
-            foreach (EhArchiveOption option in page.Options)
-            {
-                Options.Add(new FeedOption(option.Key, option.Label));
-            }
-
-            SelectedOption = Options.FirstOrDefault();
-            OnPropertyChanged(nameof(HasOptions));
-
-            if (page.Generated && page.DownloadUrl.Length > 0)
-            {
-                DownloadUrl = page.DownloadUrl;
-                StatusText = "站点已生成归档，可直接下载";
-            }
-            else if (page.RequiresSignIn)
-            {
-                StatusText = "归档下载需要登录 E-Hentai 账号";
-            }
-            else
-            {
-                StatusText = Options.Count > 0
-                    ? "选择格式后请求归档；站点生成链接后保存"
-                    : page.Message.Length > 0 ? page.Message : "没有可用的归档格式";
-            }
+            ApplyPage(page);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { StatusText = "已取消"; }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
@@ -189,6 +161,39 @@ public sealed partial class ArchiveViewModel : ObservableObject, IDisposable
         finally
         {
             IsLoading = false;
+        }
+    }
+
+    internal void ApplyPage(EhArchivePage page)
+    {
+        _page = page;
+        NeedsSignIn = page.RequiresSignIn;
+        // The sign-in card already explains the state; do not repeat it.
+        DetailText = page.RequiresSignIn ? string.Empty : page.Message;
+
+        Options.Clear();
+        foreach (EhArchiveOption option in page.Options)
+        {
+            Options.Add(new FeedOption(option.Key, option.Label));
+        }
+
+        SelectedOption = Options.FirstOrDefault();
+        OnPropertyChanged(nameof(HasOptions));
+
+        if (page.Generated && page.DownloadUrl.Length > 0)
+        {
+            DownloadUrl = page.DownloadUrl;
+            StatusText = "站点已生成归档，可直接下载";
+        }
+        else if (page.RequiresSignIn)
+        {
+            StatusText = "归档下载需要登录 E-Hentai 账号";
+        }
+        else
+        {
+            StatusText = Options.Count > 0
+                ? "选择格式后请求归档；站点生成链接后保存"
+                : page.Message.Length > 0 ? page.Message : "没有可用的归档格式";
         }
     }
 

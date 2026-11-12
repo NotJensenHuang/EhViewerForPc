@@ -17,6 +17,7 @@ public sealed class GalleryInfo
     public string SourceName { get; set; } = string.Empty;
 
     public long? Gid { get; set; }
+    public string Token { get; set; } = string.Empty;
     public long? DirectoryGid { get; set; }
     public long? HeaderGid { get; set; }
     public required string Title { get; set; }

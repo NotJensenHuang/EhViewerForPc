@@ -1,33 +1,15 @@
-<UserControl xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:vm="using:EhViewerReader.ViewModels"
-        xmlns:controls="using:EhViewerReader.Controls"
-        mc:Ignorable="d" d:DesignWidth="1040" d:DesignHeight="820"
-        x:Class="EhViewerReader.Views.OnlineGalleryPage"
-        x:DataType="vm:OnlineGalleryViewModel"
-        Background="{DynamicResource AppBgBrush}">
-  <Grid Background="{DynamicResource AppBgBrush}" RowDefinitions="Auto,*,Auto">
-    <!-- Header -->
-    <Border Grid.Row="0" Padding="22,16,22,14" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,0,0,1">
-      <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
-        <StackPanel Spacing="4">
-          <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="Bold" MaxLines="1"
-                     TextTrimming="CharacterEllipsis" />
-          <TextBlock Text="{Binding JapaneseTitle}" Classes="secondary" TextWrapping="Wrap" MaxLines="1"
-                     IsVisible="{Binding HasJapaneseTitle}" />
-          <TextBlock Text="{Binding MetaLine}" Classes="caption" />
-        </StackPanel>
-
-        <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
-          <Button Classes="primary" Content="{Binding ReadButtonText}" Command="{Binding ReadCommand}" MinWidth="96"
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerReader.ViewModels" xmlns:controls="using:EhViewerReader.Controls"
+             x:Class="EhViewerReader.Views.OnlineGalleryPage" x:DataType="vm:OnlineGalleryViewModel">
+  <controls:GalleryDetailsView Details="{Binding Presentation}">
+    <controls:GalleryDetailsView.Actions>
+        <WrapPanel Orientation="Horizontal">
+          <Button Classes="accent" Content="{Binding ReadButtonText}" Command="{Binding ReadCommand}" MinWidth="96"
                   ToolTip.Tip="本地库已有该作品时直接打开本地副本" />
           <Button Content="在线阅读" Command="{Binding ReadOnlineCommand}" IsVisible="{Binding IsInLocalLibrary}" />
           <Button Content="阅读本地缺页副本" Command="{Binding ReadPartialLocalCommand}" IsVisible="{Binding HasPartialLocalCopy}" />
           <Button Content="{Binding DownloadButtonText}" IsEnabled="{Binding CanDownload}" Command="{Binding DownloadCommand}" />
-          <ComboBox Width="148" ItemsSource="{Binding QualityOptions}" SelectedItem="{Binding SelectedQuality}"
+          <ComboBox AutomationProperties.Name="图片质量" Width="148" ItemsSource="{Binding QualityOptions}" SelectedItem="{Binding SelectedQuality}"
                     ToolTip.Tip="{Binding QualityHint}">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="vm:FeedOption">
@@ -35,36 +17,16 @@
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <Button Content="{Binding FavoriteText}" Command="{Binding ToggleFavoriteCommand}" />
-          <ComboBox Width="118" ItemsSource="{Binding FavoriteSlots}" SelectedItem="{Binding SelectedSlot}">
-            <ComboBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:FeedOption">
-                <TextBlock Text="{Binding Label}" />
-              </DataTemplate>
-            </ComboBox.ItemTemplate>
-          </ComboBox>
+          <Button Content="{Binding FavoriteText}" Click="OnFavoriteClick" IsEnabled="{Binding CanChangeFavorite}"
+                  AutomationProperties.Name="收藏分类" ToolTip.Tip="打开收藏分类对话框；需先登录" />
+          <SelectableTextBlock Text="{Binding FavoriteSlotText}" Classes="caption" VerticalAlignment="Center"
+                     IsVisible="{Binding HasFavoriteSlotText}" />
+          <Button Content="重新检查收藏" Classes="ghost" Command="{Binding CheckFavoriteCommand}"
+                  IsVisible="{Binding FavoriteNeedsCheck}" IsEnabled="{Binding !FavoriteBusy}" />
           <Button Content="刷新" Classes="ghost" Command="{Binding RefreshCommand}" />
         </WrapPanel>
-      </Grid>
-    </Border>
-
-    <!-- Body -->
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-      <controls:AdaptiveGrid ColumnDefinitions="300,*" Margin="22,16,22,20" ColumnSpacing="20">
-        <StackPanel Grid.Column="0" Spacing="10">
-          <Border CornerRadius="10" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}" Height="420">
-            <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="Uniform" />
-          </Border>
-
-          <Border Classes="row">
-            <StackPanel Spacing="4">
-              <TextBlock Classes="caption" Text="{Binding GidText, StringFormat='GID {0}'}" />
-              <TextBlock Classes="caption" Text="{Binding Url}" TextWrapping="Wrap" FontSize="12" />
-              <TextBlock Classes="caption" Text="{Binding FavoriteCountText, StringFormat='收藏：{0}'}"
-                         IsVisible="{Binding HasFavoriteCount}" />
-            </StackPanel>
-          </Border>
-
+    </controls:GalleryDetailsView.Actions>
+    <controls:GalleryDetailsView.SideContent>
           <StackPanel Spacing="6">
             <Button Content="种子列表" Command="{Binding OpenTorrentsCommand}" IsEnabled="{Binding HasTorrents}"
                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
@@ -73,90 +35,46 @@
             <Button Content="在浏览器打开" Command="{Binding OpenInBrowserCommand}" Classes="ghost"
                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
           </StackPanel>
-          <TextBlock Classes="caption" TextWrapping="Wrap"
-                     Text="归档下载只对登录账号开放；种子由上传者提供，可用任意 BT 客户端。" />
-        </StackPanel>
-
-        <StackPanel Grid.Column="1" Spacing="14">
-          <Border Classes="tile" Padding="16,14">
-            <Grid ColumnDefinitions="Auto,12,*,24,Auto,12,*" RowDefinitions="Auto,8,Auto,8,Auto,8,Auto"
-                  ColumnSpacing="0">
-              <TextBlock Grid.Row="0" Grid.Column="0" Text="分类" Classes="caption" />
-              <TextBlock Grid.Row="0" Grid.Column="2" Text="{Binding CategoryText}" Foreground="{Binding CategoryBrush}" />
-              <TextBlock Grid.Row="0" Grid.Column="4" Text="评分" Classes="caption" />
-              <TextBlock Grid.Row="0" Grid.Column="6" Text="{Binding RatingText}" />
-
-              <TextBlock Grid.Row="2" Grid.Column="0" Text="页数" Classes="caption" />
-              <TextBlock Grid.Row="2" Grid.Column="2" Text="{Binding PagesText}" />
-              <TextBlock Grid.Row="2" Grid.Column="4" Text="大小" Classes="caption" />
-              <TextBlock Grid.Row="2" Grid.Column="6" Text="{Binding FileSizeText}" />
-
-              <TextBlock Grid.Row="4" Grid.Column="0" Text="发布" Classes="caption" />
-              <TextBlock Grid.Row="4" Grid.Column="2" Text="{Binding PostedText}" />
-              <TextBlock Grid.Row="4" Grid.Column="4" Text="语言" Classes="caption" />
-              <TextBlock Grid.Row="4" Grid.Column="6" Text="{Binding LanguageText}" />
-
-              <TextBlock Grid.Row="6" Grid.Column="0" Text="上传者" Classes="caption" />
-              <TextBlock Grid.Row="6" Grid.Column="2" Text="{Binding UploaderText}" TextTrimming="CharacterEllipsis" />
-              <TextBlock Grid.Row="6" Grid.Column="4" Text="可见性" Classes="caption" />
-              <TextBlock Grid.Row="6" Grid.Column="6" Text="{Binding VisibleText}" />
-            </Grid>
-          </Border>
-
+    </controls:GalleryDetailsView.SideContent>
+    <controls:GalleryDetailsView.ExtraContent>
+      <StackPanel Spacing="24">
           <!-- Rating -->
           <Border Classes="tile" Padding="16,14">
             <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
               <StackPanel Spacing="2">
-                <TextBlock Text="我的评分" Classes="h2" />
-                <TextBlock Text="{Binding RatingStatus}" Classes="caption"
+                <SelectableTextBlock Text="我的评分" Classes="h2" />
+                <SelectableTextBlock Text="{Binding RatingStatus}" Classes="caption"
                            IsVisible="{Binding HasRatingStatus}" />
               </StackPanel>
               <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" HorizontalAlignment="Center">
                 <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="1"
-                        ToolTip.Tip="1 星" />
+                        AutomationProperties.Name="评分 1 星" ToolTip.Tip="1 星" />
                 <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="2"
-                        ToolTip.Tip="2 星" />
+                        AutomationProperties.Name="评分 2 星" ToolTip.Tip="2 星" />
                 <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="3"
-                        ToolTip.Tip="3 星" />
+                        AutomationProperties.Name="评分 3 星" ToolTip.Tip="3 星" />
                 <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="4"
-                        ToolTip.Tip="4 星" />
+                        AutomationProperties.Name="评分 4 星" ToolTip.Tip="4 星" />
                 <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="5"
-                        ToolTip.Tip="5 星" />
+                        AutomationProperties.Name="评分 5 星" ToolTip.Tip="5 星" />
               </StackPanel>
               <StackPanel Grid.Column="2" Spacing="2" VerticalAlignment="Center">
-                <TextBlock Text="{Binding MyRatingText}" Classes="secondary" HorizontalAlignment="Right" />
-                <TextBlock Text="{Binding RatingCountText}" Classes="caption" HorizontalAlignment="Right" />
+                <SelectableTextBlock Text="{Binding MyRatingText}" Classes="secondary" HorizontalAlignment="Right" />
+                <SelectableTextBlock Text="{Binding RatingCountText}" Classes="caption" HorizontalAlignment="Right" />
               </StackPanel>
             </Grid>
           </Border>
-
-          <StackPanel Spacing="8">
-            <TextBlock Text="标签（点击搜索同一标签）" Classes="h2" />
-            <ItemsControl ItemsSource="{Binding Tags}">
-              <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                  <WrapPanel Orientation="Horizontal" />
-                </ItemsPanelTemplate>
-              </ItemsControl.ItemsPanel>
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:TagChip">
-                  <Button Classes="chip" Content="{Binding Display}" Command="{Binding Command}"
-                          Margin="0,0,8,8" ToolTip.Tip="{Binding Term}" />
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </StackPanel>
 
           <!-- Comments -->
           <Border Classes="tile">
             <StackPanel Spacing="10">
               <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
-                <TextBlock Text="{Binding CommentHeader}" Classes="h2" />
+                <SelectableTextBlock Text="{Binding CommentHeader}" Classes="h2" />
                 <Button Grid.Column="1" Content="加载全部" Classes="ghost" FontSize="12"
                         Command="{Binding ReloadCommentsCommand}" IsVisible="{Binding HasMoreComments}" />
               </Grid>
 
-              <TextBlock Text="还没有评论" Classes="caption" IsVisible="{Binding !HasComments}" />
+              <SelectableTextBlock Text="还没有评论" Classes="caption" IsVisible="{Binding !HasComments}" />
 
               <ItemsControl ItemsSource="{Binding Comments}">
                 <ItemsControl.ItemTemplate>
@@ -164,24 +82,24 @@
                     <Border Classes="row" Margin="0,0,0,8">
                       <StackPanel Spacing="5">
                         <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
-                          <TextBlock Text="{Binding User}" FontWeight="Bold" FontSize="12" />
+                          <SelectableTextBlock Text="{Binding User}" FontWeight="Bold" FontSize="12" />
                           <Border Grid.Column="1" Background="{DynamicResource AppAccentSoftBrush}" CornerRadius="4"
                                   Padding="5,1" IsVisible="{Binding IsUploader}">
-                            <TextBlock Text="{Binding UploaderBadge}" FontSize="12"
+                            <SelectableTextBlock Text="{Binding UploaderBadge}" FontSize="12"
                                        Foreground="{DynamicResource AppAccentBrush}" />
                           </Border>
-                          <TextBlock Grid.Column="3" Text="{Binding PostedText}" Classes="caption" />
+                          <SelectableTextBlock Grid.Column="3" Text="{Binding PostedText}" Classes="caption" />
                         </Grid>
-                        <TextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12" />
+                        <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12" />
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                          <TextBlock Text="{Binding ScoreText}" Classes="caption" VerticalAlignment="Center" />
+                          <SelectableTextBlock Text="{Binding ScoreText}" Classes="caption" VerticalAlignment="Center" />
                           <Button Content="+" Classes="ghost" FontSize="12" Padding="5,0" MinHeight="0"
-                                  Command="{Binding VoteUpCommand}" IsVisible="{Binding CanVote}" ToolTip.Tip="赞成" />
+                                  AutomationProperties.Name="赞成评论" Command="{Binding VoteUpCommand}" IsVisible="{Binding CanVote}" ToolTip.Tip="赞成" />
                           <Button Content="−" Classes="ghost" FontSize="12" Padding="5,0" MinHeight="0"
-                                  Command="{Binding VoteDownCommand}" IsVisible="{Binding CanVote}" ToolTip.Tip="反对" />
+                                  AutomationProperties.Name="反对评论" Command="{Binding VoteDownCommand}" IsVisible="{Binding CanVote}" ToolTip.Tip="反对" />
                           <Button Content="编辑" Classes="ghost" FontSize="12" Padding="5,0" MinHeight="0"
                                   Command="{Binding EditCommand}" IsVisible="{Binding CanEdit}" />
-                          <TextBlock Text="{Binding VoteDetail}" Classes="muted" FontSize="12"
+                          <SelectableTextBlock Text="{Binding VoteDetail}" Classes="muted" FontSize="12"
                                      VerticalAlignment="Center" IsVisible="{Binding HasVoteDetail}" />
                         </StackPanel>
                       </StackPanel>
@@ -194,28 +112,17 @@
                 <TextBox Text="{Binding CommentText}" AcceptsReturn="True" Height="72" TextWrapping="Wrap"
                          PlaceholderText="写下评论（需要登录）" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                  <Button Classes="primary" Content="{Binding CommentSubmitText}" Command="{Binding PostCommentCommand}"
+                  <Button Classes="accent" Content="{Binding CommentSubmitText}" Command="{Binding PostCommentCommand}"
                           IsEnabled="{Binding CanPostComment}" />
                   <Button Content="取消编辑" Classes="ghost" Command="{Binding CancelEditCommand}"
                           IsVisible="{Binding IsEditingComment}" />
-                  <TextBlock Text="{Binding CommentStatus}" Classes="caption" VerticalAlignment="Center"
+                  <SelectableTextBlock Text="{Binding CommentStatus}" Classes="caption" VerticalAlignment="Center"
                              TextWrapping="Wrap" />
                 </StackPanel>
               </StackPanel>
             </StackPanel>
           </Border>
-        </StackPanel>
-      </controls:AdaptiveGrid>
-    </ScrollViewer>
-
-    <!-- Status -->
-    <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
-            BorderThickness="0,1,0,0">
-      <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center" />
-        <TextBlock Grid.Column="1" Classes="muted" FontSize="12" VerticalAlignment="Center"
-                   Text="图片尺寸同时作用于在线阅读与下载；阅读页会缓存到本地" />
-      </Grid>
-    </Border>
-  </Grid>
+      </StackPanel>
+    </controls:GalleryDetailsView.ExtraContent>
+  </controls:GalleryDetailsView>
 </UserControl>

@@ -2,19 +2,19 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:EhViewerReader.ViewModels"
              xmlns:controls="using:EhViewerReader.Controls"
+             xmlns:ui="using:FluentAvalonia.UI.Controls"
              xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
              xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.LibraryPage"
              x:DataType="vm:MainViewModel">
   <Grid RowDefinitions="Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
     <!-- Toolbar -->
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" Margin="22,16,22,10">
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" Margin="22,16,22,10">
       <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">
-        <TextBlock Text="本地库" Classes="h1" />
-        <TextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding RootDisplay}" MaxWidth="200" TextTrimming="CharacterEllipsis" />
+        <SelectableTextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding RootDisplay}" MaxWidth="200" TextTrimming="CharacterEllipsis" />
       </StackPanel>
 
-      <Grid Grid.Row="1" Grid.ColumnSpan="3" VerticalAlignment="Center" Margin="0,8,0,0">
+      <Grid Grid.Row="1" Grid.ColumnSpan="2" VerticalAlignment="Center" Margin="0,8,0,0">
         <TextBox x:Name="SearchBox" Text="{Binding SearchText}" PlaceholderText="搜索标题、文件夹或 GID（Ctrl+F）" />
         <Button Content="清除" Classes="ghost" HorizontalAlignment="Right" VerticalAlignment="Center"
                 Margin="0,0,4,0" FontSize="12" Click="OnClearSearch"
@@ -29,8 +29,6 @@
           </DataTemplate>
         </ComboBox.ItemTemplate>
       </ComboBox>
-
-      <Button Grid.Column="2" Content="刷新" Command="{Binding RefreshCommand}" VerticalAlignment="Center" />
     </Grid>
 
     <!-- Filters -->
@@ -108,6 +106,20 @@
                         <Border Classes="language-badge" IsVisible="{Binding HasLanguages}">
                           <TextBlock Classes="language-badge-text" Text="{Binding LanguageText}" />
                         </Border>
+
+                        <!-- Download overlay: never intercepts clicks on the cover buttons. -->
+                        <Border Background="#A6000000" IsVisible="{Binding HasActiveDownload}"
+                                IsHitTestVisible="False"
+                                AutomationProperties.Name="{Binding DownloadAutomationText}">
+                          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="8">
+                            <ui:FAProgressRing Width="34" Height="34" IsActive="True"
+                                               IsIndeterminate="{Binding IsDownloadIndeterminate}"
+                                               Minimum="0" Maximum="1" Value="{Binding DownloadFraction}" />
+                            <TextBlock Text="{Binding DownloadStatusText}" FontSize="12" Foreground="#F2F4F8"
+                                       TextAlignment="Center" TextWrapping="Wrap" MaxWidth="152" />
+                          </StackPanel>
+                        </Border>
+
                         <ProgressBar VerticalAlignment="Bottom" Height="3" Minimum="0" Maximum="1"
                                      Value="{Binding ProgressFraction}" />
                       </Grid>
@@ -134,14 +146,12 @@
       <Border Classes="panel" MaxWidth="580" Margin="16" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center"
               IsVisible="{Binding ShowWelcome}">
         <StackPanel Spacing="12">
-          <TextBlock Text="选择 EhViewer 下载目录" FontSize="20" FontWeight="Bold" />
-          <TextBlock Classes="secondary" TextWrapping="Wrap"
-                     Text="支持 EhViewer / Ehviewer_CN_SXJ 的下载目录结构：gid-标题 文件夹、.ehviewer 元数据、.thumb 封面与 8 位数字页文件。也可以直接使用本应用「下载」页产出的目录。导入目录保持只读；本应用的下载内容会自动加入书库。" />
-          <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
-                     Text="设置、阅读进度与缓存保存在应用数据目录。" />
-          <TextBlock Classes="caption" FontSize="12" TextWrapping="Wrap" Text="{Binding StatusText}" />
+          <SelectableTextBlock Text="选择 EhViewer 下载目录" FontSize="20" FontWeight="Bold" />
+          <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                     Text="选择包含画廊文件夹的目录。" />
+          <SelectableTextBlock Classes="caption" FontSize="12" TextWrapping="Wrap" Text="{Binding StatusText}" />
           <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
-            <Button Classes="primary" Content="选择资料库" Click="OnChooseFolder" />
+            <Button Classes="accent" Content="选择资料库" Click="OnChooseFolder" />
           </StackPanel>
         </StackPanel>
       </Border>
@@ -150,19 +160,19 @@
       <Border Classes="panel" Width="380" Padding="24,18" HorizontalAlignment="Center" VerticalAlignment="Center"
               IsVisible="{Binding ShowInitialScan}">
         <StackPanel Spacing="10">
-          <TextBlock Text="正在扫描资料库…" FontWeight="Bold" />
+          <SelectableTextBlock Text="正在扫描资料库…" FontWeight="Bold" />
           <ProgressBar IsIndeterminate="True" Height="4" />
-          <TextBlock Text="{Binding StatusText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-          <TextBlock Classes="muted" FontSize="12"
-                     Text="首次扫描需要遍历全部页文件；可取消，已扫描部分不会写入资料库。" />
+          <SelectableTextBlock Text="{Binding StatusText}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+          <SelectableTextBlock Classes="muted" FontSize="12"
+                     Text="正在扫描文件，可随时取消。" />
         </StackPanel>
       </Border>
 
       <!-- No results -->
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6"
                   IsVisible="{Binding ShowNoResults}">
-        <TextBlock Text="没有可显示的画廊" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" />
-        <TextBlock Classes="secondary" Text="资料库为空，或调整搜索词/筛选条件" HorizontalAlignment="Center" />
+        <SelectableTextBlock Text="没有可显示的画廊" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" />
+        <SelectableTextBlock Classes="secondary" Text="资料库为空，或调整搜索词/筛选条件" HorizontalAlignment="Center" />
       </StackPanel>
     </Grid>
 
@@ -171,7 +181,7 @@
             BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,1,0,0" ClipToBounds="True">
       <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
         <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8" VerticalAlignment="Center" ClipToBounds="True">
-          <TextBlock HorizontalAlignment="Left" Text="{Binding StatusText}" Classes="secondary" FontSize="12"
+          <SelectableTextBlock HorizontalAlignment="Left" Text="{Binding StatusText}" Classes="secondary" FontSize="12"
                      TextTrimming="CharacterEllipsis" MaxWidth="440" />
           <ProgressBar Grid.Column="1" Width="80" Height="4" Minimum="0" Maximum="100" Value="{Binding ScanPercent}"
                        IsVisible="{Binding IsScanning}" VerticalAlignment="Center" />
@@ -180,8 +190,8 @@
 
         </Grid>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-          <TextBlock Classes="muted" FontSize="12" Text="{Binding FilteredCount, StringFormat='显示 {0:N0}'}" />
-          <TextBlock Classes="muted" FontSize="12" Text="{Binding TotalGalleryCount, StringFormat='共 {0:N0} 个作品'}" />
+          <SelectableTextBlock Classes="muted" FontSize="12" Text="{Binding FilteredCount, StringFormat='显示 {0:N0}'}" />
+          <SelectableTextBlock Classes="muted" FontSize="12" Text="{Binding TotalGalleryCount, StringFormat='共 {0:N0} 个作品'}" />
           <Button Content="设置" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="24" Click="OnOpenSettings" />
         </StackPanel>
       </Grid>

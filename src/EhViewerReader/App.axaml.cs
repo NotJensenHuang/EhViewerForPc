@@ -127,7 +127,11 @@ public partial class App : Application
                 if (options.UiSmoke)
                 {
                     shell.Navigate("library");
-                    int smokeCode = await UiSmokeService.RunAsync(window, shell.Library, options.OutputPath);
+                    int smokeCode = options.UiAudit
+                        ? await UiAuditService.RunAsync(window, shell, options.OutputPath)
+                        : options.NavigationRegression
+                        ? await NavigationRegressionService.RunAsync(window, shell, options.OutputPath)
+                        : await UiSmokeService.RunAsync(window, shell.Library, options.OutputPath);
                     desktop.Shutdown(smokeCode);
                 }
             };

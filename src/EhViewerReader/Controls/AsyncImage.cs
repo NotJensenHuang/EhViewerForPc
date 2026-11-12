@@ -1,9 +1,10 @@
-using System.Globalization;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using EhViewerReader.Core.Imaging;
+using EhViewerReader.Core.Online;
 using EhViewerReader.Services;
 
 namespace EhViewerReader.Controls;
@@ -31,7 +32,6 @@ public sealed class AsyncImage : Control
     private static readonly IBrush PlaceholderBrush = new SolidColorBrush(Color.Parse("#20242C"));
     private static readonly IBrush ErrorBrush = new SolidColorBrush(Color.Parse("#FF6B81"));
     private static readonly IBrush MutedTextBrush = new SolidColorBrush(Color.Parse("#8A93A6"));
-    private static readonly Typeface TextTypeface = new("Microsoft YaHei UI, Segoe UI");
 
     private Bitmap? _bitmap;
     private Bitmap? _retiredBitmap;
@@ -44,6 +44,12 @@ public sealed class AsyncImage : Control
     private Size _lastLoadSize;
     private string? _lastSourceKey;
     private DispatcherTimer? _detachTimer;
+    private ImageLoadStatus _status;
+    private long _lastStatusTick;
+    private string? _error;
+
+    /// <summary>Test hook: the last status the control received.</summary>
+    internal ImageLoadStatus StatusForTest => _status;
 
     public AsyncImage()
     {
@@ -189,6 +195,8 @@ public sealed class AsyncImage : Control
 
         _loading = true;
         _failed = false;
+        _status = default;
+        _error = null;
         InvalidateVisual();
         _ = LoadAsync(request, targetWidth, targetHeight, generation, token);
     }
@@ -197,7 +205,8 @@ public sealed class AsyncImage : Control
     {
         try
         {
-            DecodedImage? image = await request.LoadAsync(width, height, token).ConfigureAwait(false);
+            var progress = new UiImageProgress(status => OnStatus(generation, status));
+            DecodedImage? image = await request.LoadAsync(width, height, token, progress).ConfigureAwait(false);
             if (token.IsCancellationRequested || generation != _generation)
             {
                 image?.Dispose();
@@ -241,7 +250,7 @@ public sealed class AsyncImage : Control
         {
             // Expected while scrolling quickly.
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -249,10 +258,29 @@ public sealed class AsyncImage : Control
                 {
                     _loading = false;
                     _failed = true;
+                    _error = ex is EhException or IOException ? ex.Message : null;
+                    _status = ImageLoadStatus.Failed(_error ?? "无法加载");
                     InvalidateVisual();
                 }
             }, DispatcherPriority.Background);
         }
+    }
+
+    /// <summary>
+    /// Applies a status from the request. Non-terminal updates are throttled so a
+    /// fast stream cannot repaint the control on every 64 KB chunk; terminal
+    /// states always win.
+    /// </summary>
+    private void OnStatus(int generation, ImageLoadStatus status)
+    {
+        if (generation != _generation || !_loading) return;
+        bool terminal = status.Phase is ImageLoadPhase.Ready or ImageLoadPhase.Failed;
+        long now = Environment.TickCount64;
+        if (!terminal && now - _lastStatusTick < 140) return;
+        _lastStatusTick = now;
+        _status = status;
+        if (status.Phase == ImageLoadPhase.Failed) _error = status.Message;
+        InvalidateVisual();
     }
 
     /// <summary>
@@ -316,13 +344,9 @@ public sealed class AsyncImage : Control
 
         if (_bitmap is null)
         {
-            if (_failed)
+            if (_failed || _loading)
             {
-                DrawStatus(context, bounds, "无法加载", ErrorBrush);
-            }
-            else if (_loading)
-            {
-                DrawStatus(context, bounds, "载入中…", MutedTextBrush);
+                ImageStatusOverlay.Draw(context, bounds, _status, _failed, _error, MutedTextBrush, ErrorBrush);
             }
 
             return;
@@ -345,8 +369,7 @@ public sealed class AsyncImage : Control
         }
     }
 
-    private static Rect Uniform(Size image, Rect bounds)
-    {
+    private static Rect Uniform(Size image, Rect bounds)    {
         double scale = Math.Min(bounds.Width / image.Width, bounds.Height / image.Height);
         double width = image.Width * scale;
         double height = image.Height * scale;
@@ -359,17 +382,5 @@ public sealed class AsyncImage : Control
         double width = image.Width * scale;
         double height = image.Height * scale;
         return new Rect((bounds.Width - width) / 2, (bounds.Height - height) / 2, width, height);
-    }
-
-    private static void DrawStatus(DrawingContext context, Rect bounds, string text, IBrush brush)
-    {
-        var formatted = new FormattedText(
-            text,
-            CultureInfo.CurrentUICulture,
-            FlowDirection.LeftToRight,
-            TextTypeface,
-            12,
-            brush);
-        context.DrawText(formatted, new Point((bounds.Width - formatted.Width) / 2, (bounds.Height - formatted.Height) / 2));
     }
 }

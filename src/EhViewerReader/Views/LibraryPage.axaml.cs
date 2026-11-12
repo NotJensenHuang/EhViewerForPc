@@ -173,6 +173,7 @@ public partial class LibraryPage : UserControl
 
     private void OnCardKeyDown(object? sender, KeyEventArgs e)
     {
+        if (!ReferenceEquals(e.Source, sender)) return;
         if (_viewModel is null || e.Key is not (Key.Enter or Key.Space)) return;
         if (sender is Control { DataContext: GalleryItemViewModel item })
         {

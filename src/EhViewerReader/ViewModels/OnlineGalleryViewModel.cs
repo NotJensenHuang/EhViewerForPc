@@ -11,6 +11,9 @@ using EhViewerReader.Services;
 
 namespace EhViewerReader.ViewModels;
 
+/// <summary>Seed values for the favourite dialog (read-only snapshot).</summary>
+public sealed record FavoriteDraft(bool IsFavorite, int Slot, string Note);
+
 /// <summary>
 /// Online gallery detail: metadata, tags, favourite slot, rating, comments and
 /// the entry points that matter — read online, download, torrents and archive.
@@ -28,9 +31,11 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
     private IImageRequest? _coverRequest;
     private bool _isFavorite;
     private int _favoriteSlot = -1;
+    private string _favoriteNote = string.Empty;
+    private bool _favoriteBusy;
+    private bool _favoriteNeedsCheck;
     private FeedOption? _selectedSlot;
     private FeedOption _selectedQuality = new("orig", "原图");
-    private bool _suppressSlotChange;
 
     private int _myRating;
     private string _ratingStatus = string.Empty;
@@ -45,6 +50,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         _services = services;
         _host = host;
         _summary = summary;
+        Presentation = new(services, term => TagSearchRequested?.Invoke(this, term));
         _host.LocalStateChanged += OnWorkStateChanged;
         _services.Downloads.Changed += OnWorkStateChanged;
 
@@ -54,8 +60,9 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         Title = summary.Title;
         if (summary.ThumbUrl.Length > 0)
         {
-            _coverRequest = _services.OnlineImages.CreateThumbnailRequest(summary.ThumbUrl);
+            _coverRequest = _services.OnlineImages.CreateThumbnailRequest(summary.ThumbUrl, "work:" + summary.Gid);
         }
+        Presentation.Apply(new WorkRecord { WorkId = summary.Gid.ToString(), Gid = summary.Gid, Title = summary.Title, PageCount = summary.Pages }, _coverRequest, fallbackTags: summary.Tags);
     }
 
     public event EventHandler<OnlineReadRequest>? ReadRequested;
@@ -66,7 +73,11 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
 
     public event EventHandler<EhGalleryDetails>? ArchiveRequested;
 
-    public ObservableCollection<TagChip> Tags { get; } = [];
+    /// <summary>Raised after a favourite change so the favourites feed can reload.</summary>
+    public event EventHandler? FavoriteChanged;
+
+    public GalleryDetailsViewModel Presentation { get; }
+    public ObservableCollection<TagChip> Tags => Presentation.Tags;
     public ObservableCollection<FeedOption> FavoriteSlots { get; } = [];
     public ObservableCollection<CommentItemViewModel> Comments { get; } = [];
 
@@ -91,13 +102,13 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
     public bool IsLoading
     {
         get => _loading;
-        private set => SetProperty(ref _loading, value);
+        private set { SetProperty(ref _loading, value); Presentation.IsLoading = value; }
     }
 
     public string StatusText
     {
         get => _statusText;
-        private set => SetProperty(ref _statusText, value);
+        private set { SetProperty(ref _statusText, value); Presentation.StatusText = value; }
     }
 
     public bool IsSignedIn => _services.Online.IsSignedIn;
@@ -203,21 +214,56 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
             if (SetProperty(ref _isFavorite, value))
             {
                 OnPropertyChanged(nameof(FavoriteText));
+                OnPropertyChanged(nameof(FavoriteSlotText));
+                OnPropertyChanged(nameof(HasFavoriteSlotText));
             }
         }
     }
 
     public string FavoriteText => _isFavorite ? "已收藏" : "收藏";
 
+    /// <summary>Category shown next to the favourite button; never a guessed slot.</summary>
+    public string FavoriteSlotText => !_isFavorite
+        ? string.Empty
+        : _favoriteSlot >= 0
+            ? _services.Settings.Account.FavoriteSlotName(_favoriteSlot)
+            : "分类待核实";
+
+    public bool HasFavoriteSlotText => FavoriteSlotText.Length > 0;
+
+    /// <summary>True while a favourite change is in flight; blocks duplicate submits.</summary>
+    public bool FavoriteBusy
+    {
+        get => _favoriteBusy;
+        private set
+        {
+            if (SetProperty(ref _favoriteBusy, value)) OnPropertyChanged(nameof(CanChangeFavorite));
+        }
+    }
+
+    /// <summary>True after an unverifiable submit; offers an explicit re-check.</summary>
+    public bool FavoriteNeedsCheck
+    {
+        get => _favoriteNeedsCheck;
+        private set => SetProperty(ref _favoriteNeedsCheck, value);
+    }
+
+    public bool CanChangeFavorite => IsSignedIn && _details is not null && !FavoriteBusy;
+
+    /// <summary>Real categories only (0–9), used by the confirmation dialog.</summary>
+    public IReadOnlyList<FeedOption> FavoriteCategories => FavoriteSlots
+        .Where(o => o.Key.Length > 0 && char.IsDigit(o.Key[0]))
+        .ToArray();
+
+    /// <summary>Display-only selection. Changing it never submits anything.</summary>
     public FeedOption? SelectedSlot
     {
         get => _selectedSlot;
-        set
+        private set
         {
-            if (value is null || ReferenceEquals(value, _selectedSlot)) return;
+            if (ReferenceEquals(value, _selectedSlot)) return;
             _selectedSlot = value;
             OnPropertyChanged();
-            if (!_suppressSlotChange) _ = ApplySlotAsync(value);
         }
     }
 
@@ -303,20 +349,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
                 .GetDetailsAsync(_summary.Gid, _summary.Token, _lifetime.Token)
                 .ConfigureAwait(true);
 
-            _details = details;
-            OnWorkStateChanged(this, EventArgs.Empty);
-            Title = details.DisplayTitle.Length > 0 ? details.DisplayTitle : _summary.Title;
-            StatusText = string.Empty;
-            MyRating = 0;
-            RatingStatus = string.Empty;
-            CommentStatus = string.Empty;
-
-            if (details.ThumbUrl.Length > 0)
-            {
-                CoverRequest = _services.OnlineImages.CreateThumbnailRequest(details.ThumbUrl);
-            }
-
-            BuildTags(details);
+            ApplyDetails(details);
 
             int slot = -1;
             if (IsSignedIn && details.IsFavorited)
@@ -325,16 +358,20 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
                 if (slot < 0)
                 {
                     // #favoritelink proves the state but not the slot; the popup
-                    // names the selected one.
-                    slot = await _services.Online
-                        .GetFavoriteSlotAsync(_summary.Gid, _summary.Token, _lifetime.Token)
+                    // names the selected one and carries the stored note.
+                    EhFavoritePopup? popup = await _services.Online
+                        .GetFavoritePopupAsync(_summary.Gid, _summary.Token, _lifetime.Token)
                         .ConfigureAwait(true);
+                    if (popup is not null)
+                    {
+                        slot = popup.Slot;
+                        _favoriteNote = popup.Note;
+                    }
                 }
             }
 
             SetFavoriteState(details.IsFavorited, slot);
-            RebuildComments(details.Comments);
-            RaiseMetadata();
+
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
@@ -347,34 +384,32 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         }
     }
 
+    internal void ApplyDetails(EhGalleryDetails details)
+    {
+        _details = details;
+        OnWorkStateChanged(this, EventArgs.Empty);
+        Title = details.DisplayTitle.Length > 0 ? details.DisplayTitle : _summary.Title;
+        StatusText = string.Empty;
+        MyRating = 0;
+        RatingStatus = string.Empty;
+        CommentStatus = string.Empty;
+
+        if (details.ThumbUrl.Length > 0)
+        {
+            CoverRequest = _services.OnlineImages.CreateThumbnailRequest(details.ThumbUrl, "work:" + details.Gid);
+        }
+
+        BuildTags(details);
+        SetFavoriteState(details.IsFavorited, details.FavoriteSlot);
+        RebuildComments(details.Comments);
+        RaiseMetadata();
+    }
+
     private void BuildTags(EhGalleryDetails details)
     {
-        Tags.Clear();
-        bool translate = _services.Settings.Online.ShowTagTranslations;
-
-        foreach (EhTag tag in details.Tags)
-        {
-            string term = tag.SearchTerm;
-            string? translated = translate ? _services.TagTranslation.Translate(tag.Namespace, tag.Name) : null;
-            string display;
-            if (translated is null)
-            {
-                display = tag.Namespace.Length > 0 ? tag.Namespace + ":" + tag.Name : tag.Name;
-            }
-            else
-            {
-                string ns = _services.TagTranslation.Namespace(tag.Namespace);
-                display = ns.Length > 0 ? ns + ":" + translated : translated;
-            }
-
-            Tags.Add(new TagChip
-            {
-                Display = display,
-                Term = term,
-                NamespaceLabel = tag.Namespace,
-                Command = new RelayCommand(() => TagSearchRequested?.Invoke(this, term)),
-            });
-        }
+        var work = WorkRecord.FromDetails(details);
+        _services.Works.Upsert(work);
+        Presentation.Apply(work, CoverRequest);
     }
 
     private void RebuildComments(IEnumerable<EhComment> comments)
@@ -403,6 +438,8 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
 
         _favoriteSlot = slot;
         IsFavorite = favorited;
+        OnPropertyChanged(nameof(FavoriteSlotText));
+        OnPropertyChanged(nameof(HasFavoriteSlotText));
 
         // The "unknown slot" pseudo-option only exists after a rebuild.
         if (slot == -2 && FavoriteSlots.All(o => o.Key != "-2"))
@@ -411,24 +448,15 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
             return;
         }
 
-        _suppressSlotChange = true;
-        try
-        {
-            FeedOption? option = slot >= 0
-                ? FavoriteSlots.FirstOrDefault(o => o.Key == slot.ToString())
-                : slot == -2
-                    ? FavoriteSlots.FirstOrDefault(o => o.Key == "-2")
-                    : null;
+        FeedOption? option = slot >= 0
+            ? FavoriteSlots.FirstOrDefault(o => o.Key == slot.ToString())
+            : slot == -2
+                ? FavoriteSlots.FirstOrDefault(o => o.Key == "-2")
+                : null;
 
-            if (_selectedSlot is not null) _selectedSlot.IsActive = false;
-            _selectedSlot = option;
-            if (option is not null) option.IsActive = true;
-            OnPropertyChanged(nameof(SelectedSlot));
-        }
-        finally
-        {
-            _suppressSlotChange = false;
-        }
+        if (_selectedSlot is not null) _selectedSlot.IsActive = false;
+        SelectedSlot = option;
+        if (option is not null) option.IsActive = true;
     }
 
     /// <summary>Maps the slot name shown on the detail page to its index.</summary>
@@ -456,49 +484,151 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         return -1;
     }
 
-    private async Task ApplySlotAsync(FeedOption option)
+    /// <summary>
+    /// Reads the favourite popup before the dialog opens so the draft is seeded
+    /// with the real category and note. Never changes the server state.
+    /// </summary>
+    public async Task<FavoriteDraft?> PrepareFavoriteDraftAsync()
     {
-        if (_details is null) return;
-        if (!IsSignedIn)
-        {
-            _host.Notify("收藏需要先登录账号");
-            SetFavoriteState(IsFavorite, _favoriteSlot);
-            return;
-        }
-
-        // Pseudo-option: the gallery is favourited but the slot could not be read.
-        if (option.Key == "-2") return;
-
-        bool add = int.TryParse(option.Key, out int slot) && slot >= 0;
-        int target = add ? slot : _favoriteSlot;
-        if (target < 0 && !add) return;
-
+        if (_details is null || !IsSignedIn) return null;
+        FavoriteBusy = true;
         try
         {
-            StatusText = add ? "正在收藏…" : "正在取消收藏…";
-            bool ok = await _services.Online
-                .SetFavoriteAsync(_summary.Gid, _summary.Token, target, add, string.Empty, _lifetime.Token)
+            EhFavoritePopup? popup = await _services.Online
+                .GetFavoritePopupAsync(_summary.Gid, _summary.Token, _lifetime.Token)
                 .ConfigureAwait(true);
 
-            if (ok)
+            if (popup is not null)
             {
-                SetFavoriteState(add, add ? target : -1);
-                StatusText = add ? "已收藏到 " + _services.Settings.Account.FavoriteSlotName(target) : "已取消收藏";
-                _host.Notify(StatusText);
+                // Only fill in a slot the detail page could not prove; an already
+                // resolved slot wins, since the popup may preselect category 0
+                // for a gallery that is not favourited at all.
+                if (_favoriteSlot < 0 && IsFavorite) _favoriteSlot = popup.Slot;
+                _favoriteNote = popup.Note;
+            }
+
+            return new FavoriteDraft(IsFavorite, _favoriteSlot, _favoriteNote);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException)
+        {
+            StatusText = "读取收藏分类失败：" + ex.Message;
+            return new FavoriteDraft(IsFavorite, _favoriteSlot, _favoriteNote);
+        }
+        finally
+        {
+            FavoriteBusy = false;
+        }
+    }
+
+    /// <summary>
+    /// Applies one favourite change (add/move, or remove when
+    /// <paramref name="add"/> is false) and refreshes the UI from the verified
+    /// server state. Never called implicitly by a selection change.
+    /// </summary>
+    public async Task<FavoriteUpdateResult> ApplyFavoriteAsync(int slot, bool add)
+    {
+        if (_details is null) return FavoriteUpdateResult.Unknown("详情尚未载入");
+        if (!IsSignedIn) return new FavoriteUpdateResult(FavoriteUpdateOutcome.Rejected, "收藏需要先登录账号", false, -1, false);
+        if (FavoriteBusy) return FavoriteUpdateResult.Unknown("正在提交，请稍候");
+
+        FavoriteBusy = true;
+        StatusText = add ? "正在提交收藏…" : "正在取消收藏…";
+        try
+        {
+            FavoriteUpdateResult result = await _services.Online
+                .SetFavoriteAsync(_summary.Gid, _summary.Token, slot, add, _favoriteNote, _lifetime.Token)
+                .ConfigureAwait(true);
+
+            if (result.Verified)
+            {
+                SetFavoriteState(result.IsFavorited, result.Slot);
+                FavoriteNeedsCheck = false;
+            }
+            else if (result.Outcome == FavoriteUpdateOutcome.Succeeded)
+            {
+                // The POST looked applied but the read-back failed; show the
+                // intended state and say so instead of pretending it is verified.
+                SetFavoriteState(add, add ? slot : -1);
+                FavoriteNeedsCheck = true;
             }
             else
             {
-                StatusText = "收藏操作未成功";
-                SetFavoriteState(IsFavorite, _favoriteSlot);
+                FavoriteNeedsCheck = result.Outcome == FavoriteUpdateOutcome.Unknown;
             }
+
+            StatusText = result.Message;
+            _host.Notify(result.Message);
+            if (result.Outcome != FavoriteUpdateOutcome.Rejected) FavoriteChanged?.Invoke(this, EventArgs.Empty);
+            return result;
         }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            return FavoriteUpdateResult.Unknown("已取消");
+        }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
             StatusText = "收藏失败：" + ex.Message;
-            SetFavoriteState(IsFavorite, _favoriteSlot);
+            return FavoriteUpdateResult.Unknown("收藏失败：" + ex.Message);
+        }
+        finally
+        {
+            FavoriteBusy = false;
         }
     }
+
+    /// <summary>Read-only re-check after an unknown outcome ("重新检查").</summary>
+    public async Task<FavoriteUpdateResult> CheckFavoriteStateAsync()
+    {
+        if (_details is null) return FavoriteUpdateResult.Unknown("详情尚未载入");
+        if (FavoriteBusy) return FavoriteUpdateResult.Unknown("正在检查，请稍候");
+
+        FavoriteBusy = true;
+        StatusText = "正在检查收藏状态…";
+        try
+        {
+            (bool Favorited, int Slot)? state = await _services.Online
+                .TryReadFavoriteStateAsync(_summary.Gid, _summary.Token, _lifetime.Token)
+                .ConfigureAwait(true);
+
+            if (state is not { } current)
+            {
+                StatusText = "无法读取收藏状态，请稍后重试";
+                return FavoriteUpdateResult.Unknown(StatusText);
+            }
+
+            SetFavoriteState(current.Favorited, current.Slot);
+            FavoriteNeedsCheck = false;
+            string message = current.Favorited
+                ? current.Slot >= 0
+                    ? "已收藏到 " + _services.Settings.Account.FavoriteSlotName(current.Slot)
+                    : "已收藏（分类待核实）"
+                : "未收藏";
+            StatusText = message;
+            _host.Notify(message);
+            FavoriteChanged?.Invoke(this, EventArgs.Empty);
+            return new FavoriteUpdateResult(FavoriteUpdateOutcome.Succeeded, message, current.Favorited, current.Slot, true);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            return FavoriteUpdateResult.Unknown("已取消");
+        }
+        catch (Exception ex) when (ex is EhException or HttpRequestException)
+        {
+            StatusText = "无法读取收藏状态：" + ex.Message;
+            return FavoriteUpdateResult.Unknown(StatusText);
+        }
+        finally
+        {
+            FavoriteBusy = false;
+        }
+    }
+
+    [RelayCommand]
+    private async Task CheckFavoriteAsync() => await CheckFavoriteStateAsync();
 
     /// <summary>Rebuilds the slot list so settings renames appear immediately.</summary>
     public void RebuildFavoriteSlots()
@@ -519,17 +649,8 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
                 ? FavoriteSlots.FirstOrDefault(o => o.Key == "-2")
                 : FavoriteSlots[0];
 
-        _suppressSlotChange = true;
-        try
-        {
-            _selectedSlot = option;
-            if (option is not null) option.IsActive = true;
-            OnPropertyChanged(nameof(SelectedSlot));
-        }
-        finally
-        {
-            _suppressSlotChange = false;
-        }
+        SelectedSlot = option;
+        if (option is not null) option.IsActive = true;
     }
 
     [RelayCommand]
@@ -605,15 +726,6 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
     {
         if (chip is null) return;
         TagSearchRequested?.Invoke(this, chip.Term);
-    }
-
-    [RelayCommand]
-    private void ToggleFavorite()
-    {
-        FeedOption target = IsFavorite
-            ? FavoriteSlots[0]
-            : FavoriteSlots[Math.Clamp(_favoriteSlot < 0 ? 1 : _favoriteSlot + 1, 1, 10)];
-        _ = ApplySlotAsync(target);
     }
 
     [RelayCommand]

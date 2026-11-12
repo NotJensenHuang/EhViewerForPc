@@ -292,7 +292,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         _hintTimer.Start();
     }
 
-    private void UpdateCurrentRequests()
+    private void UpdateCurrentRequests(bool refresh = false)
     {
         if (_pages.Count == 0)
         {
@@ -302,8 +302,33 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         }
 
         int index = Math.Clamp(_index, 0, _pages.Count - 1);
-        SingleRequest = _source.CreateRequest(index);
-        PreloadRequest = _index + 1 < _pages.Count ? _source.CreateRequest(_index + 1) : null;
+        SingleRequest = _source.CreateRequest(index, refresh);
+        PreloadRequest = _index + 1 < _pages.Count ? _source.CreateRequest(_index + 1, refresh) : null;
+    }
+
+    /// <summary>Re-creates the current page request so a failed load retries.</summary>
+    [RelayCommand]
+    private void RetryCurrent()
+    {
+        if (_pages.Count == 0) return;
+        int index = Math.Clamp(_index, 0, _pages.Count - 1);
+        if (IsSingleMode)
+        {
+            UpdateCurrentRequests(refresh: true);
+            OnPropertyChanged(nameof(SingleRequest));
+            OnPropertyChanged(nameof(PreloadRequest));
+            return;
+        }
+
+        if (index < _continuousItems.Count)
+        {
+            _continuousItems[index].UpdateRequest(_source.CreateRequest(index, refresh: true));
+        }
+
+        if (index < _horizontalItems.Count)
+        {
+            _horizontalItems[index].UpdateRequest(_source.CreateRequest(index, refresh: true));
+        }
     }
 
     private void UpdateLabels()
@@ -374,8 +399,8 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             page.Number,
             _index,
             _pageOffset,
-            _pages.Count,
-            completed: _index == _pages.Count - 1);
+            _source.ExpectedPageCount,
+            completed: _source.IsComplete && _index == _pages.Count - 1);
         _services.TrySaveProgress(out _);
     }
 
@@ -555,8 +580,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
         try
         {
+            int focus = _pages.Count == 0 ? 1 : _pages[Math.Clamp(_index, 0, _pages.Count - 1)].Number;
             IReadOnlyList<PageDimension> dimensions = await _source
-                .LoadDimensionsAsync(progress, _lifetime.Token)
+                .LoadDimensionsAsync(focus, progress, _lifetime.Token)
                 .ConfigureAwait(true);
 
             var vertical = new List<ContinuousPageItem>(_pages.Count);
@@ -849,5 +875,6 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         SaveProgress();
         _lifetime.Cancel();
         _lifetime.Dispose();
+        if (_source is IDisposable disposable) disposable.Dispose();
     }
 }

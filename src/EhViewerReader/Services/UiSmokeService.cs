@@ -9,6 +9,7 @@ using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Online;
 using EhViewerReader.ViewModels;
 using EhViewerReader.Views;
+using FluentAvalonia.UI.Controls;
 using SkiaSharp;
 
 namespace EhViewerReader.Services;
@@ -178,13 +179,14 @@ public static class UiSmokeService
             SaveScreenshot(reader, Path.Combine(output, "reader-single.png"));
             report["readerPage"] = readerViewModel.PageLabel;
             report["readerLayout"] = DescribeLayout(reader);
-            succeeded &= window.GetVisualDescendants().OfType<Button>().Count(b => b.IsEffectivelyVisible && b.Content?.ToString() == "← 返回") == 1 && window.OwnedWindows.Count == 0;
-            report["readerNavigation"] = new { backButtons = window.GetVisualDescendants().OfType<Button>().Count(b => b.IsEffectivelyVisible && b.Content?.ToString() == "← 返回"),
+            var navigation = window.FindControl<FANavigationView>("Navigation")!;
+            succeeded &= navigation.IsBackButtonVisible && navigation.IsBackEnabled && window.OwnedWindows.Count == 0;
+            report["readerNavigation"] = new { backEnabled = navigation.IsBackEnabled,
                 independentWindows = window.OwnedWindows.Count };
             reader.FindControl<Button>("ImmersiveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             await Task.Delay(300);
-            succeeded &= reader.IsImmersive && !window.FindControl<Border>("NavigationRail")!.IsVisible;
-            report["immersive"] = new { reader.IsImmersive, railHidden = !window.FindControl<Border>("NavigationRail")!.IsVisible };
+            succeeded &= reader.IsImmersive && !navigation.IsPaneVisible;
+            report["immersive"] = new { reader.IsImmersive, railHidden = !navigation.IsPaneVisible };
             SaveScreenshot(window, Path.Combine(output, "reader-immersive.png"));
             reader.FindControl<Button>("ImmersiveButton")!.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
 
@@ -787,7 +789,7 @@ public static class UiSmokeService
 
                 var localCard = new OnlineGalleryItemViewModel(
                     localSummary,
-                    AppServices.Current.OnlineImages.CreateThumbnailRequest(localSummary.ThumbUrl),
+                    AppServices.Current.OnlineImages.CreateThumbnailRequest(localSummary.ThumbUrl, "work:" + localSummary.Gid),
                     shell);
                 report["localHitCard"] = new Dictionary<string, object?>
                 {
@@ -874,12 +876,12 @@ public static class UiSmokeService
         if (window.Shell is { } updatedShell)
         {
             updatedShell.Navigate("library");
-            var sidebar = window.FindControl<Button>("SidebarToggle")!;
-            sidebar.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            var navigation = window.FindControl<FANavigationView>("Navigation")!;
+            navigation.IsPaneOpen = false;
             await Task.Delay(300);
             SaveScreenshot(window, Path.Combine(output, "sidebar-collapsed.png"));
-            report["sidebarToggle"] = window.Classes.Contains("compact");
-            sidebar.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            report["sidebarToggle"] = !navigation.IsPaneOpen;
+            navigation.IsPaneOpen = true;
             updatedShell.Navigate("settings");
             if (window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault()?.FindControl<TabControl>("SettingsTabs") is { } currentTabs) currentTabs.SelectedIndex = 0;
             AppServices.Current.Online.Session.Import(new Dictionary<string, string> { ["ipb_member_id"] = "42", ["ipb_pass_hash"] = "synthetic-ui-only" });
@@ -958,7 +960,7 @@ public static class UiSmokeService
         }
     }
 
-    private static void SaveScreenshot(ContentControl window, string path)
+    internal static void SaveScreenshot(ContentControl window, string path)
     {
         Visual visual = window.Content as Visual ?? window;
         Size size = visual.Bounds.Size;
@@ -1065,7 +1067,7 @@ public static class UiSmokeService
         }
     }
 
-    private static void CreateBackupLibrary(string root)
+    internal static void CreateBackupLibrary(string root)
     {
         for (int i = 0; i < 3; i++)
         {
@@ -1093,7 +1095,7 @@ public static class UiSmokeService
         }
     }
 
-    private static void CreateSyntheticLibrary(string root)
+    internal static void CreateSyntheticLibrary(string root)
     {
         var random = new Random(20261108);
         string[] tags = ["[Chinese]", "[English]", "[Japanese]", "[Chinese] [Digital]"];

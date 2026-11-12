@@ -463,43 +463,13 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
         IsBusy = true;
         StatusText = _searchMode ? "搜索中…" : "载入中…";
-        int filtered = 0;
 
         try
         {
             EhGalleryListPage page = await _services.Online.GetListAsync(url, _urlIndex, token).ConfigureAwait(true);
             token.ThrowIfCancellationRequested();
 
-            if (reset)
-            {
-                Items.Clear();
-                _visitedUrls.Clear();
-                _visitedUrls.Add(url);
-                _urlIndex = 0;
-            }
-            else if (_visitedUrls.Count <= _urlIndex)
-            {
-                _visitedUrls.Add(url);
-            }
-
-            foreach (EhGallerySummary summary in page.Items)
-            {
-                if (!EhFilter.IsVisible(summary, _services.Settings.Online.Filters))
-                {
-                    filtered++;
-                    continue;
-                }
-
-                Items.Add(CreateItem(summary));
-            }
-
-            _nextUrl = page.NextUrl;
-            HasMore = page.HasMore;
-            PageLabel = $"第 {_urlIndex + 1} 页";
-            StatusText = page.Items.Count == 0
-                ? page.StatusMessage ?? EmptyText
-                : page.StatusMessage ?? StatusTextFor(page.Items.Count, filtered);
-            OnPropertyChanged(nameof(ShowEmpty));
+            ApplyPage(page, url, reset);
         }
         catch (OperationCanceledException)
         {
@@ -516,6 +486,42 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
             if (generation == _requestGeneration) IsBusy = false;
             OnPropertyChanged(nameof(CanGoBack));
         }
+    }
+
+    internal void ApplyPage(EhGalleryListPage page, string url, bool reset)
+    {
+        int filtered = 0;
+        if (reset)
+        {
+            Items.Clear();
+            _visitedUrls.Clear();
+            _visitedUrls.Add(url);
+            _urlIndex = 0;
+        }
+        else if (_visitedUrls.Count <= _urlIndex)
+        {
+            _visitedUrls.Add(url);
+        }
+
+        foreach (EhGallerySummary summary in page.Items)
+        {
+            if (!EhFilter.IsVisible(summary, _services.Settings.Online.Filters))
+            {
+                filtered++;
+                continue;
+            }
+
+            Items.Add(CreateItem(summary));
+        }
+
+        _nextUrl = page.NextUrl;
+        HasMore = page.HasMore;
+        PageLabel = $"第 {_urlIndex + 1} 页";
+        StatusText = page.Items.Count == 0
+            ? page.StatusMessage ?? EmptyText
+            : page.StatusMessage ?? StatusTextFor(page.Items.Count, filtered);
+        OnPropertyChanged(nameof(ShowEmpty));
+        IsBusy = false;
     }
 
     /// <summary>Reloads the first page; used after sign-in or a site switch.</summary>
@@ -634,6 +640,14 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         foreach (OnlineGalleryItemViewModel item in Items) item.RefreshLocalState();
     }
 
+    /// <summary>Reloads the favourites feed after a detail window changed the
+    /// membership/category, so the list and the detail agree.</summary>
+    public void RefreshAfterFavoriteChange()
+    {
+        if (!IsFavorites || IsBusy) return;
+        _ = LoadAsync(reset: true);
+    }
+
     private void SetSearchMode(bool value)
     {
         if (_searchMode == value) return;
@@ -662,7 +676,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     {
         var item = new OnlineGalleryItemViewModel(
             summary,
-            _services.OnlineImages.CreateThumbnailRequest(summary.ThumbUrl),
+            _services.OnlineImages.CreateThumbnailRequest(summary.ThumbUrl, "work:" + summary.Gid),
             _host);
         item.ApplyProgress(_services.Progress.Get(summary.Gid.ToString()));
         return item;

@@ -2,7 +2,7 @@ namespace EhViewerReader.Core.Models;
 
 public sealed class LibraryCache
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public string? RootPath { get; set; }
@@ -23,6 +23,7 @@ public sealed class GalleryCacheEntry
     public long PageMtimeMaxTicks { get; set; }
     public long? DirectoryGid { get; set; }
     public long? HeaderGid { get; set; }
+    public string Token { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public int PageCount { get; set; }
     public int MaxPageNumber { get; set; }

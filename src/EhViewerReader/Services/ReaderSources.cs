@@ -7,8 +7,8 @@ namespace EhViewerReader.Services;
 
 /// <summary>
 /// Everything the reader needs from a gallery, regardless of where the pages
-/// live. Two implementations exist: a local folder (EhViewer download) and an
-/// online gallery served by <see cref="EhClient"/>.
+/// live. Three implementations exist: a local folder (EhViewer download), an
+/// online gallery served by <see cref="EhClient"/>, and a download task folder.
 /// </summary>
 public interface IReaderSource
 {
@@ -24,10 +24,15 @@ public interface IReaderSource
     string MissingSummary { get; }
 
     IReadOnlyList<GalleryPage> Pages { get; }
+    int ExpectedPageCount => Pages.Count;
+    bool IsComplete => true;
 
-    IImageRequest CreateRequest(int index);
+    /// <summary><paramref name="refresh"/> drops any cached request for the page
+    /// so the next load re-fetches it (manual retry).</summary>
+    IImageRequest CreateRequest(int index, bool refresh = false);
 
     Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(
+        int focusPageNumber,
         IProgress<PageDimensionProgress>? progress,
         CancellationToken cancellationToken);
 }
@@ -41,7 +46,8 @@ public sealed class LocalReaderSource : IReaderSource
     {
         _services = services;
         _gallery = gallery;
-        services.Works.Upsert(new WorkRecord { WorkId = gallery.WorkId, Gid = gallery.Gid, Title = gallery.DisplayTitle, PageCount = gallery.PageCount });
+        services.Works.Upsert(new WorkRecord { WorkId = gallery.WorkId, Gid = gallery.Gid, Token = gallery.Token,
+            Title = gallery.DisplayTitle, PageCount = gallery.ExpectedPages ?? gallery.PageCount });
 
         IReadOnlyList<GalleryPage> pages = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError).Pages;
         Pages = pages;
@@ -58,47 +64,52 @@ public sealed class LocalReaderSource : IReaderSource
     public string SourceLabel => _gallery.SourceName;
     public string DebugInfo => $"{_gallery.StableId} · {Pages.Count} 页 · {_gallery.ExtensionSummary}";
     public IReadOnlyList<GalleryPage> Pages { get; }
+    public int ExpectedPageCount => Math.Max(_gallery.ExpectedPages ?? 0, Pages.Count);
+    public bool IsComplete => !_gallery.IsIncomplete;
 
     public string MissingSummary => _gallery.MissingRanges.Count == 0
         ? string.Empty
         : "缺页 " + string.Join(", ", _gallery.MissingRanges.Select(r => r.ToString()));
 
-    public IImageRequest CreateRequest(int index) =>
+    public IImageRequest CreateRequest(int index, bool refresh = false) =>
         new PageImageRequest(Pages[index].Candidates, _services.Images);
 
     public Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(
+        int focusPageNumber,
         IProgress<PageDimensionProgress>? progress,
         CancellationToken cancellationToken) =>
         _services.Dimensions.LoadAsync(_gallery, Pages, progress, cancellationToken);
 }
 
 /// <summary>
-/// Online gallery source. Page references come from the preview pages; an image
-/// is fetched (and cached on disk) the first time it is displayed. Continuous
-/// mode starts with placeholder slots and refines them as pages decode.
+/// Online gallery source. Page slots exist as soon as the gallery is known (the
+/// detail page carries the page count), while each viewer page reference is
+/// resolved on demand, so opening a 500-page gallery costs one navigation and
+/// the first visible page — not a full preview-pagination scan.
 /// </summary>
-public sealed class OnlineReaderSource : IReaderSource
+public sealed class OnlineReaderSource : IReaderSource, IDisposable
 {
     private const int PlaceholderWidth = 1200;
     private const int PlaceholderHeight = 1700;
 
     private readonly AppServices _services;
     private readonly EhGalleryDetails _details;
-    private readonly IReadOnlyList<EhPageRef> _refs;
+    private readonly OnlinePageIndex _index;
+    private readonly IImageRequest?[] _requests;
     private readonly bool _originalImages;
     private readonly int _resampledWidth;
     private string _actualQuality = string.Empty;
-    public Action? QualityChanged { get; set; }
 
     public OnlineReaderSource(
         AppServices services,
         EhGalleryDetails details,
-        IReadOnlyList<EhPageRef> refs,
+        OnlinePageIndex index,
         ImageQuality quality = ImageQuality.Resampled)
     {
         _services = services;
         _details = details;
-        _refs = refs;
+        _index = index;
+
         services.Works.Upsert(new WorkRecord { WorkId = details.Gid.ToString(CultureInfo.InvariantCulture), Gid = details.Gid, Token = details.Token,
             Title = details.DisplayTitle, ThumbnailUrl = details.ThumbUrl, PageCount = details.Pages, Quality = quality });
         // Originals need an account; anonymous browsing always gets the
@@ -106,8 +117,9 @@ public sealed class OnlineReaderSource : IReaderSource
         _resampledWidth = services.Settings.ResampledWidth;
         _originalImages = quality == ImageQuality.Original && services.Online.IsSignedIn;
 
-        var pages = new List<GalleryPage>(refs.Count);
-        for (int i = 0; i < refs.Count; i++)
+        int count = Math.Max(1, index.PageCount);
+        var pages = new List<GalleryPage>(count);
+        for (int i = 0; i < count; i++)
         {
             pages.Add(new GalleryPage
             {
@@ -119,50 +131,81 @@ public sealed class OnlineReaderSource : IReaderSource
         }
 
         Pages = pages;
+        _requests = new IImageRequest?[count];
     }
 
     /// <summary>Raised on a background thread when a page's real size became known.</summary>
     public Action<int, int, int>? DimensionResolved { get; set; }
 
+    public Action? QualityChanged { get; set; }
+
     public string StableId => "online-" + _details.Gid.ToString(CultureInfo.InvariantCulture);
     public string ProgressKey => _details.Gid.ToString(CultureInfo.InvariantCulture);
     public string Title => _details.DisplayTitle;
     public string SourceLabel => "在线 · " + EhUrls.SiteName(_services.Online.Site) + " · " + (_actualQuality.Length > 0 ? _actualQuality : _originalImages ? "原图" : $"压缩图 {_resampledWidth}px");
-    public string DebugInfo => $"online:{_details.Gid} · {Pages.Count} 页";
+    public string DebugInfo => $"online:{_details.Gid} · {Pages.Count} 页 · 按需解析";
     public string MissingSummary => string.Empty;
     public IReadOnlyList<GalleryPage> Pages { get; }
+    public int ExpectedPageCount => Math.Max(Pages.Count, _index.PageCount);
 
-    public IImageRequest CreateRequest(int index)
+    /// <summary>The detail page's page count is authoritative; a page whose image
+    /// fails to load is reported per page and does not move the reading position.</summary>
+    public bool IsComplete => true;
+
+    public IImageRequest CreateRequest(int index, bool refresh = false)
     {
-        if (index < 0 || index >= _refs.Count) return NullImageRequest.Instance;
-        int captured = index;
-        return _services.OnlineImages.CreatePageRequest(
-            _refs[index],
-            original: _originalImages,
-            (width, height) => DimensionResolved?.Invoke(captured, width, height),
-            original => { _actualQuality = original ? "原图" : _originalImages ? "压缩图（原图不可用）" : $"压缩图 {_resampledWidth}px"; QualityChanged?.Invoke(); }, _resampledWidth);
+        if (index < 0 || index >= Pages.Count) return NullImageRequest.Instance;
+        if (refresh) _requests[index] = null;
+        return _requests[index] ??= _services.OnlineImages.CreateLazyPageRequest(
+            _details.Gid,
+            $"page:{_details.Gid}-{index + 1}:{_originalImages}:{_resampledWidth}",
+            index + 1,
+            token => _index.GetPageAsync(index + 1, token),
+            _originalImages,
+            (width, height) => DimensionResolved?.Invoke(index, width, height),
+            original =>
+            {
+                _actualQuality = original ? "原图" : _originalImages ? "压缩图（原图不可用）" : $"压缩图 {_resampledWidth}px";
+                QualityChanged?.Invoke();
+            },
+            _resampledWidth);
     }
 
-    public Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(
+    public async Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(
+        int focusPageNumber,
         IProgress<PageDimensionProgress>? progress,
         CancellationToken cancellationToken)
     {
+        // Only the preview page that holds the reading position is primed; the
+        // rest stay estimates until each image decodes and refines its slot.
+        try
+        {
+            await _index.GetPageAsync(Math.Max(1, focusPageNumber), cancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(3), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (TimeoutException) { }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+
         var dimensions = new List<PageDimension>(Pages.Count);
         for (int i = 0; i < Pages.Count; i++)
         {
-            EhPageRef reference = _refs[i];
-            bool known = reference.Width > 0 && reference.Height > 0;
+            bool known = _index.TryGetKnown(i + 1, out EhPageRef? reference) &&
+                         reference is { Width: > 0, Height: > 0 };
             dimensions.Add(new PageDimension
             {
                 Page = Pages[i],
-                Width = known ? reference.Width : PlaceholderWidth,
-                Height = known ? reference.Height : PlaceholderHeight,
+                Width = known ? reference!.Width : PlaceholderWidth,
+                Height = known ? reference!.Height : PlaceholderHeight,
                 Known = known,
                 Error = known ? null : "online-estimate",
             });
         }
 
         progress?.Report(new PageDimensionProgress { Processed = Pages.Count, Total = Pages.Count });
-        return Task.FromResult<IReadOnlyList<PageDimension>>(dimensions);
+        return dimensions;
     }
+
+    /// <summary>Drops the page-reference index when the reader session ends.</summary>
+    public void Dispose() => _index.Dispose();
 }

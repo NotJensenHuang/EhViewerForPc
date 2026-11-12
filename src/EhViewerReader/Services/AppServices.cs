@@ -35,7 +35,7 @@ public sealed class AppServices : IDisposable
         Dimensions = new PageDimensionService(paths, Decoder, Log);
         Online = new EhClient(settings, message => Log.Warn(message));
         PageImages = new GalleryImageStore(paths, Online);
-        OnlineImages = new OnlineImageService(paths, Online, Images, Log, PageImages);
+        OnlineImages = new OnlineImageService(paths, Online, Images, Log, settings, PageImages);
         TagTranslation = new TagTranslationService(paths, settings, Online, Log);
         Downloads = new DownloadManager(paths, settings, Online, message => Log.Warn(message), PageImages);
         PageImages.FindLocalPage = Downloads.FindPage;
@@ -94,6 +94,10 @@ public sealed class AppServices : IDisposable
         Images.MaxMegapixels = settings.MaxDecodeMegapixels;
         Images.MaxDimension = settings.MaxDecodeDimension;
         Images.CoverDecodeWidth = settings.CoverDecodeWidth;
+
+        // A smaller disk budget must take effect immediately, not after the next
+        // batch of writes.
+        OnlineImages.ApplyPolicy();
     }
 
     public bool TrySaveSettings(out string? error)

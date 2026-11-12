@@ -1,5 +1,6 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:fa="using:FluentAvalonia.Styling"
              x:Class="EhViewerReader.App"
              RequestedThemeVariant="Dark">
   <Application.Resources>
@@ -17,7 +18,7 @@
     </ResourceDictionary>
   </Application.Resources>
   <Application.Styles>
-    <FluentTheme />
+    <fa:FluentAvaloniaTheme PreferSystemTheme="False" PreferUserAccentColor="False" CustomAccentColor="#FF6B81" />
     <StyleInclude Source="avares://EhViewerReader/Styles/Theme.axaml" />
   </Application.Styles>
 </Application>

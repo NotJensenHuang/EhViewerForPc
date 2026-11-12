@@ -15,12 +15,12 @@ public partial class WebLoginPage : DocumentPage
         InitializeComponent();
     }
 
-    public WebLoginPage(WebLoginViewModel viewModel) : this()
+    public WebLoginPage(WebLoginViewModel viewModel, bool startOnLoad = true) : this()
     {
         _viewModel = viewModel;
         DataContext = viewModel;
         viewModel.Completed += OnCompleted;
-        Loaded += (_, _) => viewModel.Start();
+        if (startOnLoad) Loaded += (_, _) => viewModel.Start();
 
     }
 

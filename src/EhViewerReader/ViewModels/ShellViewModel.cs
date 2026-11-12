@@ -5,32 +5,36 @@ using CommunityToolkit.Mvvm.Input;
 using EhViewerReader.Core.Models;
 using EhViewerReader.Core.Online;
 using EhViewerReader.Services;
+using FluentAvalonia.UI.Controls;
 
 namespace EhViewerReader.ViewModels;
 
 /// <summary>One entry of the navigation rail.</summary>
 public sealed partial class NavItem : ObservableObject
 {
-    private bool _isActive;
+    [ObservableProperty] private bool _isEnabled = true;
 
-    public NavItem(string key, string label, string glyph, object page)
+    public NavItem(string key, string label, object page)
     {
         Key = key;
         Label = label;
-        Glyph = glyph;
         Page = page;
+        IconSource = new FASymbolIconSource { Symbol = key switch
+        {
+            "online" => FASymbol.Globe,
+            "favorites" => FASymbol.Favorite,
+            "history" => FASymbol.Clock,
+            "downloads" => FASymbol.Download,
+            "library" => FASymbol.Library,
+            _ => FASymbol.Settings,
+        } };
     }
 
     public string Key { get; }
     public string Label { get; }
-    public string Glyph { get; }
+    public FAIconSource IconSource { get; }
     public object Page { get; }
 
-    public bool IsActive
-    {
-        get => _isActive;
-        set => SetProperty(ref _isActive, value);
-    }
 }
 
 /// <summary>
@@ -70,13 +74,18 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
         NavItems =
         [
-            new NavItem("online", "在线浏览", "◎", Online),
-            new NavItem("favorites", "收藏", "♥", Favorites),
-            new NavItem("history", "阅读历史", "◷", History),
-            new NavItem("downloads", "下载", "↓", Downloads),
-            new NavItem("library", "本地库", "▤", Library),
-            new NavItem("settings", "设置", "⚙", Settings),
+            new NavItem("online", "在线浏览", Online),
+            new NavItem("favorites", "收藏", Favorites),
+            new NavItem("history", "阅读历史", History),
+            new NavItem("downloads", "下载", Downloads),
+            new NavItem("library", "本地库", Library),
+            new NavItem("settings", "设置", Settings),
         ];
+        Settings.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SettingsViewModel.IsSaving))
+                foreach (var item in NavItems) item.IsEnabled = !Settings.IsSaving;
+        };
 
         _toastTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3.2) };
         _toastTimer.Tick += (_, _) =>
@@ -89,6 +98,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     }
 
     public event EventHandler<EhGallerySummary>? GalleryRequested;
+    public event EventHandler<NavItem>? NavigationRequested;
     public event EventHandler? LocalStateChanged;
 
     /// <summary>Raised when a local copy should be opened in the reader.</summary>
@@ -114,13 +124,13 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         set
         {
             if (value is null || ReferenceEquals(value, _selectedNav)) return;
-            if (_selectedNav is not null) _selectedNav.IsActive = false;
+            if (Settings.IsSaving) return;
             _selectedNav = value;
-            value.IsActive = true;
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentPage));
             OnPropertyChanged(nameof(CurrentPageTitle));
             ActivatePage(value.Page);
+            NavigationRequested?.Invoke(this, value);
         }
     }
 
@@ -158,7 +168,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public async Task InitializeAsync()
     {
-        _ = Task.Run(() => _services.OnlineImages.PruneCache(TimeSpan.FromDays(14)));
+        _services.OnlineImages.StartBackgroundMaintenance();
         _ = Task.Run(BrowserLoginSession.CleanupStaleProfiles);
         _services.EnsureDownloadSource();
         _services.Downloads.AutoStart();
@@ -190,13 +200,15 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     [RelayCommand]
     private void SelectNav(NavItem? item)
     {
-        if (item is not null) SelectedNav = item;
+        if (item is null) return;
+        if (ReferenceEquals(item, SelectedNav)) NavigationRequested?.Invoke(this, item);
+        else SelectedNav = item;
     }
 
     public void Navigate(string key)
     {
         NavItem? item = NavItems.FirstOrDefault(n => n.Key == key);
-        if (item is not null) SelectedNav = item;
+        SelectNav(item);
     }
 
     [RelayCommand]
@@ -293,6 +305,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public async Task DownloadDetailsAsync(EhGalleryDetails details, ImageQuality quality)
     {
+        _services.Works.Upsert(WorkRecord.FromDetails(details));
         bool existed = _services.Downloads.IsQueued(details.Gid);
         var queued = await Task.Run(() => _services.Downloads.Enqueue(details, quality: quality));
         _services.EnsureDownloadSource();

@@ -10,6 +10,7 @@ public partial class GalleryDetailsPage : DocumentPage
 {
     private readonly GalleryItemViewModel _item;
     private readonly AppServices _services;
+    private readonly LocalGalleryDetailsViewModel _viewModel;
 
     public GalleryDetailsPage(GalleryItemViewModel item, AppServices services)
     {
@@ -17,11 +18,16 @@ public partial class GalleryDetailsPage : DocumentPage
         Avalonia.Media.TextOptions.SetTextRenderingMode(this, Avalonia.Media.TextRenderingMode.Antialias);
         _item = item;
         _services = services;
-        DataContext = item;
+        _viewModel = new(item, services);
+        _viewModel.TagSearchRequested += (_, term) => TagSearchRequested?.Invoke(this, term);
+        DataContext = _viewModel;
+        Loaded += async (_, _) => await _viewModel.InitializeAsync();
         Title = "画廊详情 · " + item.Title;
     }
 
     public event EventHandler<GalleryItemViewModel>? ReadRequested;
+    public event EventHandler<string>? TagSearchRequested;
+    public override void Dispose() => _viewModel.Dispose();
     private void OnRead(object? sender, RoutedEventArgs e)
     {
         if (_item.PageCount > 0) ReadRequested?.Invoke(this, _item);

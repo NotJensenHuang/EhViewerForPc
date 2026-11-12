@@ -11,10 +11,10 @@ public partial class ArchivePage : DocumentPage
         InitializeComponent();
     }
 
-    public ArchivePage(ArchiveViewModel viewModel) : this()
+    public ArchivePage(ArchiveViewModel viewModel, bool initializeOnLoad = true) : this()
     {
         DataContext = viewModel;
-        Loaded += async (_, _) => await viewModel.InitializeAsync();
+        if (initializeOnLoad) Loaded += async (_, _) => await viewModel.InitializeAsync();
     }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();

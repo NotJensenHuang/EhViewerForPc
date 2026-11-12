@@ -7,9 +7,13 @@ namespace EhViewerReader.Views;
 
 public partial class SettingsPage : UserControl
 {
+    private SettingsViewModel? _hooked;
+
     public SettingsPage()
     {
         InitializeComponent();
+        Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
     }
 
     /// <summary>Raised after "保存全部设置"; the shell reloads sources and theme.</summary>
@@ -17,6 +21,38 @@ public partial class SettingsPage : UserControl
 
     /// <summary>Raised by the "网页登录" button; the shell owns the login window.</summary>
     public event EventHandler? WebLoginRequested;
+
+    /// <summary>Raised by "开始扫描"; the shell runs the full library rescan.</summary>
+    public event EventHandler? RescanRequested;
+
+    /// <summary>Raised by "取消"; the shell cancels the running scan.</summary>
+    public event EventHandler? CancelRescanRequested;
+
+    private void OnLoaded(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not SettingsViewModel viewModel || ReferenceEquals(viewModel, _hooked)) return;
+        Unhook();
+        _hooked = viewModel;
+        viewModel.RescanRequested += OnViewModelRescan;
+        viewModel.CancelRescanRequested += OnViewModelCancelRescan;
+        viewModel.RefreshCacheUsage();
+    }
+
+    private void OnUnloaded(object? sender, RoutedEventArgs e) => Unhook();
+
+    private void Unhook()
+    {
+        if (_hooked is null) return;
+        _hooked.RescanRequested -= OnViewModelRescan;
+        _hooked.CancelRescanRequested -= OnViewModelCancelRescan;
+        _hooked = null;
+    }
+
+    private void OnViewModelRescan(object? sender, EventArgs e) =>
+        RescanRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnViewModelCancelRescan(object? sender, EventArgs e) =>
+        CancelRescanRequested?.Invoke(this, EventArgs.Empty);
 
     private void OnWebLogin(object? sender, RoutedEventArgs e) =>
         WebLoginRequested?.Invoke(this, EventArgs.Empty);

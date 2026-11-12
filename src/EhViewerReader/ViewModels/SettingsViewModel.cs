@@ -190,6 +190,11 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
     private int _imageQualityIndex;
     private int _resampledWidthIndex;
+    private double _onlineCacheMegabytes;
+    private double _onlineCacheDays;
+    private string _cacheUsageText = "正在统计…";
+    private string _rescanStatus = "全量扫描会重新读取所有数据源；单目录下载仍会自动增量更新";
+    private bool _isRescanning;
     private bool _isSaving;
     private CancellationTokenSource? _moveCancellation;
     public string? LastMovedRoot { get; private set; }
@@ -205,7 +210,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         ? "仅保存新位置：后续下载使用新目录；已有文件和已有任务保留原位置。注册本地库后，新目录与旧目录都可继续阅读。"
         : "暂停任务、搬迁已有文件并同步下载记录与本地库，再继续下载。目标目录须为空；取消时保留用户原有的目标文件夹。";
     public bool CanCancelMove => IsSaving && _moveCancellation is not null;
-    public bool IsSaving { get => _isSaving; private set { if (SetProperty(ref _isSaving, value)) { OnPropertyChanged(nameof(SaveLabel)); OnPropertyChanged(nameof(CanCancelMove)); } } }
+    public bool IsSaving { get => _isSaving; private set { if (SetProperty(ref _isSaving, value)) { OnPropertyChanged(nameof(SaveLabel)); OnPropertyChanged(nameof(CanCancelMove)); OnPropertyChanged(nameof(CanStartRescan)); } } }
     public string SaveLabel => IsSaving ? "正在保存…" : !IsDownloadRootChanged ? "保存设置" : DownloadDirectoryMode == 1 ? "保存并搬迁下载" : "保存设置（不搬迁）";
     public bool IsDownloadRootChanged => !PathIdentity.Comparer.Equals(DownloadRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), _services.Downloads.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
     [RelayCommand] private void CancelMove() => _moveCancellation?.Cancel();
@@ -749,6 +754,95 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _filterStatus, value);
     }
 
+    // ------------------------------------------------------- online cache
+
+    /// <summary>On-disk budget for online pages and thumbnails (MiB).</summary>
+    public double OnlineCacheMegabytes
+    {
+        get => _onlineCacheMegabytes;
+        set
+        {
+            if (SetProperty(ref _onlineCacheMegabytes, Math.Round(value))) OnPropertyChanged(nameof(OnlineCacheLabel));
+        }
+    }
+
+    public string OnlineCacheLabel => $"{_onlineCacheMegabytes:F0} MB";
+
+    /// <summary>Days an unused cache entry is kept; 0 means no time limit.</summary>
+    public double OnlineCacheDays
+    {
+        get => _onlineCacheDays;
+        set
+        {
+            if (SetProperty(ref _onlineCacheDays, Math.Round(value))) OnPropertyChanged(nameof(OnlineCacheDaysLabel));
+        }
+    }
+
+    public string OnlineCacheDaysLabel => _onlineCacheDays <= 0 ? "不限制" : $"{_onlineCacheDays:F0} 天";
+
+    public string CacheUsageText
+    {
+        get => _cacheUsageText;
+        private set => SetProperty(ref _cacheUsageText, value);
+    }
+
+    /// <summary>Recomputes the directory size; called when the page is shown.</summary>
+    public void RefreshCacheUsage()
+    {
+        CacheUsage usage = _services.OnlineImages.GetCacheUsage();
+        CacheUsageText = "当前占用：" + usage.Text;
+    }
+
+    // ----------------------------------------------------- library rescan
+
+    public string RescanStatus
+    {
+        get => _rescanStatus;
+        private set => SetProperty(ref _rescanStatus, value);
+    }
+
+    public bool IsRescanning
+    {
+        get => _isRescanning;
+        private set
+        {
+            if (SetProperty(ref _isRescanning, value)) OnPropertyChanged(nameof(CanStartRescan));
+        }
+    }
+
+    public bool CanStartRescan => !_isRescanning && !IsSaving;
+
+    /// <summary>Raised by the settings page; the shell runs the actual scan.</summary>
+    public event EventHandler? RescanRequested;
+
+    /// <summary>Raised by "取消扫描"; the shell cancels the running library scan.</summary>
+    public event EventHandler? CancelRescanRequested;
+
+    public void BeginRescan()
+    {
+        if (!CanStartRescan) return;
+        IsRescanning = true;
+        RescanStatus = "正在重新扫描全部来源…";
+        RescanRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    [RelayCommand]
+    private void StartRescan() => BeginRescan();
+
+    public void CompleteRescan(string? error)
+    {
+        IsRescanning = false;
+        RescanStatus = error is null ? "扫描完成" : "扫描未完成：" + error;
+    }
+
+    [RelayCommand]
+    private void CancelRescan()
+    {
+        if (!IsRescanning) return;
+        CancelRescanRequested?.Invoke(this, EventArgs.Empty);
+        RescanStatus = "正在取消扫描…";
+    }
+
     public string FavoriteSlotStatus
     {
         get => _favoriteSlotStatus;
@@ -768,6 +862,8 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         _tagTranslationUrl = online.TagTranslationUrl;
         _imageQualityIndex = _services.Settings.ImageQuality == ImageQuality.Original ? 0 : 1;
         _resampledWidthIndex = Array.IndexOf(new[] { 780, 980, 1280, 1600, 2400 }, _services.Settings.ResampledWidth);
+        _onlineCacheMegabytes = _services.Settings.OnlineCacheMegabytes;
+        _onlineCacheDays = _services.Settings.OnlineCacheDays;
         // Do not parse the 2.5 MB database just to render the settings page; the
         // stored summary is enough until the user opens a gallery or updates it.
         _tagTranslationStatus = online.TagTranslationCount > 0
@@ -1062,6 +1158,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     {
         int removed = _services.OnlineImages.ClearCache();
         DownloadStatus = $"已清除 {removed} 个在线缓存文件";
+        RefreshCacheUsage();
     }
 
     public void ClearCaches()
@@ -1159,6 +1256,15 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
         ApplyEdited("Online.ShowTagTranslations", _showTagTranslations, value => settings.Online.ShowTagTranslations = value);
         ApplyEdited("Online.TagTranslationUrl", TagTranslationUrl.Trim(), value => settings.Online.TagTranslationUrl = value);
+
+        int cacheMegabytes = (int)Math.Clamp(_onlineCacheMegabytes, 128, 32768);
+        int cacheDays = (int)Math.Clamp(_onlineCacheDays, 1, 90);
+        bool cachePolicyChanged =
+            !_editBaseline.TryGetValue("Online.CacheMegabytes", out object? baseMb) || !Equals(baseMb, cacheMegabytes) ||
+            !_editBaseline.TryGetValue("Online.CacheDays", out object? baseDays) || !Equals(baseDays, cacheDays);
+        ApplyEdited("Online.CacheMegabytes", cacheMegabytes, value => settings.OnlineCacheMegabytes = value);
+        ApplyEdited("Online.CacheDays", cacheDays, value => settings.OnlineCacheDays = value);
+        if (cachePolicyChanged) _services.OnlineImages.ApplyPolicy();
         ApplyEdited("ResampledWidth", SelectedResampledWidth, value => settings.ResampledWidth = value);
         ApplyEdited("ImageQuality", ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled, value => settings.ImageQuality = value);
         settings.Online.Filters = Filters.Select(f => f.Rule.Clone()).ToList();
@@ -1215,6 +1321,8 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         _editBaseline["Account.Site"] = (EhSite)_siteIndex;
         _editBaseline["Online.ShowTagTranslations"] = _showTagTranslations;
         _editBaseline["Online.TagTranslationUrl"] = TagTranslationUrl.Trim();
+        _editBaseline["Online.CacheMegabytes"] = (int)Math.Clamp(_onlineCacheMegabytes, 128, 32768);
+        _editBaseline["Online.CacheDays"] = (int)Math.Clamp(_onlineCacheDays, 1, 90);
         _editBaseline["ResampledWidth"] = SelectedResampledWidth;
         _editBaseline["ImageQuality"] = ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled;
     }
@@ -1228,6 +1336,10 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
             value => ResampledWidthIndex = Array.IndexOf(new[] { 780, 980, 1280, 1600, 2400 }, value));
         RefreshUnedited("Download.RootPath", DownloadRoot, _services.Downloads.RootPath, value => DownloadRoot = value);
         RefreshUnedited("Download.AddAsSource", DownloadAddAsSource, _services.Settings.Download.AddAsSource, value => DownloadAddAsSource = value);
+        RefreshUnedited("Online.CacheMegabytes", (int)_onlineCacheMegabytes, _services.Settings.OnlineCacheMegabytes,
+            value => OnlineCacheMegabytes = value);
+        RefreshUnedited("Online.CacheDays", (int)_onlineCacheDays, _services.Settings.OnlineCacheDays,
+            value => OnlineCacheDays = value);
         foreach (var source in _services.Settings.Sources)
         {
             if (_removedSources.Contains(source.Id)) continue;
@@ -1237,6 +1349,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         }
         foreach (var stale in Sources.Where(r => _enabledSnapshot.ContainsKey(r.Source.Id) && !_services.Settings.Sources.Any(s => s.Id == r.Source.Id)).ToArray()) Sources.Remove(stale);
         OnPropertyChanged(nameof(HasSources));
+        RefreshCacheUsage();
     }
 
     private void RefreshUnedited<T>(string key, T draft, T effective, Action<T> update)

@@ -1,0 +1,249 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-11T16:37:57+00:00",
+  "title": "Design System: EhViewer Reader",
+  "extensions": {
+    "breakpoints": [
+      {
+        "name": "navigation-expanded",
+        "value": "920px"
+      },
+      {
+        "name": "navigation-compact",
+        "value": "640px"
+      },
+      {
+        "name": "detail-stack",
+        "value": "740px",
+        "purpose": "可用宽度小于 740 DIP：封面由 280 × 374 缩为 120 × 160 DIP，辅助内容在其旁以 16 DIP 间距并排，标签排在元数据之前。"
+      }
+    ],
+    "motion": [
+      {
+        "name": "navigation-enter",
+        "value": "FAEntranceNavigationTransitionInfo",
+        "purpose": "正常页面导航；UI 烟测抑制过渡。"
+      }
+    ],
+    "colorMeta": {
+      "rose-accent-dark": {
+        "role": "primary",
+        "displayName": "粉色强调色（深色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.1805 13.83)",
+          "oklch(26.43% 0.1805 13.83)",
+          "oklch(37.86% 0.1805 13.83)",
+          "oklch(49.29% 0.1805 13.83)",
+          "oklch(60.71% 0.1805 13.83)",
+          "oklch(72.14% 0.1805 13.83)",
+          "oklch(83.57% 0.1805 13.83)",
+          "oklch(95.0% 0.1805 13.83)"
+        ]
+      },
+      "rose-accent-light": {
+        "role": "primary",
+        "displayName": "粉色强调色（浅色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.1638 13.00)",
+          "oklch(26.43% 0.1638 13.00)",
+          "oklch(37.86% 0.1638 13.00)",
+          "oklch(49.29% 0.1638 13.00)",
+          "oklch(60.71% 0.1638 13.00)",
+          "oklch(72.14% 0.1638 13.00)",
+          "oklch(83.57% 0.1638 13.00)",
+          "oklch(95.0% 0.1638 13.00)"
+        ]
+      },
+      "rose-soft-dark": {
+        "role": "neutral",
+        "displayName": "柔和粉色表面（深色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.0273 355.15)",
+          "oklch(26.43% 0.0273 355.15)",
+          "oklch(37.86% 0.0273 355.15)",
+          "oklch(49.29% 0.0273 355.15)",
+          "oklch(60.71% 0.0273 355.15)",
+          "oklch(72.14% 0.0273 355.15)",
+          "oklch(83.57% 0.0273 355.15)",
+          "oklch(95.0% 0.0273 355.15)"
+        ]
+      },
+      "rose-soft-light": {
+        "role": "neutral",
+        "displayName": "柔和粉色表面（浅色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.0177 4.52)",
+          "oklch(26.43% 0.0177 4.52)",
+          "oklch(37.86% 0.0177 4.52)",
+          "oklch(49.29% 0.0177 4.52)",
+          "oklch(60.71% 0.0177 4.52)",
+          "oklch(72.14% 0.0177 4.52)",
+          "oklch(83.57% 0.0177 4.52)",
+          "oklch(95.0% 0.0177 4.52)"
+        ]
+      },
+      "success-dark": {
+        "role": "status",
+        "displayName": "成功状态（深色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.1296 163.48)",
+          "oklch(26.43% 0.1296 163.48)",
+          "oklch(37.86% 0.1296 163.48)",
+          "oklch(49.29% 0.1296 163.48)",
+          "oklch(60.71% 0.1296 163.48)",
+          "oklch(72.14% 0.1296 163.48)",
+          "oklch(83.57% 0.1296 163.48)",
+          "oklch(95.0% 0.1296 163.48)"
+        ]
+      },
+      "success-light": {
+        "role": "status",
+        "displayName": "成功状态（浅色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.1222 165.23)",
+          "oklch(26.43% 0.1222 165.23)",
+          "oklch(37.86% 0.1222 165.23)",
+          "oklch(49.29% 0.1222 165.23)",
+          "oklch(60.71% 0.1222 165.23)",
+          "oklch(72.14% 0.1222 165.23)",
+          "oklch(83.57% 0.1222 165.23)",
+          "oklch(95.0% 0.1222 165.23)"
+        ]
+      },
+      "warning-dark": {
+        "role": "status",
+        "displayName": "警告状态（深色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.1178 81.94)",
+          "oklch(26.43% 0.1178 81.94)",
+          "oklch(37.86% 0.1178 81.94)",
+          "oklch(49.29% 0.1178 81.94)",
+          "oklch(60.71% 0.1178 81.94)",
+          "oklch(72.14% 0.1178 81.94)",
+          "oklch(83.57% 0.1178 81.94)",
+          "oklch(95.0% 0.1178 81.94)"
+        ]
+      },
+      "warning-light": {
+        "role": "status",
+        "displayName": "警告状态（浅色）",
+        "tonalRamp": [
+          "oklch(15.0% 0.1291 72.88)",
+          "oklch(26.43% 0.1291 72.88)",
+          "oklch(37.86% 0.1291 72.88)",
+          "oklch(49.29% 0.1291 72.88)",
+          "oklch(60.71% 0.1291 72.88)",
+          "oklch(72.14% 0.1291 72.88)",
+          "oklch(83.57% 0.1291 72.88)",
+          "oklch(95.0% 0.1291 72.88)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "详情标题",
+        "purpose": "共享详情的作品标题。"
+      },
+      "page-title": {
+        "displayName": "页面标题",
+        "purpose": "外壳当前页面标题。"
+      },
+      "section": {
+        "displayName": "区块标题",
+        "purpose": "标签与功能分组。"
+      },
+      "body": {
+        "displayName": "正文",
+        "purpose": "默认界面文本。"
+      },
+      "caption": {
+        "displayName": "次级信息",
+        "purpose": "状态与辅助数据。"
+      }
+    }
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "description": "原生 accent 按钮；此浏览器示意只表达强调角色，运行时状态由 FluentAvaloniaTheme 提供。",
+      "html": "<button class=\"ds-primary\">开始阅读</button>",
+      "css": ".ds-primary{font-family:Segoe UI Variable,Segoe UI,Microsoft YaHei UI,sans-serif;font-size:13px;background:#FF6B81;color:#14090C;border:1px solid transparent;border-radius:4px;padding:6px 12px}.ds-primary:hover{filter:brightness(.96)}.ds-primary:focus-visible{outline:2px solid Highlight;outline-offset:2px}.ds-primary:active{filter:brightness(.9)}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "description": "标准按钮沿用控件主题；预览使用浏览器系统控件颜色。",
+      "html": "<button class=\"ds-secondary\">打开文件夹</button>",
+      "css": ".ds-secondary{font-family:Segoe UI Variable,Segoe UI,Microsoft YaHei UI,sans-serif;font-size:13px;color:ButtonText;background:ButtonFace;border:1px solid GrayText;border-radius:4px;padding:6px 12px}.ds-secondary:hover{filter:brightness(.96)}.ds-secondary:focus-visible{outline:2px solid Highlight;outline-offset:2px}.ds-secondary:active{filter:brightness(.9)}"
+    },
+    {
+      "name": "Search field",
+      "kind": "input",
+      "description": "标准搜索输入保留原生焦点状态；预览使用浏览器系统控件颜色。",
+      "html": "<input class=\"ds-search\" placeholder=\"搜索关键词、标签或 GID\" aria-label=\"搜索\" />",
+      "css": ".ds-search{font-family:Segoe UI Variable,Segoe UI,Microsoft YaHei UI,sans-serif;font-size:13px;color:FieldText;background:Field;border:1px solid GrayText;border-radius:4px;padding:6px 10px;width:280px}.ds-search:hover{border-color:ButtonText}.ds-search:focus-visible{outline:2px solid Highlight;outline-offset:1px}"
+    },
+    {
+      "name": "Tag chip",
+      "kind": "chip",
+      "refersTo": "tag-chip",
+      "description": "标签执行在线搜索，并保留原始标签提示。",
+      "html": "<button class=\"ds-tag\" title=\"language:chinese\">语言:中文</button>",
+      "css": ".ds-tag{font-family:Segoe UI Variable,Segoe UI,Microsoft YaHei UI,sans-serif;font-size:13px;background:transparent;color:CanvasText;border:1px solid GrayText;border-radius:4px;min-height:28px;padding:5px 12px}.ds-tag:hover{background:ButtonFace}.ds-tag:focus-visible{outline:2px solid Highlight;outline-offset:2px}.ds-tag:active{background:#FDEDF0;color:#B63650}"
+    },
+    {
+      "name": "Gallery card",
+      "kind": "card",
+      "refersTo": "gallery-card",
+      "description": "应用卡片使用小圆角、细边框与封面主导布局；实际颜色来自 Fluent 主题。",
+      "html": "<button class=\"ds-card\"><span class=\"ds-cover\"></span><span>画廊标题</span><small>76 页</small></button>",
+      "css": ".ds-card{font-family:Segoe UI Variable,Segoe UI,Microsoft YaHei UI,sans-serif;font-size:13px;display:grid;gap:8px;width:180px;padding:10px;text-align:left;background:Canvas;color:CanvasText;border:1px solid GrayText;border-radius:8px}.ds-cover{height:180px;background:ButtonFace;border-radius:8px}.ds-card small{font-size:12px}.ds-card:hover{border-color:#FF6B81}.ds-card:focus-visible{outline:2px solid Highlight;outline-offset:2px}"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "description": "六项原生导航由 FANavigationView 实现；此示意表达选择层级，非控件模板副本。",
+      "html": "<nav class=\"ds-nav\"><button aria-current=\"page\">在线浏览</button><button>收藏</button><button>阅读历史</button><button>下载</button><button>本地库</button><button>设置</button></nav>",
+      "css": ".ds-nav{font-family:Segoe UI Variable,Segoe UI,Microsoft YaHei UI,sans-serif;font-size:13px;display:grid;gap:4px;width:224px;background:Canvas;color:CanvasText}.ds-nav button{font:inherit;color:inherit;text-align:left;border:0;border-radius:4px;background:transparent;padding:10px 12px}.ds-nav button[aria-current]{background:ButtonFace;border-inline-start:3px solid #FF6B81}.ds-nav button:hover{background:ButtonFace}.ds-nav button:focus-visible{outline:2px solid Highlight;outline-offset:-2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "原生 Fluent 阅读客户端",
+    "overview": "界面服务于浏览、搜索、下载与阅读。标准控件由 FluentAvaloniaTheme 提供统一的外观和交互；应用增加必要的内容布局、封面与标签，不重绘整套原生控件。",
+    "keyCharacteristics": [
+      "原生 Fluent 导航和标准控件。",
+      "深色、浅色主题共享语义资源。",
+      "标题、内容和操作优先；说明保持简短。",
+      "在线与本地详情使用同一呈现组件。"
+    ],
+    "rules": [
+      {
+        "name": "The Theme Ownership Rule",
+        "body": "按钮、输入、选择、悬停、禁用和焦点状态交由 FluentAvaloniaTheme；新增样式优先引用语义资源。",
+        "section": "colors"
+      },
+      {
+        "name": "The Narrow Detail Rule",
+        "body": "窄详情缩小封面并将辅助内容并排，标签优先于元数据，避免封面将标签挤出首屏。",
+        "section": "layout"
+      },
+      {
+        "name": "The Shared Detail Rule",
+        "body": "在线和本地详情共用内容结构，来源差异通过数据和操作表达。",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do 使用 Fluent 原生控件、图标和主题资源。",
+      "Do 保留可见的错误、缺页与进度状态。",
+      "Do 用简短动词命名操作，让内容占据主要空间。",
+      "Do 同时验证浅色、深色与窄窗口。"
+    ],
+    "donts": [
+      "Don't 为导航新增平行的手写页面历史。",
+      "Don't 为在线与本地详情复制一套标题、封面和标签布局。",
+      "Don't 在主流程重复产品说明或底层实现细节。"
+    ]
+  }
+}

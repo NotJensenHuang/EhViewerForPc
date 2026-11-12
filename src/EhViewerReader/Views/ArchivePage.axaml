@@ -12,9 +12,9 @@
             BorderThickness="0,0,0,1">
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
         <StackPanel Spacing="3">
-          <TextBlock Text="归档下载" Classes="h1" />
-          <TextBlock Text="{Binding GalleryTitle}" Classes="secondary" MaxLines="1" TextTrimming="CharacterEllipsis" />
-          <TextBlock Text="{Binding Subtitle}" Classes="caption" />
+          <SelectableTextBlock Text="归档下载" Classes="h1" />
+          <SelectableTextBlock Text="{Binding GalleryTitle}" Classes="secondary" MaxLines="1" TextTrimming="CharacterEllipsis" />
+          <SelectableTextBlock Text="{Binding Subtitle}" Classes="caption" />
         </StackPanel>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
           <Button Content="刷新" Command="{Binding RefreshCommand}" />
@@ -27,9 +27,9 @@
       <StackPanel Margin="22,14,22,18" Spacing="12">
         <Border Classes="tile">
           <StackPanel Spacing="10">
-            <TextBlock Text="归档格式" Classes="h2" />
-            <TextBlock Classes="caption" TextWrapping="Wrap"
-                       Text="归档由站点生成：Original 为原始文件（体积大、质量最高），Resampled 为站点重采样后的图片。生成后链接会保存到下载目录的 archives 子目录。" />
+            <SelectableTextBlock Text="归档格式" Classes="h2" />
+            <SelectableTextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="选择原图或压缩图归档。" />
 
             <ComboBox ItemsSource="{Binding Options}" SelectedItem="{Binding SelectedOption}" MinWidth="320"
                       HorizontalAlignment="Left" IsVisible="{Binding HasOptions}">
@@ -40,23 +40,23 @@
               </ComboBox.ItemTemplate>
             </ComboBox>
 
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Classes="primary" Content="请求归档" Command="{Binding RequestCommand}"
+            <WrapPanel Orientation="Horizontal">
+              <Button Classes="accent" Content="请求归档" Command="{Binding RequestCommand}"
                       IsEnabled="{Binding CanRequest}" />
               <Button Content="下载链接 / 打开页面" Command="{Binding OpenInBrowserCommand}" />
               <Button Content="打开下载目录" Classes="ghost" Command="{Binding OpenDownloadFolderCommand}" />
               <Button Content="H@H 设置" Classes="ghost" Command="{Binding OpenHathPageCommand}"
                       IsVisible="{Binding NeedsHath}" />
-            </StackPanel>
+            </WrapPanel>
 
             <StackPanel Spacing="4" IsVisible="{Binding ShowProgress}">
               <ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" Height="6" />
-              <TextBlock Classes="caption" Text="{Binding ProgressText}" />
+              <SelectableTextBlock Classes="caption" Text="{Binding ProgressText}" />
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasDownloadUrl}">
               <Button Content="再次下载归档" Command="{Binding SaveAgainCommand}" />
-              <TextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding DownloadUrl}" TextTrimming="CharacterEllipsis"
+              <SelectableTextBlock HorizontalAlignment="Left" Classes="caption" Text="{Binding DownloadUrl}" TextTrimming="CharacterEllipsis"
                          VerticalAlignment="Center" MaxWidth="420" />
             </StackPanel>
           </StackPanel>
@@ -64,24 +64,24 @@
 
         <Border Classes="tile" IsVisible="{Binding NeedsHath}">
           <StackPanel Spacing="6">
-            <TextBlock Text="需要 H@H 客户端" Classes="h2" />
-            <TextBlock Classes="secondary" TextWrapping="Wrap"
-                       Text="站点提示：该归档需要账号已分配 H@H 客户端（You must have a H@H client assigned to your account）。请先在站点分配客户端，或在下载设置中改用普通逐页下载。" />
+            <SelectableTextBlock Text="需要 H@H 客户端" Classes="h2" />
+            <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="请先在站点分配 H@H 客户端，或使用逐页下载。" />
           </StackPanel>
         </Border>
 
         <Border Classes="tile" IsVisible="{Binding HasDetail}">
           <StackPanel Spacing="4">
-            <TextBlock Text="站点返回" Classes="h2" />
-            <TextBlock Text="{Binding DetailText}" Classes="secondary" TextWrapping="Wrap" />
+            <SelectableTextBlock Text="站点返回" Classes="h2" />
+            <SelectableTextBlock Text="{Binding DetailText}" Classes="secondary" TextWrapping="Wrap" />
           </StackPanel>
         </Border>
 
         <Border Classes="tile" IsVisible="{Binding NeedsSignIn}">
           <StackPanel Spacing="4">
-            <TextBlock Text="需要登录" Classes="h2" />
-            <TextBlock Classes="secondary" TextWrapping="Wrap"
-                       Text="归档下载只对已登录账号开放。请到「设置 → 账号」登录后再试。" />
+            <SelectableTextBlock Text="需要登录" Classes="h2" />
+            <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="请先登录账号。" />
           </StackPanel>
         </Border>
       </StackPanel>
@@ -89,7 +89,7 @@
 
     <Border Grid.Row="2" Padding="22,9" MinHeight="36" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0">
-      <TextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center"
+      <SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" FontSize="12" VerticalAlignment="Center"
                  TextWrapping="Wrap" />
     </Border>
   </Grid>

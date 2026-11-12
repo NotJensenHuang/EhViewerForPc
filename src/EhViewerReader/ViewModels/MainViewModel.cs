@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerReader.Core.Models;
+using EhViewerReader.Core.Format;
 using EhViewerReader.Core.Scanning;
 using EhViewerReader.Core.Storage;
 using EhViewerReader.Services;
@@ -70,6 +71,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             new FilterOption(LibraryFilter.Completed, "已读"),
             new FilterOption(LibraryFilter.Favorite, "收藏"),
             new FilterOption(LibraryFilter.Incomplete, "不完整"),
+            new FilterOption(LibraryFilter.Duplicates, "重复"),
         ];
         _selectedSort = _sortOptions.First(o => o.Value == services.Settings.Sort);
         _selectedFilter = _filterOptions.First(o => o.Value == services.Settings.Filter);
@@ -495,14 +497,19 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void ApplyGalleries(IReadOnlyList<GalleryInfo> galleries, bool fromCache)
     {
         List<GalleryGroup> groups = LibraryMerger.Group(galleries, PreferredSourceOf);
+        var previousItems = _all.ToDictionary(i => i.StableId, PathIdentity.Comparer);
         var items = new List<GalleryItemViewModel>(groups.Count);
         foreach (GalleryGroup group in groups)
         {
             ReadingProgress? progress = GalleryItemViewModel.LoadProgress(_services.Progress, group.Primary);
-            var item = new GalleryItemViewModel(
-                group,
-                info => new CoverImageRequest(info, _services.Covers),
-                progress);
+            GalleryItemViewModel item;
+            if (previousItems.TryGetValue(group.Primary.StableId, out var previous))
+            {
+                item = previous;
+                item.UpdateGroup(group);
+                item.ApplyProgress(progress);
+            }
+            else item = new GalleryItemViewModel(group, info => new CoverImageRequest(info, _services.Covers), progress);
             item.IsPrimaryVersionPreferred = IsExplicitlyPreferred(group);
             items.Add(item);
         }
@@ -531,18 +538,32 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             StatusText = $"已载入缓存 {_all.Count:N0} 个作品";
         }
+
+        // A fresh scan rebuilds every card, so the download overlay has to be
+        // re-projected; otherwise running tasks would look idle until the next
+        // engine event.
+        ApplyDownloadStates(_services.Downloads.Tasks);
     }
 
     public async Task ImportDownloadAsync(EhViewerReader.Core.Download.DownloadTask task)
     {
         if (!_services.Settings.Download.AddAsSource) return;
         while (IsScanning) await Task.Delay(50, _lifetime.Token);
+        if (!Directory.Exists(task.FolderPath)) return;
         string root = string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot;
         var source = _services.Settings.AddSource(root, "下载目录");
         _services.TrySaveSettings(out _);
-        // Scan only the completed gallery; no backup disks are revisited.
-        string parent = Path.GetDirectoryName(task.FolderPath)!;
-        var result = await Task.Run(() => _services.Scanner.Scan(parent, null, false, null, _lifetime.Token, source.Id, source.DisplayName, true, onlyFolder: task.FolderPath));
+        // Scan the changing gallery only; other sources are never revisited.
+        var result = await Task.Run(() => _services.Scanner.Scan(root, null, false, null, _lifetime.Token, source.Id, source.DisplayName, true, onlyFolder: task.FolderPath));
+        if (_disposed) return;
+        foreach (var gallery in result.Galleries)
+        {
+            if (task.PageCount <= 0 || gallery.ExpectedPages == task.PageCount) continue;
+            var pages = PageFileParser.Scan(gallery.FolderPath, new SpiderHeader { HasPages = true, Pages = task.PageCount }, out _);
+            gallery.ExpectedPages = task.PageCount;
+            gallery.IsIncomplete = pages.IsIncomplete;
+            gallery.MissingRanges = pages.MissingRanges;
+        }
         var completed = result.Galleries.Where(g => EhViewerReader.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).ToArray();
         var all = _all.SelectMany(i => i.Versions).Where(g => !EhViewerReader.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).Concat(completed).ToArray();
         ApplyGalleries(all, false);
@@ -646,6 +667,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             case LibraryFilter.Incomplete:
                 query = query.Where(i => i.IsIncomplete);
                 break;
+            case LibraryFilter.Duplicates:
+                query = query.Where(i => i.HasMultipleVersions);
+                break;
         }
 
         if (_selectedLanguage.Value is { Length: > 0 } language)
@@ -703,6 +727,48 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private async Task RefreshAsync() => await LoadLibraryAsync(forceRefresh: true, useCacheFirst: false);
+
+    /// <summary>Full rescan of every source; exposed by settings (not the toolbar).</summary>
+    public Task RescanAllAsync() => LoadLibraryAsync(forceRefresh: true, useCacheFirst: false);
+
+    /// <summary>Cancels a running scan without clearing the current projection.</summary>
+    public void CancelScanNow() => _scanCancellation?.Cancel();
+
+    /// <summary>
+    /// Projects download-engine state onto library cards by task folder. A task
+    /// never maps to a card by gid alone, so two copies in different folders keep
+    /// their own progress.
+    /// </summary>
+    public void ApplyDownloadStates(IReadOnlyCollection<Core.Download.DownloadTask> tasks)
+    {
+        var byFolder = new Dictionary<string, Core.Download.DownloadTask>(
+            Core.Storage.PathIdentity.Comparer);
+        foreach (Core.Download.DownloadTask task in tasks)
+        {
+            if (task.FolderPath.Length == 0) continue;
+            byFolder[task.FolderPath] = task;
+        }
+
+        foreach (GalleryItemViewModel item in _all)
+        {
+            Core.Download.DownloadTask? match = null;
+            bool isPrimary = false;
+            foreach (GalleryInfo version in item.Versions)
+            {
+                if (!byFolder.TryGetValue(version.FolderPath, out Core.Download.DownloadTask? found)) continue;
+                bool versionIsPrimary = string.Equals(version.StableId, item.StableId, StringComparison.OrdinalIgnoreCase);
+                if (match is null || versionIsPrimary)
+                {
+                    match = found;
+                    isPrimary = versionIsPrimary;
+                }
+
+                if (versionIsPrimary) break;
+            }
+
+            item.ApplyDownload(match, isPrimary);
+        }
+    }
 
     [RelayCommand]
     private void CancelScan() => _scanCancellation?.Cancel();

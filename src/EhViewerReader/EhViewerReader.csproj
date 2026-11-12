@@ -31,6 +31,7 @@
     <PackageReference Include="Avalonia.Desktop" />
     <PackageReference Include="Avalonia.Skia" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="FluentAvaloniaUI" />
     <PackageReference Include="Avalonia.Controls.ItemsRepeater" />
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="CommunityToolkit.Mvvm" />

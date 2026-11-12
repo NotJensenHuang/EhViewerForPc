@@ -48,6 +48,7 @@ public class LibraryScannerTests : IDisposable
         Assert.Equal(3, gallery.PageCount);
         Assert.Equal("Test Gallery", gallery.Title);
         Assert.Equal("100", gallery.StableId);
+        Assert.Equal("token", gallery.Token);
         Assert.NotNull(gallery.CoverPath);
         GalleryInfo tail = Assert.Single(first.Galleries, g => g.Gid == 101);
         Assert.True(tail.HasMissingPages);
@@ -61,6 +62,7 @@ public class LibraryScannerTests : IDisposable
         var second = scanner.Scan(_root, cache);
         Assert.Equal(2, second.CacheHitCount);
         Assert.Equal(0, second.ScannedDirectoryCount);
+        Assert.All(second.Galleries, g => Assert.Equal("token", g.Token));
     }
 
     [Fact]

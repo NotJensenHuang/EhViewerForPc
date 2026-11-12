@@ -1,108 +1,54 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="using:EhViewerReader.ViewModels"
-        mc:Ignorable="d" d:DesignWidth="1320" d:DesignHeight="860"
-        x:Class="EhViewerReader.Views.MainWindow"
-        x:DataType="vm:ShellViewModel"
-        Title="EhViewer Reader"
-        Width="1240" Height="760" MinWidth="540" MinHeight="420"
-        Background="{DynamicResource AppBgBrush}"
-        WindowStartupLocation="CenterScreen">
-  <Grid x:Name="LayoutRoot" ColumnDefinitions="208,*" Background="{DynamicResource AppBgBrush}">
-    <!-- Navigation rail -->
-    <Border x:Name="NavigationRail" Grid.Column="0" Background="{DynamicResource AppSurfaceBrush}"
-            BorderBrush="{DynamicResource AppBorderBrush}" BorderThickness="0,0,1,0">
-      <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="12,16,12,12">
-        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,16">
-          <StackPanel Orientation="Horizontal" Spacing="8" Classes="wide-nav">
-            <Border Width="32" Height="36" CornerRadius="10" Background="{DynamicResource AppAccentBrush}">
-              <TextBlock Text="EH" FontSize="14" FontWeight="Bold" Foreground="#14090C" HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Border>
-            <StackPanel VerticalAlignment="Center" Spacing="1">
-              <TextBlock Text="EhViewer Reader" FontSize="12" FontWeight="Bold" />
-              <TextBlock Text="在线 + 本地 + 下载" Classes="caption" FontSize="11" />
-            </StackPanel>
-          </StackPanel>
-          <Button Grid.Column="1" x:Name="SidebarToggle" IsEnabled="{Binding !Settings.IsSaving}" Width="28" Height="36" Padding="6" Click="OnToggleSidebar" ToolTip.Tip="展开或收拢导航" AutomationProperties.Name="展开或收拢导航">
-            <Path Width="16" Height="16" Stretch="Uniform" Data="M2,3 L14,3 M2,8 L14,8 M2,13 L14,13" Stroke="{DynamicResource AppTextBrush}" StrokeThickness="1.6" />
-          </Button>
-        </Grid>
-
-        <Button Grid.Row="1" Classes="nav" IsEnabled="{Binding !Settings.IsSaving}" Click="OnToggleSite" Margin="0,0,0,12"
-                ToolTip.Tip="在 E-Hentai 与 ExHentai 之间切换">
-          <Grid ColumnDefinitions="Auto,8,*,Auto" VerticalAlignment="Center">
-            <Border Background="{DynamicResource AppAccentSoftBrush}" CornerRadius="6" Padding="6,2"
-                    VerticalAlignment="Center">
-              <TextBlock Text="{Binding SiteBadge}" FontSize="12" FontWeight="Bold"
-                         Foreground="{DynamicResource AppAccentBrush}" />
-            </Border>
-            <TextBlock Classes="nav-label" Grid.Column="2" Text="{Binding SiteLabel}" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="3" Text="⇄" Classes="caption" VerticalAlignment="Center" />
-          </Grid>
-        </Button>
-
-        <ItemsControl IsEnabled="{Binding !Settings.IsSaving}" Grid.Row="2" ItemsSource="{Binding NavItems}">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <StackPanel Spacing="2" />
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:NavItem">
-              <Button Classes="nav" Classes.active="{Binding IsActive}" AutomationProperties.Name="{Binding Label}" ToolTip.Tip="{Binding Label}" Tag="{Binding}" Click="OnNavClick">
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                  <TextBlock Text="{Binding Glyph}" FontSize="14" Width="18" VerticalAlignment="Center" />
-                  <TextBlock Classes="nav-label" Text="{Binding Label}" VerticalAlignment="Center" />
-                </StackPanel>
-              </Button>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-
-        <StackPanel Grid.Row="3" Classes="wide-nav" IsEnabled="{Binding !Settings.IsSaving}" Spacing="6">
-          <Border Background="{DynamicResource AppBgAltBrush}" CornerRadius="10" Padding="10,8">
-            <StackPanel Spacing="3">
-              <TextBlock Text="{Binding AccountLabel}" FontSize="12" FontWeight="Bold" />
-              <TextBlock Text="{Binding AccountDetail}" Classes="caption" FontSize="12" TextWrapping="Wrap" />
-              <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,4,0,0">
-                <Button Content="登录" Classes="ghost" FontSize="12" Padding="6,2" MinHeight="22"
-                        Command="{Binding OpenWebLoginCommand}" IsVisible="{Binding !IsSignedIn}" />
-                <Button Content="退出" Classes="ghost" FontSize="12" Padding="6,2" MinHeight="22"
-                        Command="{Binding SignOutCommand}" IsVisible="{Binding IsSignedIn}" />
-              </StackPanel>
-            </StackPanel>
-          </Border>
-          <TextBlock Classes="muted" FontSize="12" HorizontalAlignment="Center"
-                     Text="本地库保持只读 · 在线内容需遵守站点条款" TextWrapping="Wrap" TextAlignment="Center" />
+        xmlns:ui="using:FluentAvalonia.UI.Controls"
+        x:Class="EhViewerReader.Views.MainWindow" x:DataType="vm:ShellViewModel"
+        Title="EhViewer Reader" Width="1240" Height="760" MinWidth="540" MinHeight="420"
+        Background="{DynamicResource AppBgBrush}" WindowStartupLocation="CenterScreen">
+  <Grid Background="{DynamicResource AppBgBrush}">
+    <ui:FANavigationView x:Name="Navigation" PaneTitle="EhViewer Reader"
+                         PaneDisplayMode="Auto" OpenPaneLength="224" CompactPaneLength="48"
+                         ExpandedModeThresholdWidth="920" CompactModeThresholdWidth="640"
+                         IsSettingsVisible="False" IsBackButtonVisible="True"
+                         IsBackEnabled="{Binding CanGoBack, ElementName=ContentHost}"
+                         MenuItemsSource="{Binding NavItems}"
+                         SelectedItem="{Binding SelectedNav, Mode=TwoWay}"
+                         BackRequested="OnGoBack" ItemInvoked="OnNavigationItemInvoked">
+      <ui:FANavigationView.Resources>
+        <Thickness x:Key="NavigationViewHeaderMargin">24,8,24,8</Thickness>
+        <Thickness x:Key="NavigationViewMinimalHeaderMargin">8,4,16,4</Thickness>
+      </ui:FANavigationView.Resources>
+      <ui:FANavigationView.MenuItemTemplate>
+        <DataTemplate x:DataType="vm:NavItem">
+          <ui:FANavigationViewItem Content="{Binding Label}" IconSource="{Binding IconSource}"
+                                   IsEnabled="{Binding IsEnabled}"
+                                   AutomationProperties.Name="{Binding Label}" />
+        </DataTemplate>
+      </ui:FANavigationView.MenuItemTemplate>
+      <ui:FANavigationView.PaneFooter>
+        <StackPanel Margin="16,8,16,16" Spacing="8" IsEnabled="{Binding !Settings.IsSaving}"
+                    IsVisible="{Binding IsPaneOpen, ElementName=Navigation}">
+          <SelectableTextBlock Text="{Binding AccountLabel}" Classes="caption" TextTrimming="CharacterEllipsis" />
+          <Button Content="登录" Command="{Binding OpenWebLoginCommand}" IsVisible="{Binding !IsSignedIn}" />
+          <Button Content="退出登录" Command="{Binding SignOutCommand}" IsVisible="{Binding IsSignedIn}" />
         </StackPanel>
-      </Grid>
+      </ui:FANavigationView.PaneFooter>
+      <ui:FANavigationView.Header>
+        <Grid x:Name="NavigationHeader" ColumnDefinitions="*,Auto" ColumnSpacing="16">
+          <SelectableTextBlock x:Name="DocumentTitle" FontSize="20"
+                     FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+          <Button Grid.Column="1" Content="{Binding SiteLabel}" Click="OnToggleSite" Classes="ghost"
+                  FontSize="13" FontWeight="Normal"
+                  IsEnabled="{Binding !Settings.IsSaving}" ToolTip.Tip="切换 E-Hentai / ExHentai" />
+        </Grid>
+      </ui:FANavigationView.Header>
+      <ui:FAFrame x:Name="ContentHost" CacheSize="0" />
+    </ui:FANavigationView>
+    <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="24"
+            Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="1" CornerRadius="8" Padding="16,10" IsVisible="{Binding ShowToast}">
+      <SelectableTextBlock Text="{Binding ToastText}" MaxWidth="620" TextWrapping="Wrap" />
     </Border>
-
-    <!-- Content -->
-    <Grid Grid.Column="1">
-      <Grid RowDefinitions="Auto,*">
-        <Border x:Name="DocumentToolbar" IsVisible="False" Padding="12,6" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource AppBorderBrush}">
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
-            <Button Content="← 返回" Click="OnGoBack" />
-            <TextBlock x:Name="DocumentTitle" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-          </Grid>
-        </Border>
-        <ContentControl Grid.Row="1" x:Name="ContentHost" />
-      </Grid>
-
-      <!-- Toast -->
-      <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,28"
-              Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppAccentBrush}"
-              BorderThickness="1" CornerRadius="10" Padding="16,9" IsVisible="{Binding ShowToast}"
-              BoxShadow="0 6 24 0 #66000000">
-        <TextBlock Text="{Binding ToastText}" FontSize="12" MaxWidth="620" TextWrapping="Wrap" />
-      </Border>
-
-      <!-- Busy overlay for page transitions -->
-      <ProgressBar IsIndeterminate="True" Height="2" VerticalAlignment="Top"
-                   IsVisible="{Binding Online.IsBusy}" />
-    </Grid>
+    <ProgressBar IsIndeterminate="True" Height="2" VerticalAlignment="Top" IsVisible="{Binding Online.IsBusy}" />
   </Grid>
 </Window>

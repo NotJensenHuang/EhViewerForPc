@@ -89,19 +89,32 @@ public sealed partial class HistoryEntryViewModel
         Work = work;
         _progress = progress;
         _owner = owner;
-        CoverRequest = item?.CoverRequest ?? services.OnlineImages.CreateThumbnailRequest(work.ThumbnailUrl);
+
+        // A local copy is only a usable cover source while its folder exists.
+        // Otherwise fall back to the persisted thumbnail (cached by work id, so
+        // it survives a restart) instead of showing a dead local request.
+        if (item is { PageCount: > 0 } && Directory.Exists(item.FolderPath))
+        {
+            CoverRequest = item.CoverRequest;
+        }
+        else
+        {
+            CoverRequest = services.OnlineImages.CreateThumbnailRequest(
+                work.ThumbnailUrl, "work:" + work.WorkId);
+        }
     }
     public GalleryItemViewModel? Item { get; }
     public WorkRecord Work { get; }
-    [RelayCommand] private void Open() => _owner.Open(this);
+    public bool CanOpen => Item?.CanRead == true || (Work.Gid is > 0 && Work.Token.Length > 0);
+    [RelayCommand(CanExecute = nameof(CanOpen))] private void Open() => _owner.Open(this);
     [RelayCommand] private void Remove() => _owner.Remove(this);
     public string Title => Work.Title;
     public IImageRequest CoverRequest { get; }
     public int PageCount => Item?.PageCount ?? Work.PageCount;
     public string PageCountText => $"{PageCount} 页";
-    public string ProgressText => _progress.Completed ? "已读完" : $"第 {_progress.PageNumber} 页";
-    public double ProgressFraction => _progress.Completed ? 1 : Math.Clamp(_progress.PageNumber / (double)Math.Max(1, PageCount), 0, 1);
-    public string ProgressDetail => ProgressText + $" / 共 {PageCount} 页";
+    public string ProgressText => PageCount <= 0 ? "无可读页面" : _progress.Completed ? "已读完" : $"第 {_progress.PageNumber} 页";
+    public double ProgressFraction => PageCount <= 0 ? 0 : _progress.Completed ? 1 : Math.Clamp(_progress.PageNumber / (double)PageCount, 0, 1);
+    public string ProgressDetail => PageCount <= 0 ? ProgressText : ProgressText + $" / 共 {PageCount} 页";
     public DateTime LastReadUtc => _progress.LastReadUtc;
     public string LastReadText => FormatLastRead(LastReadUtc);
     public string SourceText => Item?.SourceName ?? (Work.Token.Length > 0 ? "在线" : "原资料库不可用");

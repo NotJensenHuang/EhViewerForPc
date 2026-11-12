@@ -242,6 +242,7 @@ public partial class ReaderPage : DocumentPage
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Alt) && e.Key is Key.Left or Key.Right) return;
         bool rtl = _viewModel.RightToLeft;
         switch (e.Key)
         {

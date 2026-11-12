@@ -24,11 +24,17 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DownloadTask> _dirtyTasks = new();
     private int _updateQueued;
+    private readonly DispatcherTimer _libraryTimer;
+    private readonly Dictionary<string, DownloadTask> _libraryUpdates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (int Pages, string Folder, DownloadState State)> _imported = new(StringComparer.Ordinal);
+    private bool _importing;
 
     public DownloadsViewModel(AppServices services, MainViewModel library)
     {
         _services = services;
         _library = library;
+        _libraryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _libraryTimer.Tick += OnLibraryTick;
 
         _services.Downloads.TaskChanged += OnTaskChanged;
         _services.Downloads.Changed += OnChanged;
@@ -41,6 +47,13 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     public IReadOnlyList<DownloadArchiveViewModel> Archive { get; private set; } = [];
     public ObservableCollection<ArchiveViewModel> ArchiveTransfers { get; } = [];
     public event EventHandler<ArchiveViewModel>? ArchiveRequested;
+
+    /// <summary>Opens the reader for a task's own folder (independent of the library).</summary>
+    public event EventHandler<DownloadReadRequest>? ReadRequested;
+
+    /// <summary>User-facing toast text (the shell owns the toast surface).</summary>
+    public event EventHandler<string>? NotifyRequested;
+
     public ArchiveViewModel GetArchiveSession(EhGalleryDetails details, IOnlineHost host)
     {
         var existing = ArchiveTransfers.FirstOrDefault(a => a.Details.Gid == details.Gid);
@@ -50,10 +63,24 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         return created;
     }
     [RelayCommand] private void ShowArchive(ArchiveViewModel? session) { if (session is not null) ArchiveRequested?.Invoke(this, session); }
-    [RelayCommand] private void ReadTask(DownloadTaskViewModel? item)
+
+    /// <summary>
+    /// Reads the files that are actually on disk for this task. The library index
+    /// is not required: a paused, partially downloaded or non-imported task can
+    /// be read up to its last valid page.
+    /// </summary>
+    [RelayCommand]
+    private void ReadTask(DownloadTaskViewModel? item)
     {
-        if (item is not null && _library.TryGetLocalCopy(item.Task.Gid, out var local) && local is not null)
-            _library.OpenGalleryCommand.Execute(local);
+        if (item is null) return;
+        GalleryInfo? info = DownloadReader.TryBuildGalleryInfo(item.Task, out string? error);
+        if (info is null)
+        {
+            NotifyRequested?.Invoke(this, error ?? "无法打开该下载任务");
+            return;
+        }
+
+        ReadRequested?.Invoke(this, new DownloadReadRequest(item.Task, info));
     }
 
     public string RootPath => _services.Downloads.RootPath;
@@ -90,6 +117,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (DownloadTask task in _services.Downloads.Tasks)
         {
+            QueueLibraryUpdate(task);
             ids.Add(task.Id);
             if (_byId.TryGetValue(task.Id, out DownloadTaskViewModel? existing))
             {
@@ -108,10 +136,17 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             _byId.Remove(stale.Task.Id);
         }
 
-        Archive = _services.Downloads.Archive.Select(entry => new DownloadArchiveViewModel(entry, this)).ToArray();
-        OnPropertyChanged(nameof(Archive));
+        ApplyArchive(_services.Downloads.Archive);
 
         RefreshStatus();
+        _library.ApplyDownloadStates(_services.Downloads.Tasks);
+    }
+
+    internal void ApplyArchive(IEnumerable<DownloadArchiveEntry> entries)
+    {
+        Archive = entries.Select(entry => new DownloadArchiveViewModel(entry, this)).ToArray();
+        OnPropertyChanged(nameof(Archive));
+        OnPropertyChanged(nameof(HasArchive));
     }
 
     private void OnTaskChanged(object? sender, DownloadTask task)
@@ -130,8 +165,10 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
                     if (!_dirtyTasks.TryRemove(pair.Key, out var changed) || !_services.Downloads.IsQueued(changed.Gid)) continue;
                     if (_byId.TryGetValue(changed.Id, out var vm)) vm.Refresh();
                     else { vm = new DownloadTaskViewModel(changed, this); _byId[changed.Id] = vm; Tasks.Insert(0, vm); }
+                    QueueLibraryUpdate(changed);
                 }
                 RefreshStatus();
+                _library.ApplyDownloadStates(_services.Downloads.Tasks);
             }, DispatcherPriority.Background);
         });
     }
@@ -147,19 +184,50 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 
     private void OnTaskCompleted(object? sender, DownloadTask task)
     {
-        if (!_services.Settings.Download.RefreshLibraryOnComplete) return;
-        Dispatcher.UIThread.Post(async () =>
+        Dispatcher.UIThread.Post(() =>
         {
             if (_disposed) return;
-            try
-            {
-                await _library.ImportDownloadAsync(task).ConfigureAwait(true);
-            }
-            catch (Exception ex)
-            {
-                _services.Log.Warn("Library refresh after download failed", ex);
-            }
+            QueueLibraryUpdate(task);
+            _library.ApplyDownloadStates(_services.Downloads.Tasks);
         }, DispatcherPriority.Background);
+    }
+
+    private void QueueLibraryUpdate(DownloadTask task)
+    {
+        if (!_services.Settings.Download.AddAsSource || !_services.Settings.Download.RefreshLibraryOnComplete || task.DownloadedPages == 0) return;
+        var stamp = (task.DownloadedPages, task.FolderPath, task.State);
+        if (_imported.TryGetValue(task.Id, out var previous) && previous == stamp) return;
+        _libraryUpdates[task.Id] = task;
+        if (!_importing) _libraryTimer.Start();
+    }
+
+    private async void OnLibraryTick(object? sender, EventArgs e)
+    {
+        _libraryTimer.Stop();
+        if (_disposed || _importing) return;
+        _importing = true;
+        try
+        {
+            var pending = _libraryUpdates.Values.ToArray();
+            _libraryUpdates.Clear();
+            foreach (var task in pending)
+            {
+                if (_disposed || !_services.Downloads.IsQueued(task.Gid)) continue;
+                var stamp = (task.DownloadedPages, task.FolderPath, task.State);
+                try
+                {
+                    await _library.ImportDownloadAsync(task);
+                    if (!_disposed) _imported[task.Id] = stamp;
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { _services.Log.Warn("Live library update failed", ex); }
+            }
+        }
+        finally
+        {
+            _importing = false;
+            if (!_disposed && _libraryUpdates.Count > 0) _libraryTimer.Start();
+        }
     }
 
     [RelayCommand]
@@ -206,6 +274,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _libraryTimer.Stop();
+        _libraryUpdates.Clear();
         foreach (var session in ArchiveTransfers) session.Dispose();
         _services.Downloads.TaskChanged -= OnTaskChanged;
         _services.Downloads.Changed -= OnChanged;

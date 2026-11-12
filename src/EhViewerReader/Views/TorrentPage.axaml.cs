@@ -16,11 +16,11 @@ public partial class TorrentPage : DocumentPage
         InitializeComponent();
     }
 
-    public TorrentPage(TorrentViewModel viewModel) : this()
+    public TorrentPage(TorrentViewModel viewModel, bool initializeOnLoad = true) : this()
     {
         _viewModel = viewModel;
         DataContext = viewModel;
-        Loaded += async (_, _) => await viewModel.InitializeAsync();
+        if (initializeOnLoad) Loaded += async (_, _) => await viewModel.InitializeAsync();
     }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();
