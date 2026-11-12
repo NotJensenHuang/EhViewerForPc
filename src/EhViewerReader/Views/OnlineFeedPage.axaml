@@ -5,7 +5,7 @@
              xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.OnlineFeedPage"
              x:DataType="vm:OnlineFeedViewModel">
-  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+  <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Background="Transparent">
     <!-- Header -->
     <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,8">
       <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">

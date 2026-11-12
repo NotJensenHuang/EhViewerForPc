@@ -7,7 +7,7 @@
              xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.LibraryPage"
              x:DataType="vm:MainViewModel">
-  <Grid RowDefinitions="Auto,Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Background="Transparent">
     <!-- Toolbar -->
     <Grid Grid.Row="0" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" Margin="22,16,22,10">
       <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Center">

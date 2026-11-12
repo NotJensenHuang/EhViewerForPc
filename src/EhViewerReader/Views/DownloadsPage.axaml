@@ -5,7 +5,7 @@
  xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
              x:Class="EhViewerReader.Views.DownloadsPage"
              x:DataType="vm:DownloadsViewModel">
-  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+  <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
     <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,10">
       <StackPanel Spacing="2">
 
@@ -20,7 +20,7 @@
     </Grid>
 
     <TabControl Grid.Row="1" Margin="22,0,22,10">
-      <TabItem><TabItem.Header><SelectableTextBlock Text="画廊下载" FontSize="14" /></TabItem.Header>
+      <TabItem><TabItem.Header><TextBlock Text="画廊下载" FontSize="14" /></TabItem.Header>
         <Grid RowDefinitions="Auto,*" RowSpacing="10">
           <StackPanel Spacing="8"><SelectableTextBlock Text="{Binding StatusText}" Classes="secondary" />
             <StackPanel IsVisible="{Binding !HasTasks}" Spacing="8"><SelectableTextBlock Text="还没有下载任务" Classes="h2" /><WrapPanel><Button Content="浏览作品" Click="OnBrowse" /><Button Content="设置下载目录" Click="OnSettings" /></WrapPanel></StackPanel>
@@ -74,7 +74,7 @@
           </ir:ItemsRepeater></ScrollViewer>
         </Grid>
       </TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="已完成" FontSize="14" /></TabItem.Header>
+      <TabItem><TabItem.Header><TextBlock Text="已完成" FontSize="14" /></TabItem.Header>
         <Grid RowDefinitions="Auto,*"><Button Content="清空记录（保留文件）" Command="{Binding ClearArchiveCommand}" HorizontalAlignment="Right" />
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto"><ir:ItemsRepeater ItemsSource="{Binding Archive}">
             <ir:ItemsRepeater.Layout><layout:StackLayout /></ir:ItemsRepeater.Layout>
@@ -102,9 +102,9 @@
                      HorizontalAlignment="Center" VerticalAlignment="Center" />
         </Grid>
       </TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="归档传输" FontSize="14" /></TabItem.Header>
+      <TabItem><TabItem.Header><TextBlock Text="归档传输" FontSize="14" /></TabItem.Header>
         <ListBox ItemsSource="{Binding ArchiveTransfers}">
-          <ListBox.ItemTemplate><DataTemplate x:DataType="vm:ArchiveViewModel"><StackPanel Spacing="6" Margin="8"><SelectableTextBlock Text="{Binding GalleryTitle}" FontWeight="SemiBold" /><SelectableTextBlock Text="{Binding StatusText}" TextWrapping="Wrap" /><ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" /><Button Content="查看 / 管理" Tag="{Binding}" Click="OnArchive" /></StackPanel></DataTemplate></ListBox.ItemTemplate>
+          <ListBox.ItemTemplate><DataTemplate x:DataType="vm:ArchiveViewModel"><StackPanel Spacing="6" Margin="8"><TextBlock Text="{Binding GalleryTitle}" FontWeight="SemiBold" /><TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" /><ProgressBar Minimum="0" Maximum="100" Value="{Binding Progress}" /><Button Content="查看 / 管理" Tag="{Binding}" Click="OnArchive" /></StackPanel></DataTemplate></ListBox.ItemTemplate>
         </ListBox>
       </TabItem>
     </TabControl>

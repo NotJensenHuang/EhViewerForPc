@@ -72,6 +72,10 @@
 
 - **缓存默认值**：在线缓存上限默认改为 **512 MiB**；保留时间默认 **0 = 不限制**（仅在超出磁盘上限时按 LRU 淘汰）。`SchemaVersion` 升到 6，迁移只把仍是旧默认（2048 MiB / 14 天）的值改为新默认，用户显式改过的值保持不变。
 - **图片进度居中**：`FormattedText.Width` 返回的是字形紧凑宽度，而 `TextAlignment=Center` 是在 `MaxTextWidth` 段落盒内居中；旧代码用 `中心 - Width/2` 定位会让文字整体右偏甚至被裁切。改为把段落盒本身居中绘制，标题、百分比与失败原因全部精确居中。
-- **可复制文本**：说明性文本（设置、详情、状态栏、阅读器信息、历史/下载列表等）共 232 处改为 `SelectableTextBlock`，支持拖选、`Ctrl+A`、`Ctrl+C`；卡片与按钮内部的 25 处文字保留普通 `TextBlock`，避免文本选中抢占点击/切换。文本类样式选择器改为 `:is(TextBlock).xxx`，两种控件共用同一套排版；可选中文本默认不进入 Tab 焦点序列。
+- **可复制文本**：说明性文本（设置、详情、状态栏、阅读器信息、历史/下载列表等）共 219 处改为 `SelectableTextBlock`，支持拖选、`Ctrl+A`、`Ctrl+C`；卡片、按钮、`TabItem.Header`、`Expander.Header` 与列表项内部的 38 处文字保留普通 `TextBlock`，避免文本选中抢占点击/切换。文本类样式选择器改为 `:is(TextBlock).xxx`，两种控件共用同一套排版；可选中文本默认不进入 Tab 焦点序列。
+
+- **收藏按钮始终灰色**：`IsEnabled` 绑定到 `CanChangeFavorite`，但该计算属性在详情加载完成后没有发出 `PropertyChanged`，控件一直停留在创建时（`_details == null`）的禁用状态。修复为：详情载入后统一通知 `CanChangeFavorite` / 新增的 `CanOpenFavoriteDialog`；按钮改为「详情加载即可点击」，未登录点击给出「收藏需要先登录 E-Hentai 账号」提示，签入检查仍由提交路径把关。
+- **标签页/列表点击失效**：`SelectableTextBlock` 在 `PointerPressed` 里 `e.Handled = true`，放在 `TabItem.Header`、`Expander.Header` 或 `ListBox` 项模板里会把点击吞掉，设置页的 7 个页签、下载页的 3 个页签与归档列表因此无法切换/选中。这 13 处已改回普通 `TextBlock`；卡片与按钮内文字同样保持不可选中。可选中文本仅保留在非交互的说明区域（219 处）。
+- **标题区色差/多一层边框**：FluentAvalonia 的 `NavigationView` 内容层默认用 `LayerFillColorDefault`（比页面 `SolidBackgroundFillColorBase` 亮），标题区没有被页面背景覆盖，就形成一条更亮的横带，视觉上像多了一层 border。现覆盖 `NavigationViewContentBackground` 为页面底色，并把 `NavigationViewContentGridBorderBrush` 设为透明、`NavigationViewContentGridBorderThickness` 设为 0，全窗口统一为同一底色（深/浅色均验证）。
 
 补充验证：`dotnet test` **129 通过 / 0 失败**；NativeAOT 发布版 `--navigation-regression` **18 PASS**、`--ui-smoke` **无 false/FAIL**、`--ui-audit` **error = null / 0 横向溢出 / 108 张截图**；浅色与深色设置页均显示「512 MB」「不限制」。

@@ -35,7 +35,7 @@
       </ui:FANavigationView.PaneFooter>
       <ui:FANavigationView.Header>
         <Grid x:Name="NavigationHeader" ColumnDefinitions="*,Auto" ColumnSpacing="16">
-          <SelectableTextBlock x:Name="DocumentTitle" FontSize="20"
+          <TextBlock x:Name="DocumentTitle" FontSize="20"
                      FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
           <Button Grid.Column="1" Content="{Binding SiteLabel}" Click="OnToggleSite" Classes="ghost"
                   FontSize="13" FontWeight="Normal"
@@ -45,7 +45,7 @@
       <ui:FAFrame x:Name="ContentHost" CacheSize="0" />
     </ui:FANavigationView>
     <Border HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="24"
-            Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+            Background="{DynamicResource AppCardBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="1" CornerRadius="8" Padding="16,10" IsVisible="{Binding ShowToast}">
       <SelectableTextBlock Text="{Binding ToastText}" MaxWidth="620" TextWrapping="Wrap" />
     </Border>

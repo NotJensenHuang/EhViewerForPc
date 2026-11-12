@@ -4,7 +4,7 @@
              xmlns:controls="using:EhViewerReader.Controls"
              x:Class="EhViewerReader.Views.SettingsPage"
              x:DataType="vm:SettingsViewModel">
-  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+  <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
     <WrapPanel Grid.Row="0" Margin="22,12,22,10">
       <Button Content="打开数据目录" Click="OnOpenDataDirectory" />
       <Button Content="清除扫描缓存" Click="OnClearCache" />
@@ -12,7 +12,7 @@
     </WrapPanel>
 
     <TabControl IsEnabled="{Binding !IsSaving}" x:Name="SettingsTabs" Grid.Row="1" Margin="16,0,16,12">
-      <TabItem><TabItem.Header><SelectableTextBlock Text="账号" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+      <TabItem><TabItem.Header><TextBlock Text="账号" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
 <Border Classes="tile">
           <StackPanel Spacing="12">
             <Grid ColumnDefinitions="*,Auto">
@@ -79,7 +79,7 @@
           </StackPanel>
         </Border>
       </StackPanel></ScrollViewer></TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="网络" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+      <TabItem><TabItem.Header><TextBlock Text="网络" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
 <Border Classes="tile">
           <StackPanel Spacing="12">
             <SelectableTextBlock Text="网络与代理" Classes="h2" />
@@ -111,7 +111,7 @@
             </StackPanel>
         </Border>
       </StackPanel></ScrollViewer></TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="浏览" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+      <TabItem><TabItem.Header><TextBlock Text="浏览" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
 <Border Classes="tile">
           <StackPanel Spacing="12">
             <SelectableTextBlock Text="在线浏览" Classes="h2" />
@@ -215,7 +215,7 @@
           </StackPanel>
         </Border>
       </StackPanel></ScrollViewer></TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="下载" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+      <TabItem><TabItem.Header><TextBlock Text="下载" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
 <Border Classes="tile">
           <StackPanel Spacing="12">
             <SelectableTextBlock Text="下载目录与本地库" Classes="h2" />
@@ -274,7 +274,7 @@
           </StackPanel>
         </Border>
       </StackPanel></ScrollViewer></TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="阅读" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+      <TabItem><TabItem.Header><TextBlock Text="阅读" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
 <Border Classes="tile">
           <StackPanel Spacing="12">
             <SelectableTextBlock Text="阅读器" Classes="h2" />
@@ -291,7 +291,7 @@
           </StackPanel>
         </Border>
       </StackPanel></ScrollViewer></TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="资料库" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+      <TabItem><TabItem.Header><TextBlock Text="资料库" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
 <Border Classes="tile">
           <StackPanel Spacing="10">
             <Grid ColumnDefinitions="*,Auto">
@@ -334,7 +334,7 @@
           </StackPanel>
         </Border>
       </StackPanel></ScrollViewer></TabItem>
-      <TabItem><TabItem.Header><SelectableTextBlock Text="维护" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
+      <TabItem><TabItem.Header><TextBlock Text="维护" FontSize="14" /></TabItem.Header><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="0,12,0,12">
 <Border Classes="tile">
           <StackPanel Spacing="6">
             <SelectableTextBlock Text="关于" Classes="h2" />

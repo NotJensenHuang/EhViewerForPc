@@ -37,8 +37,10 @@ public partial class OnlineGalleryPage : DocumentPage
     private async void OnFavoriteClick(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not OnlineGalleryViewModel viewModel || _favoriteDialogOpen) return;
-        if (!viewModel.CanChangeFavorite)
+        if (!viewModel.CanOpenFavoriteDialog) return;
+        if (!viewModel.IsSignedIn)
         {
+            viewModel.NotifySignInRequired();
             return;
         }
 

@@ -6,7 +6,7 @@
              xmlns:controls="using:EhViewerReader.Controls"
              x:Class="EhViewerReader.Views.HistoryPage"
              x:DataType="vm:HistoryViewModel">
-  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+  <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
     <Grid Grid.Row="0" RowDefinitions="Auto,Auto" Margin="22,16,22,10">
       <StackPanel Spacing="2">
 

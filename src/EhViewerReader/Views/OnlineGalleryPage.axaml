@@ -17,8 +17,8 @@
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <Button Content="{Binding FavoriteText}" Click="OnFavoriteClick" IsEnabled="{Binding CanChangeFavorite}"
-                  AutomationProperties.Name="收藏分类" ToolTip.Tip="打开收藏分类对话框；需先登录" />
+          <Button Content="{Binding FavoriteText}" Click="OnFavoriteClick" IsEnabled="{Binding CanOpenFavoriteDialog}"
+                  AutomationProperties.Name="收藏分类" ToolTip.Tip="打开收藏分类对话框；未登录时会提示先登录" />
           <SelectableTextBlock Text="{Binding FavoriteSlotText}" Classes="caption" VerticalAlignment="Center"
                      IsVisible="{Binding HasFavoriteSlotText}" />
           <Button Content="重新检查收藏" Classes="ghost" Command="{Binding CheckFavoriteCommand}"

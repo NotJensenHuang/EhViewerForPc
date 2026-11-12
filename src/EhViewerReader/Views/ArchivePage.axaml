@@ -6,8 +6,8 @@
         mc:Ignorable="d" d:DesignWidth="720" d:DesignHeight="560"
         x:Class="EhViewerReader.Views.ArchivePage"
         x:DataType="vm:ArchiveViewModel"
-        Background="{DynamicResource AppBgBrush}">
-  <Grid Background="{DynamicResource AppBgBrush}" RowDefinitions="Auto,*,Auto">
+        Background="Transparent">
+  <Grid Background="Transparent" RowDefinitions="Auto,*,Auto">
     <Border Grid.Row="0" Padding="22,16,22,12" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,0,0,1">
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">

@@ -237,7 +237,11 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         get => _favoriteBusy;
         private set
         {
-            if (SetProperty(ref _favoriteBusy, value)) OnPropertyChanged(nameof(CanChangeFavorite));
+            if (SetProperty(ref _favoriteBusy, value))
+            {
+                OnPropertyChanged(nameof(CanChangeFavorite));
+                OnPropertyChanged(nameof(CanOpenFavoriteDialog));
+            }
         }
     }
 
@@ -249,6 +253,16 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
     }
 
     public bool CanChangeFavorite => IsSignedIn && _details is not null && !FavoriteBusy;
+
+    /// <summary>
+    /// Whether the favourite dialog may be opened. Deliberately independent of
+    /// the sign-in state: a signed-out click must produce an explanation
+    /// instead of a permanently greyed-out button.
+    /// </summary>
+    public bool CanOpenFavoriteDialog => _details is not null && !FavoriteBusy;
+
+    /// <summary>Explains the sign-in requirement without opening the dialog.</summary>
+    public void NotifySignInRequired() => _host.Notify("收藏需要先登录 E-Hentai 账号");
 
     /// <summary>Real categories only (0–9), used by the confirmation dialog.</summary>
     public IReadOnlyList<FeedOption> FavoriteCategories => FavoriteSlots
@@ -894,6 +908,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
                      nameof(UploaderText), nameof(FileSizeText), nameof(LanguageText), nameof(VisibleText),
                      nameof(ParentText), nameof(MetaLine), nameof(Title), nameof(TorrentText), nameof(HasTorrents),
                      nameof(HasArchive), nameof(FavoriteCountText), nameof(CanInteract), nameof(CanPostComment),
+                     nameof(CanChangeFavorite), nameof(CanOpenFavoriteDialog),
                  })
         {
             OnPropertyChanged(property);

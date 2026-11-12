@@ -6,8 +6,8 @@
         mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="560"
         x:Class="EhViewerReader.Views.VersionsPage"
         x:DataType="vm:VersionsViewModel"
-        Background="{DynamicResource AppBgBrush}">
-  <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource AppBgBrush}">
+        Background="Transparent">
+  <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
     <Border Grid.Row="0" Padding="22,18,22,14" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,0,0,1">
       <StackPanel Spacing="5">
