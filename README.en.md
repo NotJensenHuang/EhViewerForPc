@@ -1,0 +1,309 @@
+**English** | [**中文**](README.md)
+
+<div align="center">
+  <img src="src/EhViewerForPc/Assets/icon.png" alt="App icon" width="96">
+
+  <h1>EhViewer for PC</h1>
+
+  <h3>Desktop Manga Library and Reader</h3>
+
+  <h4>
+    A desktop manga reading tool built with Avalonia 12 and FluentAvaloniaUI<br>
+    Bringing your library, download queue and reader into a single window
+  </h4>
+
+  <div>
+    <img src="https://img.shields.io/badge/Language-C%23-purple" alt="C#">
+    <img src="https://img.shields.io/badge/UI-Avalonia%2012-blue" alt="Avalonia 12">
+    <img src="https://img.shields.io/badge/.NET-11.0-purple" alt=".NET 11">
+    <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-blue" alt="Platform">
+  </div>
+
+  <br>
+
+</div>
+
+<br>
+
+> **Scope of use**: This project is for organising and reading content already stored on the user's own machine. It does not provide, host or distribute any site content and ships with no account credentials. Online features access public web pages only according to the user's own configuration; availability and compliance depend on the user's account permissions, network environment and local regulations. Users are responsible for complying with applicable terms of service and laws. This project is not affiliated with the respective sites or upstream applications.
+
+## 📥 Getting and Running
+
+No prebuilt packages are distributed. Build from source before running (see "Building from Source" below).
+
+```bash
+dotnet build src/EhViewerForPc -c Release
+dotnet run --project src/EhViewerForPc -c Release
+```
+
+Online browsing is available on first launch. To use the local library, point "Local Library → Choose Library" at a directory containing your downloaded galleries. The download root defaults to `Documents\EhViewerDownloads` and can be changed in Settings.
+
+## 🌟 Key Features
+
+- 📚 **Local Library**
+  - Strictly read-only: opened with `FileAccess.Read` only, with no write APIs in use; the self-test compares before/after snapshots of path, size and mtime
+  - Reads directory layouts produced by EhViewer-style apps: VERSION1 / VERSION2 / CBOR metadata, 8-digit page filenames, `.thumb` covers and `.ehviewer` files containing GID, token and page count
+  - Multiple data sources are merged by `WorkId` into one card with a copy-count badge; version management lets you choose a copy and a default, while progress is shared per work
+  - Search by title, folder or GID; sorting, language and progress filters, favourites and duplicate-copy flags
+  - A virtualized grid handles collections in the thousands; startup uses cache-first loading with a background scan, and a full rescan is available under "Settings → Library"
+
+- 📖 **Reader (shared by local and online content)**
+  - Single page (fit page / width / height / original, 1x–8x zoom, dragging, wheel / click / keyboard paging), vertical continuous and horizontal continuous modes (the whole strip is reversed for RTL); double-page spreads keep their original aspect ratio
+  - Progress is stored as "original page number + in-page offset"; online reading and local copies share one progress key, so reading continues after a download
+  - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
+  - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
+  - The reader opens inside the main window only; immersive mode hides the sidebar and title, and Esc exits it
+  - An image memory budget covers raw decode buffers, the current bitmap, prefetch and animation canvases; the online disk cache has configurable size and retention limits with LRU eviction
+
+- ⬇️ **Downloads**
+  - A download engine independent of the local library: the queue is persisted in `downloads.json`, resumes from its last state after exit or a crash, and completed tasks move to the download archive
+  - Configurable download root and subdirectory rules; with "register download directory as source" and automatic updates enabled, a gallery is indexed as soon as its first image lands, without rescanning other sources
+  - Incomplete copies remain readable and reaching the current last page does not mark the whole work as finished; gallery concurrency 1–8, per-gallery page concurrency 1–8, with serialized throttling on pagination requests
+  - Completed pages are detected by 8-digit filenames, so retries fetch only missing pages and failures are recorded per page; the output layout and metadata remain readable by similar apps
+  - When an original image link is unavailable, the reader falls back to the resized image and shows the quality actually used
+  - Changing the download root offers "use the new location for future downloads only" and "move existing downloads and update paths". A move pauses writes, verifies files and synchronises tasks, archives and library paths, with cancellation and interrupted-move recovery
+
+- 🌐 **Online Browsing (optional)**
+  - Front page, popular, subscriptions and rankings with pagination; search and browsing share one page, and `Ctrl+F` focuses the search box
+  - Keyword and tag syntax, categories, title / tag / description / torrent-filename scopes, minimum rating, page ranges and language / uploader / tag exclusions; the 15 most recent searches are kept
+  - Online image search supports similarity scanning, cover-only results and inclusion of removed galleries; the image is submitted only when "Upload and search" is clicked. Tag lookup queries the local tag database in Chinese or English and inserts canonical namespaced tags
+  - Bookmarks store complete search queries with editing, reordering and deletion; the app can import the original app's exported `.db` (read-only `QUICK_SEARCH` access) and JSON bookmarks, and export a `.db` the original app can read
+  - The detail page shows cover, title, category, page count, rating, size, language, uploader, tags and reading progress; clicking a tag searches for it, and the primary button switches to "Read locally" when a local copy exists
+  - Detail actions: five-star rating, reading and posting comments, torrent list (save `.torrent` / copy link) and archive download (Original / Resampled); favouriting uses a confirmation dialog, and cancelling sends no request
+  - List filters hide or exclusively show items by tag, title or uploader and apply to the front page, search results and favourites; tag translation data can be updated manually
+  - Images use resized variants by default, with 780 / 980 / 1280 / 1600 / 2400px or original options; caches are keyed by quality and download tasks record the quality selected when queued
+
+- 🔍 **Local Image Search (optional, off by default)**
+  - Enable it under "Settings → Local Library" and save, then open it from the library toolbar and build the index manually; no index is created and no extra page scans run by default
+  - Accepts a file picker, drag and drop, clipboard images and rectangle cropping; results show the matched page, source copy and original page number, and "Read from this page" overrides history restoration while the query survives navigation back
+  - The backend is pure C#, reusing SkiaSharp and SQLite with no additional runtime; a separate windowless host exists for build and verification. Source galleries are never written to
+  - Synthetic sets, windowless flows and page-number navigation have automated coverage; recall on a real library and full-library search performance are not yet verified
+
+- ⚙️ **Account, Network and Settings**
+  - Sign-in is completed in the system browser; the app reads and persists only session cookies and never stores a password. Pasting a cookie string manually is available as a fallback
+  - Proxy modes: none / system / HTTP / SOCKS5; image requests can optionally bypass the proxy
+  - Custom DNS-over-HTTPS endpoints, custom hosts entries and a connection test
+  - Settings are grouped into categories and take effect on "Save settings"; saving uses an incremental merge so cached startup values cannot overwrite sources added at runtime
+
+- 🪟 **Interface and Navigation**
+  - FluentAvaloniaUI `FANavigationView` + `FAFrame` history with back, forward and Alt+← / Alt+→
+  - System / light / dark themes; the sidebar can collapse and remembers its state, collapses automatically in narrow windows, and list and scroll positions are preserved
+  - Online and local details share `GalleryDetailsView`; descriptive text in Settings, details and the status bar can be selected and copied
+
+## 🧩 Feature Matrix
+
+| Module | Capabilities | Implementation |
+| :--- | :--- | :--- |
+| Local Library | Read-only scanning, multi-source merge, version management, search and filters | Virtualized grid, per-source signature cache, cache-first startup |
+| Reader | Single / vertical / horizontal modes, animation, progress, online page source | On-demand pagination, placeholder backfill, shared progress key, image memory budget |
+| Downloads | Queue, resume, concurrency and throttling, directory relocation | Persisted state, atomic writes, migration journal and rollback |
+| Online Browsing | Search, subscriptions, rankings, bookmarks, details, rating and archives | In-house tolerant HTML parser, fixed-structure fixture tests, cookie session |
+| Image Search | Indexing, cropped queries, matched-page location | Managed C# backend, SkiaSharp / SQLite, separate windowless host |
+| Settings and Network | Proxy, DoH, hosts, cache policy, preference merge | Source-generated JSON contexts, deferred write queue, incremental merge |
+| Interface | Navigation history, themes, shared details, selectable text | Compiled bindings, explicit page instances, semantic theme resources |
+
+## 🖼️ Screenshots
+
+<img src="docs/screenshots/library.png" width="50%"><img src="docs/screenshots/online.png" width="50%">
+<img src="docs/screenshots/downloads.png" width="50%"><img src="docs/screenshots/settings.png" width="50%">
+
+Screenshots are generated by `--ui-smoke` with a synthetic library and contain no site content. More captures are in `docs/screenshots/`; the page-by-page review is recorded in [UI review notes](docs/UI-REVIEW-2026-11-12.md).
+
+## 🧱 Architecture
+
+| Path | Responsibility |
+| :--- | :--- |
+| `src/EhViewerForPc.Core/` | Format parsing, scanning and merging, caches, progress, online client and download engine; no Avalonia dependency |
+| `src/EhViewerForPc.ImageSearch/` | Managed backend for local image search (feature extraction, indexing, SQLite, retrieval) |
+| `src/EhViewerForPc.ImageSearch.Host/` | Windowless diagnostics entry point (CLI and loopback HTTP) |
+| `src/EhViewerForPc/` | Avalonia application: `ViewModels/`, `Views/`, `Controls/`, `Services/`, `Styles/` |
+| `packaging/EhViewerForPc.Msix/` | Windows application packaging project (`.wapproj`) |
+| `tests/` | Core, image-search backend and windowless UI regression tests |
+| `docs/` | Design, implementation and verification notes |
+
+- A single `AppServices` container owns all services and disposes them in order on exit; MVVM uses `CommunityToolkit.Mvvm` source generators
+- Compiled bindings are enabled and XAML resolves paths through `x:DataType`; pages and lists share the same controls and style resources
+- Every persisted JSON document goes through source-generated contexts (`StorageJsonContext` / `ReaderJsonContext` / `SearchJsonContext`), written via a temporary file plus atomic replacement; no reflection-based serialization exists on runtime paths
+- Online HTML is handled by the in-house tolerant parser `HtmlLite`; no third-party parser relying on CSS selectors or dynamic code generation is used
+- Platform-specific code sits behind conditional compilation or `OperatingSystem.IsWindows()` guards; files and folders are opened through a platform launcher
+
+## 🛠️ Building from Source
+
+### Prerequisites
+
+- [.NET 11 SDK](https://dotnet.microsoft.com/) 11.0.100 or newer. The repository has no `global.json`, so the CLI and IDE select the highest SDK they resolve
+- Framework-dependent builds require the .NET 11 runtime; NativeAOT / MSIX output has no runtime dependency
+- Verified on Windows 10 / 11 x64; Linux x64 managed publishing has been checked, and the macOS backend is wired up but not yet verified on real hardware
+- Enabling long path support is recommended; the app also has a `\\?\` path fallback
+
+> The solution `EhViewerForPc.slnx` contains a WAP packaging project (`.wapproj`) that `dotnet build` cannot build. Open the solution in Visual Studio for packaging; use the CLI only to build or run the application project.
+
+### Build Steps
+
+1. Build the application project:
+   ```bash
+   dotnet build src/EhViewerForPc -c Release
+   ```
+2. Run it:
+   ```bash
+   dotnet run --project src/EhViewerForPc -c Release
+   ```
+3. Publish to a dedicated output directory as needed:
+   ```bash
+   # Framework-dependent (small, requires the .NET 11 runtime)
+   dotnet publish src/EhViewerForPc -c Release -r win-x64 --self-contained false -p:PublishAot=false -o artifacts/win-x64
+
+   # NativeAOT (self-contained native single file, no runtime required)
+   dotnet publish src/EhViewerForPc -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64-aot
+
+   # Linux x64 managed publish
+   dotnet publish src/EhViewerForPc -c Release -r linux-x64 --self-contained false -p:PublishAot=false -o artifacts/linux-x64
+   ```
+
+The Release configuration enables `PublishAot` by default, so framework-dependent and cross-platform managed publishes must pass `-p:PublishAot=false` explicitly.
+
+### NativeAOT and Packaging
+
+- Requires the MSVC linker and Windows SDK import libraries. If only headers are installed, a NuGet package supplies them at build time (and is excluded from the output)
+- HTML parsing, JSON persistence and bindings are AOT-compatible. Since Avalonia 12, Dev Tools is a separate product, so no debugger package is referenced; text shaping is provided by `Avalonia.HarfBuzz`
+- The output is a native exe plus a few native libraries (`libSkiaSharp.dll`, `libHarfBuzzSharp.dll`, `av_libglesv2.dll`)
+- MSIX packaging: `packaging/EhViewerForPc.Msix` is a Visual Studio Windows application packaging project. It runs an AOT publish into `artifacts/msix/aot` before injecting the payload (`-p:SkipAotPublish=true` reuses the previous output)
+- AOT code generation happens only in the publish pipeline, so the packaging project uses the `PublishAotForMsix` / `InjectAotPayload` targets to replace the payload; check these first if packaging breaks after a Visual Studio upgrade
+- After the package identity was renamed, existing installations cannot be upgraded in place; uninstall the old package first
+
+## 🖥️ Command Line and Diagnostics
+
+All unattended modes run without dialogs; diagnostics can be written to the path given by `--out`. `StartupOptions.Parse` is the authoritative list of arguments.
+
+| Argument | Description |
+| :--- | :--- |
+| `--root <path>` | Add a directory as a data source and enable it (existing sources are preserved) |
+| `--gallery <gid\|stableId>` | Open the matching local gallery after startup |
+| `--data-dir <path>` | Override the application data directory for test isolation |
+| `--out <path>` | Output path for reports or screenshots |
+| `--self-test` | Library scan / decode / read-only self-test, JSON report, exit code 0/1 |
+| `--self-test --skip-snapshot` | Skip the before/after snapshot comparison (faster self-test) |
+| `--self-test --deep-probe` | Read all page dimensions to find tall strips and the largest images |
+| `--online-probe` | Network check: front page → detail → page list → image URL → thumbnail → torrent → tag database |
+| `--login-probe` | Browser sign-in chain check (browser discovery, DevTools, cookie read/write and rejection) |
+| `--ui-smoke` | Synthetic library screenshots, progress restore, virtualization stress test and page navigation |
+| `--ui-audit` | Generate light/dark and wide/narrow captures for every page in an isolated data directory |
+| `--reader-regression` | Reading mode switch regression |
+| `--navigation-regression` | Page navigation and back-stack regression |
+| `--anim-probe <file> [--dump-frames <dir>]` | Frame count, frame durations, decode timings and playback simulation for one animation |
+| `--probe-file <path>` | Diagnose one image: decodable or timing out |
+| `--image-search-probe-root <dir> --out <json>` | Windowless check of the application image-search service chain (requires an empty directory) |
+| `--bookmark-probe-root <dir> --out <json>` | Windowless check of bookmark import/export compatibility (requires an empty directory) |
+| `--verbose` | More detailed diagnostics |
+
+Examples:
+
+```bash
+# Library self-test (read-only)
+dotnet run --project src/EhViewerForPc -c Release -- --self-test --root "<library-root>" --out docs/selftest.json
+
+# Online chain check
+EhViewerForPc.exe --online-probe --out "<report-path>"
+
+# UI smoke test (isolated data directory and synthetic library are used automatically)
+EhViewerForPc.exe --ui-smoke --out "<output-dir>"
+```
+
+## ⌨️ Keyboard Shortcuts
+
+Main window: `Ctrl+F` (`Cmd+F` on macOS) focuses the current page's search box, `F5` refreshes the current page, and `Esc` clears the local library search term.
+
+| Key | Action |
+| :--- | :--- |
+| ← / → | Page turn (direction follows reading order) |
+| PageUp / PageDown / Space | Page turn |
+| Home / End | First / last page |
+| + / - / 0 | Zoom in / out / fit page |
+| Ctrl + wheel | Zoom around the pointer |
+| Double click | Toggle fit page ↔ 100% |
+| Wheel | Single page: pan when content overflows, then turn pages at the edge; horizontal mode: scroll horizontally |
+| F11 / Esc | Fullscreen / exit fullscreen (press again to close) |
+| M / D / B / ? | Mode (single → vertical → horizontal) / direction / background / shortcut help |
+
+## 🗂️ Data Storage
+
+Application state is written to the system local application data directory (`%LocalAppData%\EhViewerForPc` on Windows) and can be overridden with `--data-dir`. If the new directory does not exist but the legacy `%LocalAppData%\EhViewerReader` does, the app keeps using the legacy directory so settings and progress survive the rename; the single-instance mutex also keeps its old name.
+
+```
+settings.json            Settings (session cookies, proxy, online / download / reading preferences, filter rules, sources, search history)
+progress.json            Reading progress and favourites (per work ID, shared by online and local)
+works.json               Work metadata across online and local sources
+downloads.json           Download execution state and completed records
+tag-translations.json    Cached tag translation data
+library-cache-<src>.json Per-source scan signature cache
+download-move.json       Recovery journal for a directory move (removed after completion)
+dimensions/              Page dimension cache for continuous mode
+covers/                  Local cover cache
+thumbnails/              Online cover cache
+online-cache/            Online reader page cache
+exports/                 Export directory
+logs/                    Runtime logs (no tokens or page content)
+```
+
+The **download root** defaults to `Documents\EhViewerDownloads` (configurable) and is separate from the data directory. Imported libraries are opened with `FileAccess.Read` only and no write APIs are used; `--self-test` compares path, size and modification-time snapshots before and after.
+
+## 🧪 Tests and Verification
+
+```bash
+# Core regression (parsing, storage, downloads, settings merge, memory budget, etc.)
+dotnet test tests/EhViewerForPc.Core.Tests -c Debug
+
+# Optional: read-only integration tests against a local library
+EHVIEWER_TEST_ROOT="<library-root>" dotnet test tests/EhViewerForPc.Core.Tests -c Debug
+
+# Image-search backend and windowless UI regression
+dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
+dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=false
+```
+
+Test projects referencing the main application must run sequentially because Avalonia XAML compilation shares output files. The backend also provides `tools/imsearch/Build-Backend.ps1` and `Test-Backend.ps1`, each verification run using its own isolated directory.
+
+The online parser is covered by fixtures captured from fixed page structures; `--online-probe` helps separate network, account and parsing issues after a site change. A Debug build is not a substitute for actually launching a Release / AOT artifact. See [TEST_REPORT.md](docs/TEST_REPORT.md) for an early-version snapshot, and [remediation notes](docs/REMEDIATION.md), [online parity notes](docs/ONLINE-PARITY-2026-11-13.md) and [image-search status](docs/IMPLEMENTATION-LOCAL-IMAGE-SEARCH-STATUS.md) for current behaviour and verification boundaries. Most documents in this repository are written in Chinese.
+
+## ⚠️ Known Limitations
+
+- Online features depend on the site's page structure; layout changes affect parsing, and some actions require a signed-in session and the relevant account permissions
+- Browser sign-in requires Microsoft Edge or Google Chrome; pasting cookies manually is the fallback when neither is installed
+- Archive downloads and posting comments require sign-in; archive availability also depends on account allocation. Rating and comment voting are unavailable anonymously
+- Tag translation data comes from a third-party community project and must be updated manually on first use
+- Original images depend on links exposed on the view page; a resized image is used when the link is absent
+- Image access is subject to account and IP quotas. View-page requests are serialized, but bulk downloads can still trigger rate limiting
+- Favourite category names are local display labels and are not written back to the account
+- Continuous and horizontal modes fit whole pages to the viewport and have no in-page zoom (single-page mode supports 1x–8x)
+- There is no global bitmap cache; page and cover bitmaps are owned by their controls. Scanning does not watch the file system in real time; downloads refresh automatically per settings or on manual refresh
+- Windows, input methods, file pickers and browser sign-in have not been verified on real Linux / macOS machines
+- Recall on a real image library and full-library search performance for local image search are not verified
+
+## 💖 Dependencies and Credits
+
+### Third-Party Components
+
+| Library | Purpose | License |
+| :--- | :--- | :--- |
+| Avalonia / Avalonia.Desktop / Avalonia.Themes.Fluent | Cross-platform UI and Fluent theme | MIT |
+| FluentAvaloniaUI | Navigation view, Frame and Fluent controls | MIT |
+| CommunityToolkit.Mvvm | MVVM source generators | MIT |
+| Avalonia.Skia / SkiaSharp / Avalonia.HarfBuzz | Rendering, image decoding and text shaping | MIT |
+| Microsoft.Data.Sqlite | Image-search index and bookmark file I/O | MIT |
+| xunit / Avalonia.Headless.XUnit | Unit tests and windowless UI regression | See upstream release notes |
+
+Package versions are managed centrally in `Directory.Packages.props`; each component follows its upstream license.
+
+### Data Formats
+
+The local library only reads directory layouts produced by EhViewer-style apps (GPL-3.0) and shares no code with them. Tag translation data comes from a third-party community project and is updated by the user.
+
+## 📄 License and Usage Notes
+
+The code and icon assets in this repository were created independently. No site content or account data is bundled. Online capabilities access only public pages that the user configures and is entitled to access, and the project is not affiliated with the respective sites. No open-source license file is included; please confirm the applicable scope and local legal requirements before use.
+
+---
+
+<div align="center">
+  <sub>For local library organisation and reading only</sub>
+</div>
