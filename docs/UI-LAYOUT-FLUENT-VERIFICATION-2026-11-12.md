@@ -116,7 +116,7 @@ decor=Full; extend=False; client=1240,760; frame=1254.6667,797.3333
 
 | 命令 | 结果 |
 | --- | --- |
-| `dotnet test tests/EhViewerReader.Core.Tests` | 通过 129 / 失败 0 |
+| `dotnet test tests/EhViewerForPc.Core.Tests` | 通过 129 / 失败 0 |
 | `--ui-smoke` | `passed: true`（多源 31 作品、3 版本、下载迁移、登录态、侧栏折叠、水平模式 RTL、沉浸等断言） |
 | `--navigation-regression` | 14 项 PASS + 4 项主题资源解析（含“最小化侧栏沉浸移除页头”） |
 | `--reader-regression` | `passed: true`（单页/连续/横向、尺寸复用、进度、沉浸） |
@@ -174,7 +174,7 @@ decor=Full; extend=False; client=1240,760; frame=1254.6667,797.3333
 1. **系统级完整窗口截图未采集**：审计渲染的是 `window.Content`，不含 OS 绘制的标题栏。改用窗口几何取证（`client` 与 `frame` 相差 37.3 DIP + `extend=False`），因此拖动、双击最大化、最小化/恢复、系统按钮的**人工**点检仍待执行。
 2. **Windows 文本缩放（125%/200% 系统文字）未模拟**：本轮仅在 150% DPI 下验证；DPI 与系统文字比例是不同机制。
 3. **639/640/641 与 919/920/921 逐像素断点**未逐一截图；已覆盖 540 / 800 / 1240 三档代表值。
-4. **MSIX 打包项目无法在本机构建**：`packaging/EhViewerReader.Msix.wapproj` 需要 Visual Studio 的 `Microsoft.DesktopBridge.props`，本机 SDK 未提供，`dotnet build EhViewerReader.slnx` 在此环境直接失败。应用项目与测试项目均正常构建，此限制与本次改动无关。
+4. **MSIX 打包项目无法在本机构建**：`packaging/EhViewerForPc.Msix.wapproj` 需要 Visual Studio 的 `Microsoft.DesktopBridge.props`，本机 SDK 未提供，`dotnet build EhViewerForPc.slnx` 在此环境直接失败。应用项目与测试项目均正常构建，此限制与本次改动无关。
 5. **收藏模式与在线浏览共用实现**，已分别截图（`favorites-*` 与 `online-*`），但仅在线浏览做了高级面板展开态截图。
 6. 欢迎页与“扫描中”浮层未单独模拟截图（审计用合成库直接进入有内容状态）。
 
@@ -182,12 +182,12 @@ decor=Full; extend=False; client=1240,760; frame=1254.6667,797.3333
 
 ```powershell
 Set-Location 'G:\SoftwareProject\Avalonia\EhviewerDownloadReader'
-dotnet build src/EhViewerReader/EhViewerReader.csproj -c Debug
-dotnet test tests/EhViewerReader.Core.Tests/EhViewerReader.Core.Tests.csproj -c Debug --no-build
-dotnet run --project src/EhViewerReader -c Debug --no-build -- --ui-audit --data-dir .qa/layout-fluent-audit-data --out .qa/layout-fluent-audit
-dotnet run --project src/EhViewerReader -c Debug --no-build -- --navigation-regression --data-dir .qa/layout-fluent-nav-data --out .qa/layout-fluent-nav
-dotnet run --project src/EhViewerReader -c Debug --no-build -- --reader-regression --data-dir .qa/layout-fluent-reader-data --out .qa/layout-fluent-reader
-dotnet run --project src/EhViewerReader -c Debug --no-build -- --ui-smoke --data-dir .qa/layout-fluent-smoke-data --out .qa/layout-fluent-smoke
+dotnet build src/EhViewerForPc/EhViewerForPc.csproj -c Debug
+dotnet test tests/EhViewerForPc.Core.Tests/EhViewerForPc.Core.Tests.csproj -c Debug --no-build
+dotnet run --project src/EhViewerForPc -c Debug --no-build -- --ui-audit --data-dir .qa/layout-fluent-audit-data --out .qa/layout-fluent-audit
+dotnet run --project src/EhViewerForPc -c Debug --no-build -- --navigation-regression --data-dir .qa/layout-fluent-nav-data --out .qa/layout-fluent-nav
+dotnet run --project src/EhViewerForPc -c Debug --no-build -- --reader-regression --data-dir .qa/layout-fluent-reader-data --out .qa/layout-fluent-reader
+dotnet run --project src/EhViewerForPc -c Debug --no-build -- --ui-smoke --data-dir .qa/layout-fluent-smoke-data --out .qa/layout-fluent-smoke
 ```
 
 证据目录：`.qa/layout-fluent-audit/`（截图 + `audit.json`）、`.qa/layout-fluent-nav/results.txt`、`.qa/layout-fluent-reader/ui-smoke.json`、`.qa/layout-fluent-smoke/ui-smoke.json`。合成库位于系统临时目录，文档中未写入任何真实账号、Cookie 或私人路径。

@@ -1,5 +1,5 @@
 ---
-name: EhViewer Reader
+name: EhViewer for PC
 description: 使用原生 Fluent 控件的桌面漫画客户端
 colors:
   rose-accent-dark: "#FF6B81"
@@ -46,7 +46,7 @@ components:
     padding: "10px"
 ---
 
-# Design System: EhViewer Reader
+# Design System: EhViewer for PC
 
 ## Overview
 

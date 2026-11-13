@@ -44,7 +44,7 @@
 
 “书签栏 → 导入书签”可直接读取 Android 设置中“导出数据”生成的 `.db`；无需先转换 JSON。输入数据库以只读方式打开，读取 `QUICK_SEARCH`，不改写原文件，不导入下载、历史、收藏或账号。旧版没有 `PAGE_FROM` / `PAGE_TO` 列的备份按未设置页数处理。
 
-“导出书签”默认生成 schema 8 `.db`，含与上游列定义一致的十张表：只有 `QUICK_SEARCH` 写入书签，其余表为空，使原版完整导入流程能够读取。数据库结构保存在 `src/EhViewerReader.Core/Online/EhBookmarkSchema.sql`，列名和类型依据上述上游 greenDAO 定义生成，不包含用户数据。
+“导出书签”默认生成 schema 8 `.db`，含与上游列定义一致的十张表：只有 `QUICK_SEARCH` 写入书签，其余表为空，使原版完整导入流程能够读取。数据库结构保存在 `src/EhViewerForPc.Core/Online/EhBookmarkSchema.sql`，列名和类型依据上述上游 greenDAO 定义生成，不包含用户数据。
 
 原版字段 `NAME`、`MODE`、`CATEGORY`、`KEYWORD`、`ADVANCE_SEARCH`、`MIN_RATING`、`PAGE_FROM`、`PAGE_TO`、`TIME` 均有映射。分类 `-1` 表示全部，选项 `-1` 表示高级选项关闭。11 个选项位逐一保存；中文、空格、引号、`$` 和标签语法按原字符串保留。导出按当前列表顺序写入递增 `TIME`，以兼容 Android 按时间排序的方式。
 
@@ -68,7 +68,7 @@ JSON 支持原版 `QuickSearch.toJson()` 字段组成的数组、`{"quick_search
 
 ```powershell
 # 为 root 使用一个全新的空目录；不使用真实应用数据。
-EhViewerReader.exe --bookmark-probe-root <empty-directory> --out <report.json>
+EhViewerForPc.exe --bookmark-probe-root <empty-directory> --out <report.json>
 ```
 
 本机没有既有图库和已登录账号；本轮使用独立备份夹具、模拟站点响应和本地回环分页服务验证，未上传用户图片。真实站点的登录态订阅、线上图片检索结果、Android 真机导入交互仍需使用者环境确认，不能将协议/结构测试称为线上验证。原有第三方 NativeAOT 警告不在本次修复范围，发布日志保留原始信息。

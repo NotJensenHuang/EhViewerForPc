@@ -49,11 +49,11 @@
 可复现命令：
 
 ```powershell
-dotnet test tests/EhViewerReader.Core.Tests -c Debug
-dotnet run --project src/EhViewerReader -c Debug -- --reader-regression --out <output>
-dotnet run --project src/EhViewerReader -c Debug -- --ui-smoke --out <output>
-dotnet publish src/EhViewerReader -c Release -r win-x64 --self-contained true -p:PublishAot=true -p:PublishTrimmed=true
-dotnet publish src/EhViewerReader -c Release -r linux-x64 --self-contained false -p:PublishAot=false -p:PublishTrimmed=false
+dotnet test tests/EhViewerForPc.Core.Tests -c Debug
+dotnet run --project src/EhViewerForPc -c Debug -- --reader-regression --out <output>
+dotnet run --project src/EhViewerForPc -c Debug -- --ui-smoke --out <output>
+dotnet publish src/EhViewerForPc -c Release -r win-x64 --self-contained true -p:PublishAot=true -p:PublishTrimmed=true
+dotnet publish src/EhViewerForPc -c Release -r linux-x64 --self-contained false -p:PublishAot=false -p:PublishTrimmed=false
 ```
 
 ## 验证边界

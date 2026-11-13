@@ -1,4 +1,4 @@
-param([string]$HostPath = 'src/EhViewerReader.ImageSearch.Host/bin/Debug/net11.0/EhViewerReader.ImageSearch.Host.exe', [string]$OutputDirectory)
+param([string]$HostPath = 'src/EhViewerForPc.ImageSearch.Host/bin/Debug/net11.0/EhViewerForPc.ImageSearch.Host.exe', [string]$OutputDirectory)
 . (Join-Path $PSScriptRoot 'Process.ps1')
 $repository = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 Push-Location $repository

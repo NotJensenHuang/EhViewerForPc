@@ -21,7 +21,7 @@
 
 ### 1.2 基线缺陷（本次已修复）
 
-1. `EhViewerReader.csproj` 缺 `AllowUnsafeBlocks`，主项目无法编译 → 已启用。
+1. `EhViewerForPc.csproj` 缺 `AllowUnsafeBlocks`，主项目无法编译 → 已启用。
 2. `ImageDecoder` 中 `Task.Run` 泛型推断失败、`DecodeCore` 静态方法访问实例信号量 → 已修正。
 3. `ImageBudgetTests.HugeImageIsLimitedByDimension` 与 24MP 预算冲突 → 已改为 512MP 上下文的维度约束测试。
 4. `app.manifest` 缺 `longPathAware`/DPI 感知 → 已补。
@@ -45,7 +45,7 @@
 4. 设置窗口：主题、默认模式/适应/方向/背景、单张解码预算、资料库切换、清除扫描缓存。
 5. 启动参数 `--root` / `--gallery` / `--self-test` / `--ui-smoke`；单实例。
 6. 真实库集成测试（环境变量门控）、自检报告、UI 冒烟截图（合成库）、README/FORMAT/TEST_REPORT。
-7. 资料库零写入（应用自身），所有状态写 `%LocalAppData%\EhViewerReader`。
+7. 资料库零写入（应用自身），所有状态写 `%LocalAppData%\EhViewerForPc`。
 
 ### 2.2 可选（仅在核心全部通过后）
 
@@ -93,7 +93,7 @@
 
 ### 3.5 启动与自检
 
-- `Program.Main` 解析参数；单实例 Mutex（`Local\EhViewerReader`），重复启动退出。
+- `Program.Main` 解析参数；单实例 Mutex（`Local\EhViewerReader`，更名后仍沿用旧锁名，避免新旧版本并发访问同一份数据目录），重复启动退出。
 - `--self-test --root <path> [--out <json>]`：`AppBuilder.SetupWithoutStarting()` 后运行扫描/封面/页面解码/尺寸读取/只读快照，输出 JSON，退出码 0/1。**不创建窗口**。
 - `--ui-smoke [--root <path>]`：无 `--root` 时在 `%TEMP%` 生成合成资料库（纯色/几何测试图，无敏感内容），启动主窗口，等待扫描完成→渲染 PNG→打开阅读器（单页/连续）→渲染 PNG→退出。截图写入 `docs/screenshots/`（仅合成库）。
 - `--gallery <gid|stableId>`：启动后直接打开匹配画廊。
@@ -121,7 +121,7 @@
 ## 5. 文件清单（预计新增/修改）
 
 ```
-src/EhViewerReader/
+src/EhViewerForPc/
   App.axaml(.cs)                     # 主题、服务、启动窗口
   Program.cs                         # 参数、单实例、SetupWithoutStarting
   StartupOptions.cs                  # 参数模型
@@ -142,7 +142,7 @@ src/EhViewerReader/
   Controls/ZoomPanView.cs            # 增加 Request 自加载
   Services/SelfTestService.cs        # 自检与只读快照
   Services/UiSmokeService.cs         # 合成库 + 截图
-tests/EhViewerReader.Core.Tests/
+tests/EhViewerForPc.Core.Tests/
   SpiderInfoParserTests.cs
   PageFileParserTests.cs
   LibraryScannerTests.cs             # 含真实库集成测试（EHVIEWER_TEST_ROOT 门控）
@@ -182,8 +182,8 @@ README.md
 - [x] 关闭阅读器后库滚动位置保持 640 → 640，列表顺序不变（`scrollStable/orderStable = true`）。
 - [x] NativeAOT 发布成功（22.9 MB），AOT 产物完成完整 UI 冒烟与二次启动；JSON 全部走源生成上下文。
 - [x] 损坏页滚轮翻页：3/9 → 4/9（`handled = true`），点击翻页同样不再依赖位图。
-- [x] MSIX 打包项目产出 `artifacts/msix/EhViewerReader_1.0.0.0_x64.msix`（15.8 MB，版本注入与布局隔离均验证）。
-- [x] `EhViewerReader.slnx` 含 Core / App / Msix / Tests 四个工程；解决方案构建跳过打包（VS 可见且不触发 AOT）。
+- [x] MSIX 打包项目产出 `artifacts/msix/EhViewerForPc_1.0.0.0_x64.msix`（15.8 MB，版本注入与布局隔离均验证）。
+- [x] `EhViewerForPc.slnx` 含 Core / App / Msix / Tests 四个工程；解决方案构建跳过打包（VS 可见且不触发 AOT）。
 - [x] 多数据源：2 个源合并后 31 个作品、3 张多版本卡片、7 份副本；同源重复 GID 不合并；`WorkId` 一致且 `StableId` 唯一。
 - [x] 版本管理：3 行、默认副本按“完整性→页数”选出、可切换；“用此版本阅读/设为默认”写回设置。
 - [x] 进度按作品共享：切换副本后仍恢复 2/9；旧 `library-cache.json` 与旧进度键均有回退路径。
@@ -229,14 +229,14 @@ README.md
 | P0 | 打开阅读窗口后无法浏览库 | `ShowDialog` 为模态调用，主窗口被禁用 | 改为 `Show(owner)`；按 `StableId` 复用已开窗口；`ShutdownMode.OnMainWindowClose` |
 | P0 | 关闭阅读窗口后库滚动条位置跳变 | `RefreshItemProgress` 走 `ApplyFilter`，默认“最近阅读”排序重排 + `ItemsRepeater` 全量重建 | 关闭阅读器只更新卡片状态；进度相关筛选重建时按 `_libraryOffset` 还原；用户主动搜索/筛选/排序仍回顶部 |
 | P0 | 损坏图片后滚轮/点击无法翻页 | `ZoomPanView` 把“有位图”当成翻页前提，解码失败时 `_bitmap == null` 直接丢弃事件 | 滚轮/点击翻页与位图解耦；缩放/平移仍要求位图；新增 `SimulateWheel` 测试钩子与冒烟断言（3/9 → 4/9） |
-| P1 | 缺少 MSIX 分发形态 | — | 新增 `packaging/EhViewerReader.Msix`：AOT 发布 → 布局暂存 → `MakeAppx`，产出 15.8 MB MSIX |
+| P1 | 缺少 MSIX 分发形态 | — | 新增 `packaging/EhViewerForPc.Msix`：AOT 发布 → 布局暂存 → `MakeAppx`，产出 15.8 MB MSIX |
 | P1 | AOT 发布失败 | `System.Text.Json` 反射序列化在 NativeAOT 不可用；本机 Windows SDK 缺导入库 | 源生成上下文 `StorageJsonContext`/`ReaderJsonContext`；`JsonTypeInfo<T>` 入口；AOT 时引用 `Microsoft.Windows.SDK.CPP.x64` 提供链接库 |
 
 ### 8.4 多数据源与版本管理（第二轮交付）
 
 | 级别 | 事项 | 处置 |
 | --- | --- | --- |
-| P0 | `EhViewerReader.slnx` 缺 MSIX 打包工程，VS 中看不到 | 加入 `/packaging/` 节点；工程在**解决方案构建**（`BuildingSolutionFile=true`）时跳过 AOT 与打包并打印提示，直接构建该工程或 `-p:PackMsixOnBuild=true` 时照常出包 |
+| P0 | `EhViewerForPc.slnx` 缺 MSIX 打包工程，VS 中看不到 | 加入 `/packaging/` 节点；工程在**解决方案构建**（`BuildingSolutionFile=true`）时跳过 AOT 与打包并打印提示，直接构建该工程或 `-p:PackMsixOnBuild=true` 时照常出包 |
 | P0 | 多设备备份目录无法同时读取 | `AppSettings.Sources`（id/rootPath/name/enabled/lastScanUtc）+ `LibrarySource`；schema 1 的 `LibraryRoot` 在 `Normalize()` 中迁移为第一个数据源（离线盘也保留）；每源独立 `library-cache-<id>.json`，旧 `library-cache.json` 首次加载时被收养 |
 | P0 | 同一作品在多源出现会重复显示 | 新增 `LibraryMerger`：按 `WorkId` 分组，仅当来自 ≥2 个不同数据源时合并；同源重复 GID 仍各自成卡 |
 | P0 | 进度/收藏在换副本后丢失 | 引入 `WorkId`（GID 或 `dir@<pathHash>`，与旧 `StableId` 同形），进度按作品读写，读时回退旧键；`StableId` 在多源时追加 `@<sourceId>` 保证卡片键唯一 |
@@ -255,7 +255,7 @@ README.md
 
 ### 8.5 未采纳/延后
 
-- 独立 `EhViewerReader.App.Tests`（Headless）项目：当前用 `--self-test`/`--ui-smoke` 覆盖，避免新增 Avalonia.Headless 依赖。
+- 独立 `EhViewerForPc.App.Tests`（Headless）项目：当前用 `--self-test`/`--ui-smoke` 覆盖，避免新增 Avalonia.Headless 依赖。
 - 全局 `PageBitmapCache` 引用计数缓存：改为控件自持 + 单页预取，内存上界更小（实测峰值 255 MB）。
 - 只读 ACL 自动化：已实现快照哈希比对；ACL 副本验证留作手工步骤（README 记录）。
 - 双页模式、继续阅读条：保持可选，不阻塞验收。

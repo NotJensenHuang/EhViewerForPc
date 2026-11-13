@@ -1,0 +1,84 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerForPc.ViewModels"
+        xmlns:controls="using:EhViewerForPc.Controls"
+        mc:Ignorable="d" d:DesignWidth="900" d:DesignHeight="560"
+        x:Class="EhViewerForPc.Views.VersionsPage"
+        x:DataType="vm:VersionsViewModel"
+        Background="Transparent">
+  <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
+    <!-- Only the work identity stays fixed; the explanatory hints moved into
+         the scroll region so a short window keeps its list height. -->
+    <Border Grid.Row="0" Classes="page-header">
+      <StackPanel Spacing="5">
+        <SelectableTextBlock Text="{Binding Title}" FontSize="16" FontWeight="Bold" TextWrapping="Wrap" />
+        <WrapPanel Orientation="Horizontal">
+          <SelectableTextBlock Text="{Binding GidText}" Classes="caption" FontFamily="{DynamicResource AppMonoFont}"
+                               Margin="0,0,10,0" />
+          <SelectableTextBlock Text="{Binding SummaryText}" Classes="caption" />
+        </WrapPanel>
+      </StackPanel>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="24,14" Spacing="10">
+        <SelectableTextBlock Text="{Binding DefaultHint}" Classes="secondary" FontSize="12" TextWrapping="Wrap" />
+        <SelectableTextBlock Text="{Binding DifferHint}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+
+        <ItemsControl ItemsSource="{Binding Versions}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <StackPanel Spacing="10" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:GalleryVersionViewModel">
+            <Border Classes="panel" Padding="14,12">
+              <Grid ColumnDefinitions="*" RowDefinitions="Auto,Auto,Auto,Auto">
+                <WrapPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal">
+                  <Border Background="{DynamicResource AppAccentSoftBrush}" CornerRadius="999" Padding="9,2"
+                          IsVisible="{Binding IsPrimary}" Margin="0,0,8,4">
+                    <SelectableTextBlock Text="默认" FontSize="12" Foreground="{DynamicResource AppAccentBrush}" />
+                  </Border>
+                  <SelectableTextBlock Text="{Binding SourceName}" Margin="0,0,8,4" FontWeight="Bold" FontSize="12"
+                             VerticalAlignment="Center" MaxWidth="320" TextWrapping="NoWrap"
+                             TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding SourceName}" />
+                  <SelectableTextBlock Text="{Binding PageCountText}" Margin="0,0,8,4" Classes="caption" VerticalAlignment="Center" />
+                  <SelectableTextBlock Text="{Binding StatusText}" Classes="caption" VerticalAlignment="Center"
+                             Foreground="{DynamicResource AppWarningBrush}"
+                             IsVisible="{Binding IsIncomplete}" />
+                </WrapPanel>
+
+                <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0" Classes="actions">
+                  <Button Content="用此版本阅读" Classes="accent" FontSize="12" Padding="10,3" MinHeight="26"
+                          Tag="{Binding}" Click="OnRead" ToolTip.Tip="设为默认副本并打开阅读器" />
+                  <Button Content="设为默认" FontSize="12" Padding="10,3" MinHeight="26"
+                          Tag="{Binding}" Click="OnSetDefault" IsEnabled="{Binding !IsPrimary}" />
+                  <Button Content="打开文件夹" Classes="ghost" FontSize="12" Padding="10,3" MinHeight="26"
+                          Tag="{Binding}" Click="OnOpenFolder" />
+                </WrapPanel>
+
+                <SelectableTextBlock Grid.Row="1" Grid.Column="0" Text="{Binding FolderName}"
+                           Classes="secondary" FontSize="12" Margin="0,7,0,0"
+                           TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                           ToolTip.Tip="{Binding FolderPath}" />
+
+                <WrapPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Margin="0,3,0,0">
+                  <SelectableTextBlock Text="{Binding DetailText}" Margin="0,0,12,4" Classes="muted" FontSize="12" />
+                  <SelectableTextBlock Text="{Binding LastWriteText}" Classes="muted" FontSize="12" />
+                </WrapPanel>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="2" Classes="statusbar">
+      <Button Content="关闭" Click="OnClose" HorizontalAlignment="Right" VerticalAlignment="Center" />
+    </Border>
+  </Grid>
+</UserControl>

@@ -1,0 +1,128 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerForPc.ViewModels" xmlns:controls="using:EhViewerForPc.Controls"
+             x:Class="EhViewerForPc.Views.OnlineGalleryPage" x:DataType="vm:OnlineGalleryViewModel">
+  <controls:GalleryDetailsView Details="{Binding Presentation}">
+    <controls:GalleryDetailsView.Actions>
+        <WrapPanel Orientation="Horizontal" Classes="actions">
+          <Button Classes="accent" Content="{Binding ReadButtonText}" Command="{Binding ReadCommand}" MinWidth="96"
+                  ToolTip.Tip="本地库已有该作品时直接打开本地副本" />
+          <Button Content="在线阅读" Command="{Binding ReadOnlineCommand}" IsVisible="{Binding IsInLocalLibrary}" />
+          <Button Content="阅读本地缺页副本" Command="{Binding ReadPartialLocalCommand}" IsVisible="{Binding HasPartialLocalCopy}" />
+          <Button Content="{Binding DownloadButtonText}" IsEnabled="{Binding CanDownload}" Command="{Binding DownloadCommand}" />
+          <ComboBox AutomationProperties.Name="图片质量" Width="148" ItemsSource="{Binding QualityOptions}" SelectedItem="{Binding SelectedQuality}"
+                    ToolTip.Tip="{Binding QualityHint}">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:FeedOption">
+                <TextBlock Text="{Binding Label}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <Button Content="{Binding FavoriteText}" Click="OnFavoriteClick" IsEnabled="{Binding CanOpenFavoriteDialog}"
+                  AutomationProperties.Name="收藏分类" ToolTip.Tip="打开收藏分类对话框；未登录时会提示先登录" />
+          <SelectableTextBlock Text="{Binding FavoriteSlotText}" Classes="caption" VerticalAlignment="Center"
+                     IsVisible="{Binding HasFavoriteSlotText}" />
+          <Button Content="重新检查收藏" Classes="ghost" Command="{Binding CheckFavoriteCommand}"
+                  IsVisible="{Binding FavoriteNeedsCheck}" IsEnabled="{Binding !FavoriteBusy}" />
+          <Button Content="刷新" Classes="ghost" Command="{Binding RefreshCommand}" />
+        </WrapPanel>
+    </controls:GalleryDetailsView.Actions>
+    <controls:GalleryDetailsView.SideContent>
+          <StackPanel Spacing="6">
+            <Button Content="种子列表" Command="{Binding OpenTorrentsCommand}" IsEnabled="{Binding HasTorrents}"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+            <Button Content="归档下载" Command="{Binding OpenArchiveCommand}" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center" />
+            <Button Content="在浏览器打开" Command="{Binding OpenInBrowserCommand}" Classes="ghost"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+          </StackPanel>
+    </controls:GalleryDetailsView.SideContent>
+    <controls:GalleryDetailsView.ExtraContent>
+      <StackPanel Spacing="24">
+          <!-- Rating -->
+          <Border Classes="tile" Padding="16,14">
+            <controls:AdaptiveGrid Breakpoint="520" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12" RowSpacing="10">
+              <StackPanel Spacing="2">
+                <SelectableTextBlock Text="我的评分" Classes="h2" />
+                <SelectableTextBlock Text="{Binding RatingStatus}" Classes="caption"
+                           IsVisible="{Binding HasRatingStatus}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2" HorizontalAlignment="Center">
+                <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="1"
+                        AutomationProperties.Name="评分 1 星" ToolTip.Tip="1 星" />
+                <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="2"
+                        AutomationProperties.Name="评分 2 星" ToolTip.Tip="2 星" />
+                <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="3"
+                        AutomationProperties.Name="评分 3 星" ToolTip.Tip="3 星" />
+                <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="4"
+                        AutomationProperties.Name="评分 4 星" ToolTip.Tip="4 星" />
+                <Button Content="★" Classes="ghost" FontSize="20" Command="{Binding RateCommand}" CommandParameter="5"
+                        AutomationProperties.Name="评分 5 星" ToolTip.Tip="5 星" />
+              </StackPanel>
+              <StackPanel Grid.Column="2" Spacing="2" VerticalAlignment="Center">
+                <SelectableTextBlock Text="{Binding MyRatingText}" Classes="secondary" HorizontalAlignment="Right" />
+                <SelectableTextBlock Text="{Binding RatingCountText}" Classes="caption" HorizontalAlignment="Right" />
+              </StackPanel>
+            </controls:AdaptiveGrid>
+          </Border>
+
+          <!-- Comments -->
+          <Border Classes="tile">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <SelectableTextBlock Text="{Binding CommentHeader}" Classes="h2" />
+                <Button Grid.Column="1" Content="加载全部" Classes="ghost" FontSize="12"
+                        Command="{Binding ReloadCommentsCommand}" IsVisible="{Binding HasMoreComments}" />
+              </Grid>
+
+              <SelectableTextBlock Text="还没有评论" Classes="caption" IsVisible="{Binding !HasComments}" />
+
+              <ItemsControl ItemsSource="{Binding Comments}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:CommentItemViewModel">
+                    <Border Classes="row" Margin="0,0,0,8">
+                      <StackPanel Spacing="5">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="8">
+                          <SelectableTextBlock Text="{Binding User}" FontWeight="Bold" FontSize="12" />
+                          <Border Grid.Column="1" Background="{DynamicResource AppAccentSoftBrush}" CornerRadius="4"
+                                  Padding="5,1" IsVisible="{Binding IsUploader}">
+                            <SelectableTextBlock Text="{Binding UploaderBadge}" FontSize="12"
+                                       Foreground="{DynamicResource AppAccentBrush}" />
+                          </Border>
+                          <SelectableTextBlock Grid.Column="3" Text="{Binding PostedText}" Classes="caption" />
+                        </Grid>
+                        <SelectableTextBlock Text="{Binding Text}" TextWrapping="Wrap" FontSize="12" />
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                          <SelectableTextBlock Text="{Binding ScoreText}" Classes="caption" VerticalAlignment="Center" />
+                          <Button Content="+" Classes="ghost" FontSize="12" Padding="5,0" MinHeight="0"
+                                  AutomationProperties.Name="赞成评论" Command="{Binding VoteUpCommand}" IsVisible="{Binding CanVote}" ToolTip.Tip="赞成" />
+                          <Button Content="−" Classes="ghost" FontSize="12" Padding="5,0" MinHeight="0"
+                                  AutomationProperties.Name="反对评论" Command="{Binding VoteDownCommand}" IsVisible="{Binding CanVote}" ToolTip.Tip="反对" />
+                          <Button Content="编辑" Classes="ghost" FontSize="12" Padding="5,0" MinHeight="0"
+                                  Command="{Binding EditCommand}" IsVisible="{Binding CanEdit}" />
+                          <SelectableTextBlock Text="{Binding VoteDetail}" Classes="muted" FontSize="12"
+                                     VerticalAlignment="Center" IsVisible="{Binding HasVoteDetail}" />
+                        </StackPanel>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <StackPanel Spacing="6">
+                <TextBox Text="{Binding CommentText}" AcceptsReturn="True" Height="72" TextWrapping="Wrap"
+                         PlaceholderText="写下评论（需要登录）" />
+                <WrapPanel Orientation="Horizontal" Classes="actions">
+                  <Button Classes="accent" Content="{Binding CommentSubmitText}" Command="{Binding PostCommentCommand}"
+                          IsEnabled="{Binding CanPostComment}" />
+                  <Button Content="取消编辑" Classes="ghost" Command="{Binding CancelEditCommand}"
+                          IsVisible="{Binding IsEditingComment}" />
+                  <SelectableTextBlock Text="{Binding CommentStatus}" Classes="caption" VerticalAlignment="Center"
+                             TextWrapping="Wrap" />
+                </WrapPanel>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+      </StackPanel>
+    </controls:GalleryDetailsView.ExtraContent>
+  </controls:GalleryDetailsView>
+</UserControl>

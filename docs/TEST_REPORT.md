@@ -18,7 +18,7 @@
 
 ## 2. 单元测试
 
-命令：`dotnet test tests/EhViewerReader.Core.Tests -c Debug`
+命令：`dotnet test tests/EhViewerForPc.Core.Tests -c Debug`
 
 结果：**44 passed / 0 failed**（150 ms 级）。
 
@@ -29,7 +29,7 @@
 命令：
 
 ```bash
-EHVIEWER_TEST_ROOT="D:/BackUp/phoneGT5pro/ehviewer" dotnet test tests/EhViewerReader.Core.Tests
+EHVIEWER_TEST_ROOT="D:/BackUp/phoneGT5pro/ehviewer" dotnet test tests/EhViewerForPc.Core.Tests
 ```
 
 结果：**34 passed / 0 failed**（约 53 s，含三次全库扫描）。
@@ -101,14 +101,14 @@ EHVIEWER_TEST_ROOT="D:/BackUp/phoneGT5pro/ehviewer" dotnet test tests/EhViewerRe
 | 总字节 | 101,262,590,747 | 101,262,590,747 |
 | 内容哈希（路径+长度+mtime） | `3BC70DB7…1B408A` | `3BC70DB7…1B408A` |
 
-差异为 0，`libraryUnchanged = true`。应用自身文件仅写入 `%LocalAppData%\EhViewerReader`（本次为临时数据目录）。
+差异为 0，`libraryUnchanged = true`。应用自身文件仅写入 `%LocalAppData%\EhViewerForPc`（本次为临时数据目录）。
 
 ## 5. UI 冒烟（合成库）
 
 命令：
 
 ```bash
-EhViewerReader.exe --ui-smoke --out docs/screenshots
+EhViewerForPc.exe --ui-smoke --out docs/screenshots
 ```
 
 报告：`docs/screenshots/ui-smoke.json`；截图：`library.png`、`library-search.png`、`library-multi-source.png`、`versions.png`、`details.png`、`reader-single.png`、`reader-continuous.png`、`settings.png`。
@@ -163,18 +163,18 @@ EhViewerReader.exe --ui-smoke --out docs/screenshots
 
 | 项目 | 结果 |
 | --- | --- |
-| `dotnet build EhViewerReader.slnx -c Release` | 0 警告 / 0 错误 |
+| `dotnet build EhViewerForPc.slnx -c Release` | 0 警告 / 0 错误 |
 | `dotnet publish -r win-x64 --self-contained false` | 成功，产物在 `artifacts/win-x64` |
-| `dotnet publish -r win-x64 -p:PublishAot=true` | 成功，`EhViewerReader.exe` 22.9 MB |
+| `dotnet publish -r win-x64 -p:PublishAot=true` | 成功，`EhViewerForPc.exe` 22.9 MB |
 | Release UI 冒烟 | 通过（截图与报告来自 Release 构建） |
 | 单元测试（Release） | 44/44 通过 |
-| 解决方案内容 | Core / App / `packaging/EhViewerReader.Msix` / Tests（打包工程在解决方案构建时跳过 AOT 与打包） |
+| 解决方案内容 | Core / App / `packaging/EhViewerForPc.Msix` / Tests（打包工程在解决方案构建时跳过 AOT 与打包） |
 
 ### 6.1 NativeAOT 验证
 
 | 项目 | 结果 |
 | --- | --- |
-| 发布命令 | `dotnet publish src/EhViewerReader -c Release -r win-x64 -p:PublishAot=true` |
+| 发布命令 | `dotnet publish src/EhViewerForPc -c Release -r win-x64 -p:PublishAot=true` |
 | 原生可执行文件 | 22,886,400 B（另需 `libSkiaSharp.dll`、`libHarfBuzzSharp.dll`、`av_libglesv2.dll`） |
 | 托管程序集 | 无（IL 全部编译为原生代码） |
 | AOT 首次冒烟 | 通过，21.81 s（含 31 画廊合成库、6,315 项目录创建、全部截图） |
@@ -191,7 +191,7 @@ EhViewerReader.exe --ui-smoke --out docs/screenshots
 
 | 项目 | 结果 |
 | --- | --- |
-| 源文件 | `src/EhViewerReader/Assets/icon.ico`（9 帧：16/20/24/32/40/48/64/128/256，32bpp DIB） |
+| 源文件 | `src/EhViewerForPc/Assets/icon.ico`（9 帧：16/20/24/32/40/48/64/128/256，32bpp DIB） |
 | 可执行文件内嵌 | 通过（256×256 帧数据位于 PE 资源段） |
 | 窗口标题栏图标 | `Window.Icon` 加载成功（`ui-smoke.json` → `windowIcon = true`） |
 | 小尺寸可读性 | 16/20/24 px 使用简化标记 + 书脊缺口；24 px 可辨识为开卷书本 |
@@ -200,12 +200,12 @@ EhViewerReader.exe --ui-smoke --out docs/screenshots
 
 | 项目 | 结果 |
 | --- | --- |
-| 项目 | `packaging/EhViewerReader.Msix`（已加入 `EhViewerReader.slnx` 的 `/packaging/` 节点，VS 可见） |
-| 命令 | `dotnet build packaging/EhViewerReader.Msix -c Release`（解决方案构建时自动跳过，需 `-p:PackMsixOnBuild=true` 强制） |
+| 项目 | `packaging/EhViewerForPc.Msix`（已加入 `EhViewerForPc.slnx` 的 `/packaging/` 节点，VS 可见） |
+| 命令 | `dotnet build packaging/EhViewerForPc.Msix -c Release`（解决方案构建时自动跳过，需 `-p:PackMsixOnBuild=true` 强制） |
 | 流程 | AOT 发布 → 布局暂存（剔除 PDB）→ SDK BuildTools 的 `MakeAppx` 打包 |
-| 产物 | `artifacts/msix/EhViewerReader_1.0.0.0_x64.msix`，15.8 MB |
+| 产物 | `artifacts/msix/EhViewerForPc_1.0.0.0_x64.msix`，15.8 MB |
 | 包内文件 | 13 项：AOT exe、3 个原生库、6 个磁贴图标、`AppxManifest.xml`、`AppxBlockMap.xml`、`[Content_Types].xml` |
-| 清单 | `Identity EhViewerReader.Local` · `CN=EhViewerReader` · x64 · `runFullTrust` · min 10.0.17763 |
+| 清单 | `Identity EhViewerForPc.Local` · `CN=EhViewerForPc` · x64 · `runFullTrust` · min 10.0.17763 |
 | 版本注入 | `-p:MsixVersion=1.2.3.4` 同时写入清单与文件名（已验证） |
 | 布局隔离 | 打包使用 `artifacts/msix/aot`，应用运行中也能打包（不占用 `artifacts/win-x64-aot`） |
 | 签名 | 未签名；`-p:MsixPfx` + `-p:MsixPfxPassword` 走 `signtool` |
@@ -295,7 +295,7 @@ EhViewerReader.exe --ui-smoke --out docs/screenshots
 
 ### 8.1 单元测试
 
-命令：`dotnet test tests/EhViewerReader.Core.Tests`
+命令：`dotnet test tests/EhViewerForPc.Core.Tests`
 
 结果：**60 passed / 0 failed**。新增 8 项在线解析回归（`OnlineParserTests`，fixture 取自真实页面）与 8 项下载/网络回归（`DownloadAndNetworkTests`：目录名清洗、标签子目录、源生成 JSON 往返、Cookie 解析、hosts 两种顺序）。
 
@@ -311,7 +311,7 @@ EhViewerReader.exe --ui-smoke --out docs/screenshots
 
 ### 8.2 在线链路自检（`--online-probe`）
 
-命令：`EhViewerReader.exe --online-probe --out artifacts/online-probe.json`（未登录，系统代理）
+命令：`EhViewerForPc.exe --online-probe --out artifacts/online-probe.json`（未登录，系统代理）
 
 | 阶段 | 结果 |
 | --- | --- |
@@ -338,7 +338,7 @@ EhViewerReader.exe --ui-smoke --out docs/screenshots
 ### 8.5 NativeAOT 与裁剪
 
 ```
-dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-test
+dotnet publish src/EhViewerForPc -c Release -r win-x64 -o artifacts/aot-test
 ```
 
 - 结果：原生 exe **29.7 MB**，另附 `libSkiaSharp.dll` / `libHarfBuzzSharp.dll` / `av_libglesv2.dll`。
@@ -354,7 +354,7 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-test
 
 ### 9.1 单元测试
 
-命令：`dotnet test tests/EhViewerReader.Core.Tests`
+命令：`dotnet test tests/EhViewerForPc.Core.Tests`
 
 结果：**70 passed / 0 failed**（新增 10 项 `OnlineExtrasTests`）：
 
@@ -399,7 +399,7 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-test
 ### 9.5 NativeAOT
 
 ```
-dotnet publish src/EhViewerReader -c Release -r win-x64 -o artifacts/aot-extras
+dotnet publish src/EhViewerForPc -c Release -r win-x64 -o artifacts/aot-extras
 ```
 
 - 原生 exe **30.3 MB**，`IL2026 / IL3050 = 0`（`reg.exe` 后置步骤被安全策略拦截，publish 退出码仍为 0，产物完整）。

@@ -1,0 +1,26 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:fa="using:FluentAvalonia.Styling"
+             xmlns:controls="using:EhViewerForPc.Controls"
+             x:Class="EhViewerForPc.App"
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <ResourceDictionary>
+      <Color x:Key="SystemAccentColor">#FF6B81</Color>
+      <Color x:Key="SystemAccentColorLight1">#FF8A9B</Color>
+      <Color x:Key="SystemAccentColorLight2">#FFA6B3</Color>
+      <Color x:Key="SystemAccentColorLight3">#FFC2CA</Color>
+      <Color x:Key="SystemAccentColorDark1">#E2556B</Color>
+      <Color x:Key="SystemAccentColorDark2">#C2465B</Color>
+      <Color x:Key="SystemAccentColorDark3">#A2384B</Color>
+      <controls:IndexMatchConverter x:Key="IndexMatch" />
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://EhViewerForPc/Styles/OnlineCardTemplates.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+  <Application.Styles>
+    <fa:FluentAvaloniaTheme PreferSystemTheme="False" PreferUserAccentColor="False" CustomAccentColor="#FF6B81" />
+    <StyleInclude Source="avares://EhViewerForPc/Styles/Theme.axaml" />
+  </Application.Styles>
+</Application>

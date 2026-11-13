@@ -4,7 +4,7 @@
 
 用户先授权将完整Rust后端迁移到C#并执行，随后确认这台PC没有图库、没有运行过应用，并明确要求继续接入正式UI和导航。因此E07真实质量评测保持缺数据，正式UI不再等待E07。
 
-开始已有的 `packaging/EhViewerReader.Msix/EhViewerReader.Msix.wapproj` 修改完整保留。未commit/push、未打包分发、未安装Rust/Docker/WSL、未改变系统设置。
+开始已有的 `packaging/EhViewerForPc.Msix/EhViewerForPc.Msix.wapproj` 修改完整保留。未commit/push、未打包分发、未安装Rust/Docker/WSL、未改变系统设置。
 
 ## 已可使用的链路
 
@@ -43,11 +43,11 @@
 
 | 位置 | 职责 |
 | --- | --- |
-| `src/EhViewerReader.ImageSearch/` | 完整托管提取、聚类、HNSW、汉明/Wilson、hash、SQLite、有界导入、磁盘IVF、增量快照 |
-| `src/EhViewerReader.ImageSearch.Host/` | WinExe六CLI、loopback HTTP、鉴权、指标/可选推送、64图生成探针 |
-| `src/EhViewerReader/Services/LocalImageSearchService.cs` | 图库标量快照、来源/路径校验、manifest、建库/更新/发布/回退/清理、结果有效性 |
-| `src/EhViewerReader/ViewModels/ImageSearchViewModel.cs` | 输入/预览/取消/裁剪/结果、建库与更新命令、精确页阅读请求 |
-| `src/EhViewerReader/Views/ImageSearchPage.axaml`及code-behind | Fluent正式页面、文件/拖放/剪贴板、Uniform裁剪坐标、懒解码命中页缩略图 |
+| `src/EhViewerForPc.ImageSearch/` | 完整托管提取、聚类、HNSW、汉明/Wilson、hash、SQLite、有界导入、磁盘IVF、增量快照 |
+| `src/EhViewerForPc.ImageSearch.Host/` | WinExe六CLI、loopback HTTP、鉴权、指标/可选推送、64图生成探针 |
+| `src/EhViewerForPc/Services/LocalImageSearchService.cs` | 图库标量快照、来源/路径校验、manifest、建库/更新/发布/回退/清理、结果有效性 |
+| `src/EhViewerForPc/ViewModels/ImageSearchViewModel.cs` | 输入/预览/取消/裁剪/结果、建库与更新命令、精确页阅读请求 |
+| `src/EhViewerForPc/Views/ImageSearchPage.axaml`及code-behind | Fluent正式页面、文件/拖放/剪贴板、Uniform裁剪坐标、懒解码命中页缩略图 |
 | `MainWindow`、`ReaderViewModel` | 既有Frame导航、显式页号优先历史、同作品副本切换和旧reader释放 |
 | `LocalImageSearchSettings`、`AppSettings`、`SettingsViewModel`、`SettingsPage` | schema7、默认关闭、草稿保存、索引范围与位置、精度、自动更新 |
 | `ShellViewModel`、`AppServices` | 惰性组装、配置取消、可退订下载/库事件、后台维护 |
@@ -60,15 +60,15 @@
 
 | 命令/场景 | 退出码/结果 | 本机证据 |
 | --- | --- | --- |
-| `dotnet test tests/EhViewerReader.Core.Tests/EhViewerReader.Core.Tests.csproj -c Debug -p:PublishAot=false` | 0；129/129 | `.qa/image-search/tests/core-final.trx`、`core-final-tests.log` |
-| `dotnet test tests/EhViewerReader.ImageSearch.Tests/EhViewerReader.ImageSearch.Tests.csproj -c Debug` | 0；31/31 | `.qa/image-search/tests/backend.trx`、`backend-tests.log` |
-| `dotnet test tests/EhViewerReader.ImageSearch.Ui.Tests/EhViewerReader.ImageSearch.Ui.Tests.csproj -c Debug -p:PublishAot=false` | 0；12/12 | `.qa/image-search/tests/ui.trx`、`ui-tests.log` |
+| `dotnet test tests/EhViewerForPc.Core.Tests/EhViewerForPc.Core.Tests.csproj -c Debug -p:PublishAot=false` | 0；129/129 | `.qa/image-search/tests/core-final.trx`、`core-final-tests.log` |
+| `dotnet test tests/EhViewerForPc.ImageSearch.Tests/EhViewerForPc.ImageSearch.Tests.csproj -c Debug` | 0；31/31 | `.qa/image-search/tests/backend.trx`、`backend-tests.log` |
+| `dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests/EhViewerForPc.ImageSearch.Ui.Tests.csproj -c Debug -p:PublishAot=false` | 0；12/12 | `.qa/image-search/tests/ui.trx`、`ui-tests.log` |
 | `Build-Backend.ps1` + `Test-Backend.ps1` 托管版 | 0；31项进程检查 | `.qa/image-search/verification-managed-verified/verification.json` |
-| `Build-Backend.ps1 -Aot` + `Test-Backend.ps1 -HostPath artifacts/image-search-host-aot/EhViewerReader.ImageSearch.Host.exe` | 0；31项原生进程检查 | 最终 `.qa/image-search/verification-aot-delivery/verification.json` |
+| `Build-Backend.ps1 -Aot` + `Test-Backend.ps1 -HostPath artifacts/image-search-host-aot/EhViewerForPc.ImageSearch.Host.exe` | 0；31项原生进程检查 | 最终 `.qa/image-search/verification-aot-delivery/verification.json` |
 | 64张合成PNG端到端 | 0；64资产、32402描述符；8条裁剪均进入Top10；20项检查 | 上述各verification目录的 `synthetic.json` |
 | 主程序 `dotnet publish ... -c Release -r win-x64 -p:PublishAot=true -o artifacts/image-search-reader-aot` | 0；有第三方警告 | 最终 `.qa/image-search/app-aot-delivery-build.log` |
 | 主程序 `--image-search-probe-root <隔离空目录> --out <报告>` | 0；9项服务/增量/映射/页号模型检查 | 最终 `.qa/image-search/app-native-delivery-report.json` |
-| `git diff --check -- Directory.Packages.props EhViewerReader.slnx docs src tests tools` | 0 | 不包含用户既有MSIX文件的尾随空格 |
+| `git diff --check -- Directory.Packages.props EhViewerForPc.slnx docs src tests tools` | 0 | 不包含用户既有MSIX文件的尾随空格 |
 
 实际命令还使用`--no-restore`、TRX logger和results-directory以复用已恢复依赖，完整输出保存在对应log。共享Avalonia工程测试串行运行；曾发生的并行XAML输出文件锁已通过串行执行消除。
 

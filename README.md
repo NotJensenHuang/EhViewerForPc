@@ -1,6 +1,6 @@
-<img src="src/EhViewerReader/Assets/icon.png" width="96" align="right" alt="应用图标">
+<img src="src/EhViewerForPc/Assets/icon.png" width="96" align="right" alt="应用图标">
 
-# EhViewer Reader — 在线 + 本地漫画客户端
+# EhViewer for PC — 在线 + 本地漫画客户端
 
 面向桌面的 E-Hentai / ExHentai 客户端与本地阅读器：在线浏览、搜索、账号登录、代理、下载队列，与原有的 **只读本地资料库**（EhViewer 下载目录）统一在左侧导航中。
 
@@ -162,11 +162,11 @@ Fluent 迁移后的逐页检查、修复与覆盖范围见 [UI 检查记录](doc
 ## 构建与运行
 
 ```bash
-dotnet build src/EhViewerReader -c Release
-dotnet run --project src/EhViewerReader -c Release
+dotnet build src/EhViewerForPc -c Release
+dotnet run --project src/EhViewerForPc -c Release
 ```
 
-> 解决方案 `EhViewerReader.slnx` 含 WAP 打包工程（wapproj），`dotnet build` 无法构建它——请用 Visual Studio 打开 slnx（生成、F5 调试、打包都在 VS 内完成）；命令行只构建/运行应用工程即可。
+> 解决方案 `EhViewerForPc.slnx` 含 WAP 打包工程（wapproj），`dotnet build` 无法构建它——请用 Visual Studio 打开 slnx（生成、F5 调试、打包都在 VS 内完成）；命令行只构建/运行应用工程即可。
 
 首次启动可直接使用「在线浏览」。本地库在「本地库 → 选择资料库」中指向 EhViewer 下载根目录（例如 `D:\BackUp\phoneGT5pro\ehviewer`）；下载目录默认是 `文档\EhViewerDownloads`，可在设置中修改。
 
@@ -174,10 +174,10 @@ dotnet run --project src/EhViewerReader -c Release
 
 ```bash
 # 依赖框架（体积小，需要 .NET 11 运行时）
-dotnet publish src/EhViewerReader -c Release -r win-x64 --self-contained false -o artifacts/win-x64
+dotnet publish src/EhViewerForPc -c Release -r win-x64 --self-contained false -o artifacts/win-x64
 
 # NativeAOT（自包含原生单文件，无需 .NET 运行时）
-dotnet publish src/EhViewerReader -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64-aot
+dotnet publish src/EhViewerForPc -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64-aot
 ```
 
 ### NativeAOT 说明
@@ -190,15 +190,17 @@ dotnet publish src/EhViewerReader -c Release -r win-x64 -p:PublishAot=true -o ar
 
 ## MSIX 打包
 
-`packaging/EhViewerReader.Msix` 是 VS 的 **Windows 应用程序打包项目**（`.wapproj`），负载为 NativeAOT 发布产物：打包前自动执行 AOT 发布到 `artifacts/msix/aot`，再注入包负载。NativeAOT 必须走 publish（AOT 代码生成不在 Build 管线中），因此工程里有两个自定义 target（`PublishAotForMsix` / `InjectAotPayload`）在 `_ConvertItems` 前后完成替换——这是对 DesktopBridge 内部条目的非官方用法，VS 升级后如打包异常优先回归这里。
+`packaging/EhViewerForPc.Msix` 是 VS 的 **Windows 应用程序打包项目**（`.wapproj`），负载为 NativeAOT 发布产物：打包前自动执行 AOT 发布到 `artifacts/msix/aot`，再注入包负载。NativeAOT 必须走 publish（AOT 代码生成不在 Build 管线中），因此工程里有两个自定义 target（`PublishAotForMsix` / `InjectAotPayload`）在 `_ConvertItems` 前后完成替换——这是对 DesktopBridge 内部条目的非官方用法，VS 升级后如打包异常优先回归这里。
 
 VS 中的用法：
 
-- **打包**：右键 `EhViewerReader.Msix` 工程 → 生成；每次打包都会先跑一遍 AOT 发布（1–3 分钟，可用 `-p:SkipAotPublish=true` 复用上次产物）。产物在 `packaging/EhViewerReader.Msix/AppPackages/`。
-- **运行打包版**：把 `EhViewerReader.Msix` 设为启动项目，F5 = 部署 MSIX 并启动（首次 F5 需开启系统「开发人员模式」）。
+- **打包**：右键 `EhViewerForPc.Msix` 工程 → 生成；每次打包都会先跑一遍 AOT 发布（1–3 分钟，可用 `-p:SkipAotPublish=true` 复用上次产物）。产物在 `packaging/EhViewerForPc.Msix/AppPackages/`。
+- **运行打包版**：把 `EhViewerForPc.Msix` 设为启动项目，F5 = 部署 MSIX 并启动（首次 F5 需开启系统「开发人员模式」）。
 - 解决方案构建时 wapproj 默认不参与打包（`PackageOptionalProjectsInIdeBuilds=False`）。
 
-签名：工程已配置测试证书（`PackageCertificateThumbprint`）。正式分发时用代码签名证书替换，并把 `Package.appxmanifest` 的 `Publisher` 改成证书 Subject；否则安装报 `0x800B0109`。清单 Identity：`EhViewerReader.Local`，`runFullTrust`；应用数据仍写入 `%LocalAppData%\EhViewerReader`。
+签名：工程已配置测试证书（`PackageCertificateThumbprint`）。正式分发时用代码签名证书替换，并把 `Package.appxmanifest` 的 `Publisher` 改成证书 Subject；否则安装报 `0x800B0109`。清单 Identity：`EhViewerForPc.Local`，`runFullTrust`；应用数据仍写入 `%LocalAppData%\EhViewerForPc`。
+
+> 项目由 `EhViewerReader` 更名为 `EhViewerForPc` 后，MSIX 包标识（`Identity Name` / `Application Id`）随之变更，已安装的旧包无法就地升级，需先卸载旧版本再安装新包。
 
 ## 命令行
 
@@ -220,10 +222,10 @@ VS 中的用法：
 
 ```bash
 # 在线链路自检（不需要登录）
-src/EhViewerReader/bin/Debug/net11.0/EhViewerReader.exe --online-probe --out docs/online-probe.json
+src/EhViewerForPc/bin/Debug/net11.0/EhViewerForPc.exe --online-probe --out docs/online-probe.json
 
 # 本地库自检
-dotnet run --project src/EhViewerReader -c Release -- --self-test --root "D:\path\to\ehviewer" --out docs/selftest.json
+dotnet run --project src/EhViewerForPc -c Release -- --self-test --root "D:\path\to\ehviewer" --out docs/selftest.json
 ```
 
 ## 快捷键
@@ -246,7 +248,9 @@ dotnet run --project src/EhViewerReader -c Release -- --self-test --root "D:\pat
 
 ## 数据目录
 
-应用状态写入系统的本地应用数据目录（Windows 为 `%LocalAppData%\EhViewerReader`），可用 `--data-dir` 指定：
+应用状态写入系统的本地应用数据目录（Windows 为 `%LocalAppData%\EhViewerForPc`），可用 `--data-dir` 指定：
+
+> 升级兼容：若新目录不存在而旧目录 `%LocalAppData%\EhViewerReader` 存在，应用继续沿用旧目录，设置、阅读进度与下载队列不会因本次更名丢失；全新安装使用新目录。单实例互斥锁也保留旧名称，避免新旧版本并发写同一份状态。
 
 ```
 settings.json            设置（账号 Cookie、代理、在线/下载/阅读偏好、过滤规则、收藏分类名、数据源、搜索历史）
@@ -270,16 +274,16 @@ logs/app.log             运行日志（不含 token/页面内容）
 
 ```bash
 # 自动测试（112 项，含解析、设置合并、下载并发与完整性、共享缓存、历史和内存预算回归）
-dotnet test tests/EhViewerReader.Core.Tests
+dotnet test tests/EhViewerForPc.Core.Tests
 
 # 真实库集成测试（34 项，只读）
-EHVIEWER_TEST_ROOT="D:/BackUp/phoneGT5pro/ehviewer" dotnet test tests/EhViewerReader.Core.Tests
+EHVIEWER_TEST_ROOT="D:/BackUp/phoneGT5pro/ehviewer" dotnet test tests/EhViewerForPc.Core.Tests
 
 # 在线链路自检（前端 → 详情 → 页面列表 → 图片 URL）
-src/EhViewerReader/bin/Debug/net11.0/EhViewerReader.exe --online-probe --out docs/online-probe.json
+src/EhViewerForPc/bin/Debug/net11.0/EhViewerForPc.exe --online-probe --out docs/online-probe.json
 
 # UI 冒烟与逐页截图（合成库 + 在线详情）
-src/EhViewerReader/bin/Debug/net11.0/EhViewerReader.exe --ui-smoke --out docs/screenshots
+src/EhViewerForPc/bin/Debug/net11.0/EhViewerForPc.exe --ui-smoke --out docs/screenshots
 ```
 
 覆盖范围与实测数据详见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)：在线解析器使用从真实页面截取的 fixture 做回归（列表行、`#gdd` 元数据、命名空间标签、sprite 预览、`nl` 键、gid 在前的视图 URL、分类掩码）；本地部分覆盖 VERSION1/2/CBOR、0 字节/缺页、多源合并、设置迁移等。
@@ -296,16 +300,16 @@ src/EhViewerReader/bin/Debug/net11.0/EhViewerReader.exe --ui-smoke --out docs/sc
 ## 项目结构
 
 ```
-src/EhViewerReader.Core/           格式解析、扫描、多源合并、缓存、进度（无 Avalonia 依赖）
+src/EhViewerForPc.Core/           格式解析、扫描、多源合并、缓存、进度（无 Avalonia 依赖）
   Online/                          E-Hentai 客户端：HtmlLite、解析器、URL、Cookie/HTTP/DoH、EhClient
   Download/                        下载引擎：任务模型、队列/并发/续传、EhViewer 兼容目录
-src/EhViewerReader/                Avalonia 应用
+src/EhViewerForPc/                Avalonia 应用
   ViewModels/                      Shell、在线信息流、搜索、下载、设置、阅读器、在线详情
   Views/                           MainWindow 导航壳 + LibraryPage/OnlineFeedPage/SearchPage/DownloadsPage/SettingsPage
                                    + ReaderPage/GalleryDetailsPage/VersionsPage/OnlineGalleryPage 等文档页
   Services/                        图片管线、在线图片缓存、阅读器页面源（本地/在线）、自检与冒烟
-packaging/EhViewerReader.Msix/     MSIX 打包项目（WAP wapproj，托管自包含负载）
-tests/EhViewerReader.Core.Tests/
+packaging/EhViewerForPc.Msix/     MSIX 打包项目（WAP wapproj，托管自包含负载）
+tests/EhViewerForPc.Core.Tests/
 docs/                              PLAN.md、FORMAT.md、TEST_REPORT.md、screenshots/
 ```
 

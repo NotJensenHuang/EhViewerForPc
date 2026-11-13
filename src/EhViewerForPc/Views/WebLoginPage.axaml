@@ -1,0 +1,75 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerForPc.ViewModels"
+        mc:Ignorable="d" d:DesignWidth="660" d:DesignHeight="640"
+        x:Class="EhViewerForPc.Views.WebLoginPage"
+        x:DataType="vm:WebLoginViewModel"
+        Background="Transparent">
+  <Grid Background="Transparent" RowDefinitions="*,Auto">
+    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+      <StackPanel Margin="24,16,24,16" Spacing="14">
+
+        <Border Classes="tile">
+          <StackPanel Spacing="10">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center"
+                      Background="{DynamicResource AppAccentBrush}" />
+              <SelectableTextBlock Text="{Binding StatusText}" TextWrapping="Wrap" FontWeight="Bold" />
+            </StackPanel>
+            <SelectableTextBlock Text="{Binding BrowserText}" Classes="caption" TextWrapping="Wrap" />
+            <WrapPanel Orientation="Horizontal" Classes="actions">
+              <Button Classes="accent" Content="切换回浏览器" Command="{Binding OpenBrowserCommand}" />
+              <Button Content="重新启动浏览器" Command="{Binding RetryCommand}" />
+            </WrapPanel>
+          </StackPanel>
+        </Border>
+
+        <Border Classes="tile">
+          <StackPanel Spacing="9">
+            <SelectableTextBlock Text="登录步骤" Classes="h2" />
+            <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="1. 等待浏览器安全验证。" />
+            <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="2. 登录 E-Hentai 账号。" />
+            <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                       Text="3. 返回应用，等待登录验证。" />
+            <Border Background="{DynamicResource AppBgAltBrush}" CornerRadius="8" Padding="10,8" Margin="0,2,0,0">
+              <StackPanel Spacing="6">
+                <SelectableTextBlock Text="{Binding LoginUrl}" Classes="caption" TextWrapping="Wrap" />
+                <Button Content="复制登录地址" Classes="ghost" FontSize="12" Padding="0" MinHeight="0"
+                        HorizontalAlignment="Left" Click="OnCopyUrl" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </Border>
+
+        <Expander Header="无法自动检测？手动粘贴 Cookie" IsExpanded="{Binding ShowManual, Mode=TwoWay}"
+                  HorizontalAlignment="Stretch">
+          <StackPanel Spacing="8" Margin="0,8,0,0">
+            <SelectableTextBlock Classes="caption" TextWrapping="Wrap"
+                       Text="从浏览器开发者工具复制 Cookie 或 cURL。" />
+            <TextBox Text="{Binding ManualCookie}" AcceptsReturn="True" Height="96" TextWrapping="Wrap"
+                     PlaceholderText="ipb_member_id=…; ipb_pass_hash=…; igneous=…" />
+            <WrapPanel Orientation="Horizontal" Classes="actions">
+              <Button Content="验证并导入" Command="{Binding ImportManualCommand}" />
+              <SelectableTextBlock Text="{Binding ManualStatus}" Classes="caption" VerticalAlignment="Center"
+                         TextWrapping="Wrap" MaxWidth="380" />
+            </WrapPanel>
+          </StackPanel>
+        </Expander>
+
+        </StackPanel>
+    </ScrollViewer>
+
+    <!-- One close entry: the top bar and the bottom "取消" were the same action. -->
+    <Border Grid.Row="1" Classes="statusbar">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <SelectableTextBlock Text="{Binding SiteLabel, StringFormat='目标站点：{0}'}" Classes="secondary" FontSize="12"
+                   VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="取消" Click="OnClose" VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

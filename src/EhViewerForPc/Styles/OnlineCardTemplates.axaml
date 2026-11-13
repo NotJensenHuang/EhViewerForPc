@@ -1,0 +1,58 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:vm="using:EhViewerForPc.ViewModels"
+                    xmlns:controls="using:EhViewerForPc.Controls">
+
+  <!-- Shared card for every online listing (feeds and search results). -->
+  <DataTemplate x:Key="OnlineGalleryCard" x:DataType="vm:OnlineGalleryItemViewModel">
+    <Button Classes="gallery-card" Command="{Binding OpenCommand}" ToolTip.Tip="{Binding TooltipText}">
+      <Button.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="在线阅读" Command="{Binding OpenCommand}" />
+          <MenuItem Header="下载" Command="{Binding DownloadCommand}" />
+          <MenuItem Header="在浏览器中打开" Command="{Binding OpenInBrowserCommand}" />
+          <Separator />
+          <MenuItem Header="搜索该 GID" Command="{Binding SearchGidCommand}" />
+        </ContextMenu>
+      </Button.ContextMenu>
+      <Grid RowDefinitions="266,Auto,*" Height="352">
+        <Border CornerRadius="8" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}">
+          <Grid>
+            <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="UniformToFill" />
+
+            <StackPanel HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8" Spacing="4">
+              <Border Background="#CC101317" CornerRadius="6" Padding="7,2" HorizontalAlignment="Left">
+                <TextBlock Text="{Binding CategoryText}" FontSize="10" Foreground="{Binding CategoryBrush}" />
+              </Border>
+            </StackPanel>
+
+            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                    Background="#CC3A1D24" CornerRadius="6" Padding="7,2"
+                    IsVisible="{Binding IsFavorite}">
+              <TextBlock Text="♥" FontSize="11" Foreground="#FF8092" />
+            </Border>
+
+            <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8"
+                    Background="#B3000000" CornerRadius="6" Padding="7,2"
+                    IsVisible="{Binding HasRating}">
+              <TextBlock Text="{Binding RatingText}" FontSize="10" Foreground="#F2C46D" />
+            </Border>
+
+            <Border Classes="language-badge" IsVisible="{Binding HasLanguage}">
+              <TextBlock Classes="language-badge-text" Text="{Binding LanguageText}" />
+            </Border>
+          </Grid>
+        </Border>
+
+        <TextBlock Grid.Row="1" Classes="title" Text="{Binding Title}" TextWrapping="Wrap"
+                   MaxLines="2" Height="40" Margin="0,9,0,0" />
+
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Bottom">
+          <TextBlock Classes="caption" Text="{Binding MetaText}" TextTrimming="CharacterEllipsis" />
+          <TextBlock Grid.Column="1" Classes="caption" Text="{Binding ProgressText}"
+                     Foreground="{DynamicResource AppAccentBrush}" IsVisible="{Binding HasProgress}" />
+        </Grid>
+      </Grid>
+    </Button>
+  </DataTemplate>
+</ResourceDictionary>

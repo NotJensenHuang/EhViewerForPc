@@ -13,10 +13,10 @@
 ## 验证
 
 ```powershell
-dotnet test tests/EhViewerReader.Core.Tests/EhViewerReader.Core.Tests.csproj -c Debug
-dotnet publish src/EhViewerReader/EhViewerReader.csproj -c Release -r win-x64 -p:PublishAot=true -o .qa/fluent-aot-final
-.qa/fluent-aot-final/EhViewerReader.exe --navigation-regression --data-dir .qa/aot-final-navigation-data --out .qa/aot-final-navigation
-.qa/fluent-aot-final/EhViewerReader.exe --ui-smoke --data-dir .qa/aot-final-smoke-data --out .qa/aot-final-smoke
+dotnet test tests/EhViewerForPc.Core.Tests/EhViewerForPc.Core.Tests.csproj -c Debug
+dotnet publish src/EhViewerForPc/EhViewerForPc.csproj -c Release -r win-x64 -p:PublishAot=true -o .qa/fluent-aot-final
+.qa/fluent-aot-final/EhViewerForPc.exe --navigation-regression --data-dir .qa/aot-final-navigation-data --out .qa/aot-final-navigation
+.qa/fluent-aot-final/EhViewerForPc.exe --ui-smoke --data-dir .qa/aot-final-smoke-data --out .qa/aot-final-smoke
 ```
 
 - 116 项测试通过，覆盖缓存标签、token 缓存以及不完整作品的阅读进度。

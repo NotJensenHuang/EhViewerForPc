@@ -1,4 +1,4 @@
-# EhViewer Reader
+# EhViewer for PC
 
 Windows 桌面优先的 E-Hentai / ExHentai 浏览与本地漫画阅读客户端，基于 Avalonia 12、.NET 11 和 FluentAvaloniaUI。
 
@@ -10,4 +10,4 @@ Windows 桌面优先的 E-Hentai / ExHentai 浏览与本地漫画阅读客户端
 - 启用下载目录入库和自动更新时，首张图片保存后即可进入本地库；下载中的副本保留页数与缺页状态。
 - 已导入目录以只读方式使用。应用下载及应用数据由相应功能管理。
 
-事实来源：用户需求，以及 `src/EhViewerReader` 当前实现。风格细节见 DESIGN.md。
+事实来源：用户需求，以及 `src/EhViewerForPc` 当前实现。风格细节见 DESIGN.md。

@@ -1,0 +1,58 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerForPc.ViewModels"
+             xmlns:controls="using:EhViewerForPc.Controls"
+             x:Class="EhViewerForPc.Controls.GalleryDetailsView" x:Name="Root"
+             x:DataType="vm:GalleryDetailsViewModel">
+  <Grid RowDefinitions="*,Auto" DataContext="{Binding Details, ElementName=Root}">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="24,8,24,24" Spacing="20">
+        <StackPanel Spacing="8">
+          <SelectableTextBlock Text="{Binding Title}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="{Binding JapaneseTitle}" Classes="secondary" TextWrapping="Wrap"
+                     IsVisible="{Binding HasJapaneseTitle}" />
+          <SelectableTextBlock Text="{Binding PagesText}" Classes="secondary" />
+          <ContentControl Content="{Binding Actions, ElementName=Root}" DataContext="{Binding DataContext, ElementName=Root}" />
+        </StackPanel>
+        <controls:AdaptiveGrid x:Name="DetailsGrid" ColumnDefinitions="280,*" ColumnSpacing="24" RowSpacing="20">
+          <Grid x:Name="CoverPanel" RowDefinitions="Auto,Auto" ColumnDefinitions="*" RowSpacing="12">
+            <Border x:Name="CoverFrame" Height="374" Background="{DynamicResource AppBgAltBrush}" CornerRadius="8" ClipToBounds="True">
+              <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="Uniform" />
+            </Border>
+            <ContentControl x:Name="SidePanel" Grid.Row="1" Content="{Binding SideContent, ElementName=Root}" DataContext="{Binding DataContext, ElementName=Root}" />
+          </Grid>
+          <StackPanel x:Name="DetailsColumn" Grid.Column="1" Spacing="24">
+            <ItemsControl x:Name="MetadataList" ItemsSource="{Binding Metadata}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:GalleryMetadataRow">
+                  <Grid ColumnDefinitions="76,*" Margin="0,0,0,10" ColumnSpacing="12">
+                    <SelectableTextBlock Text="{Binding Label}" Classes="secondary" />
+                    <SelectableTextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <StackPanel x:Name="TagSection" Spacing="10">
+              <SelectableTextBlock Text="标签" Classes="h2" />
+              <ItemsControl ItemsSource="{Binding Tags}">
+                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TagChip">
+                    <Button Classes="chip" Command="{Binding Command}" AutomationProperties.Name="{Binding Display}"
+                            HorizontalContentAlignment="Left" Margin="0,0,8,8" ToolTip.Tip="{Binding Term}">
+                      <TextBlock Text="{Binding Display}" TextWrapping="Wrap" MaxWidth="260" />
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsLoading}" Height="3" />
+              <SelectableTextBlock Text="{Binding StatusText}" Classes="caption" TextWrapping="Wrap" IsVisible="{Binding HasStatus}" />
+            </StackPanel>
+            <ContentControl Content="{Binding ExtraContent, ElementName=Root}" DataContext="{Binding DataContext, ElementName=Root}" />
+          </StackPanel>
+        </controls:AdaptiveGrid>
+      </StackPanel>
+    </ScrollViewer>
+    <ContentControl Grid.Row="1" Content="{Binding Footer, ElementName=Root}" DataContext="{Binding DataContext, ElementName=Root}" />
+  </Grid>
+</UserControl>

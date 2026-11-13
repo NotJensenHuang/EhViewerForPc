@@ -50,9 +50,9 @@
 
 ## 3. 工程结构
 
-- `src/EhViewerReader.ImageSearch/`：net11.0独立后端类库，算法/解码/SQLite/索引/任务，不依赖Avalonia、全局AppServices或Rust。
-- `src/EhViewerReader.ImageSearch.Host/`：WinExe无窗口CLI/ASP.NET Core HTTP，复用同一后端，JSON源生成，不启动主程序或单实例锁。
-- `tests/EhViewerReader.ImageSearch.Tests/`：独立xUnit，真实可解码合成集和故障回归。
+- `src/EhViewerForPc.ImageSearch/`：net11.0独立后端类库，算法/解码/SQLite/索引/任务，不依赖Avalonia、全局AppServices或Rust。
+- `src/EhViewerForPc.ImageSearch.Host/`：WinExe无窗口CLI/ASP.NET Core HTTP，复用同一后端，JSON源生成，不启动主程序或单实例锁。
+- `tests/EhViewerForPc.ImageSearch.Tests/`：独立xUnit，真实可解码合成集和故障回归。
 - Core：图库身份、位置/代际模型和清单；应用层：快照/设置/协调器/选图裁剪/导航。桌面默认直接后台调用C#后端，Host供诊断和进程隔离。
 - 复用SkiaSharp 3.119.4，固定Microsoft.Data.Sqlite 10.0.12，集中包版本，无ORM。NativeAOT需实际publish并运行，不能以build替代。
 

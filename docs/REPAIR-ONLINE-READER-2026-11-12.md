@@ -53,11 +53,11 @@
 
 | 项目 | 结果 |
 | --- | --- |
-| `dotnet test tests\EhViewerReader.Core.Tests` | 128 通过 / 0 失败（新增 12 项：分页定位、共享去重、独立取消、越界页、任务目录阅读、收藏备注、缓存默认值/范围、重复筛选与下载投影） |
+| `dotnet test tests\EhViewerForPc.Core.Tests` | 128 通过 / 0 失败（新增 12 项：分页定位、共享去重、独立取消、越界页、任务目录阅读、收藏备注、缓存默认值/范围、重复筛选与下载投影） |
 | `--navigation-regression`（NativeAOT 发布版） | 18 项 PASS |
 | `--ui-smoke`（NativeAOT 发布版） | 无 false/FAIL；生成全部截图 |
 | `--ui-audit`（NativeAOT 发布版） | `error = null`，`horizontalOverflows = 0`，108 张深/浅色、宽/窄截图通过 |
-| `dotnet publish -c Release -r win-x64 -p:PublishAot=true` | 生成 `.qa/online-reader-final/EhViewerReader.exe`（约 37 MB）。构建后置的注册表探测被本机沙箱策略拦截（`reg.exe`），不影响产物；三条诊断均用该产物运行 |
+| `dotnet publish -c Release -r win-x64 -p:PublishAot=true` | 生成 `.qa/online-reader-final/EhViewerForPc.exe`（约 37 MB）。构建后置的注册表探测被本机沙箱策略拦截（`reg.exe`），不影响产物；三条诊断均用该产物运行 |
 
 ## 4. 未真实复测 / 仍存在的限制
 

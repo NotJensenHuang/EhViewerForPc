@@ -182,19 +182,19 @@
 
 | 范围 | 文件 |
 | --- | --- |
-| 阅读入口与导航生命周期 | `src/EhViewerReader/Views/MainWindow.axaml.cs`、`ViewModels/ShellViewModel.cs` |
+| 阅读入口与导航生命周期 | `src/EhViewerForPc/Views/MainWindow.axaml.cs`、`ViewModels/ShellViewModel.cs` |
 | 异步在线页索引、下载目录读取、阅读进度 | `Services/ReaderSources.cs`、`ViewModels/ReaderViewModel.cs`，必要时新增按需页引用服务 |
 | 全阅读模式加载展示 | `Controls/AsyncImage.cs`、`Controls/ZoomPanView.cs`、`Views/ReaderPage.axaml` 及 code-behind |
-| 字节进度与网络结果 | `src/EhViewerReader.Core/Online/EhClient.cs`、`EhModels.cs`、`EhParser.cs` |
-| 图片持久缓存 | `src/EhViewerReader.Core/Imaging/GalleryImageStore.cs`、`src/EhViewerReader/Services/OnlineImageService.cs`、`ImageRequest.cs`、`AppServices.cs` |
-| 缓存配置/存储 | `src/EhViewerReader.Core/Models/AppSettings.cs`、`Storage/AppPaths.cs`、`Storage/StorageJsonContext.cs`，必要时添加有界索引模型 |
+| 字节进度与网络结果 | `src/EhViewerForPc.Core/Online/EhClient.cs`、`EhModels.cs`、`EhParser.cs` |
+| 图片持久缓存 | `src/EhViewerForPc.Core/Imaging/GalleryImageStore.cs`、`src/EhViewerForPc/Services/OnlineImageService.cs`、`ImageRequest.cs`、`AppServices.cs` |
+| 缓存配置/存储 | `src/EhViewerForPc.Core/Models/AppSettings.cs`、`Storage/AppPaths.cs`、`Storage/StorageJsonContext.cs`，必要时添加有界索引模型 |
 | 历史图片回退 | `ViewModels/HistoryViewModel.cs`、`Views/HistoryPage.axaml`、`Core/Models/WorkRecord.cs`、`Core/Storage/WorkCatalog.cs` |
 | 下载阅读及卡片状态投影 | `ViewModels/DownloadsViewModel.cs`、`OnlineSupport.cs`、`GalleryItemViewModel.cs`、`MainViewModel.cs` |
 | 收藏弹框与状态同步 | `ViewModels/OnlineGalleryViewModel.cs`、`Views/OnlineGalleryPage.axaml` 及 code-behind，新增共享收藏对话框/结果模型 |
 | 本地库筛选和扫描入口 | `Views/LibraryPage.axaml`、`Views/SettingsPage.axaml` 及 code-behind、`ViewModels/SettingsViewModel.cs` |
-| 回归证据 | `tests/EhViewerReader.Core.Tests/*`、`Services/NavigationRegressionService.cs`、`UiAuditService.cs` |
+| 回归证据 | `tests/EhViewerForPc.Core.Tests/*`、`Services/NavigationRegressionService.cs`、`UiAuditService.cs` |
 
-表中省略前缀的 UI 文件位于 `src/EhViewerReader/`；`Core/` 指 `src/EhViewerReader.Core/`。不得在 Core 中引入 Avalonia 控件或 UI 调度依赖。
+表中省略前缀的 UI 文件位于 `src/EhViewerForPc/`；`Core/` 指 `src/EhViewerForPc.Core/`。不得在 Core 中引入 Avalonia 控件或 UI 调度依赖。
 
 ## 10. 验证与交付清单
 
@@ -218,11 +218,11 @@
 - [ ] 执行现有自动检查，并为本计划的新行为增加可断言的交互回归；不以“旧测试仍然通过”替代新功能验收。
 
 ```powershell
-dotnet test tests\EhViewerReader.Core.Tests\EhViewerReader.Core.Tests.csproj -c Debug --nologo -v:minimal
-dotnet publish src\EhViewerReader\EhViewerReader.csproj -c Release -r win-x64 -p:PublishAot=true --nologo -v:minimal -o .qa\online-reader-final
-.\.qa\online-reader-final\EhViewerReader.exe --navigation-regression --data-dir .qa\online-reader-navigation-data --out .qa\online-reader-navigation
-.\.qa\online-reader-final\EhViewerReader.exe --ui-smoke --data-dir .qa\online-reader-smoke-data --out .qa\online-reader-smoke
-.\.qa\online-reader-final\EhViewerReader.exe --ui-audit --data-dir .qa\online-reader-audit-data --out .qa\online-reader-audit
+dotnet test tests\EhViewerForPc.Core.Tests\EhViewerForPc.Core.Tests.csproj -c Debug --nologo -v:minimal
+dotnet publish src\EhViewerForPc\EhViewerForPc.csproj -c Release -r win-x64 -p:PublishAot=true --nologo -v:minimal -o .qa\online-reader-final
+.\.qa\online-reader-final\EhViewerForPc.exe --navigation-regression --data-dir .qa\online-reader-navigation-data --out .qa\online-reader-navigation
+.\.qa\online-reader-final\EhViewerForPc.exe --ui-smoke --data-dir .qa\online-reader-smoke-data --out .qa\online-reader-smoke
+.\.qa\online-reader-final\EhViewerForPc.exe --ui-audit --data-dir .qa\online-reader-audit-data --out .qa\online-reader-audit
 ```
 
 以上诊断命令按顺序运行并确认退出结果，不同时启动多个实例争用同一个数据目录。沿用工作区既有 `.qa/` 忽略规则。新 JSON 模型注册源生成上下文，NativeAOT 下仍需验证，现有第三方裁剪警告与本次新警告分开报告。

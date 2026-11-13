@@ -1,0 +1,104 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:EhViewerForPc.ViewModels"
+        xmlns:controls="using:EhViewerForPc.Controls"
+        xmlns:ir="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ItemsRepeater"
+        xmlns:layout="clr-namespace:Avalonia.Layout;assembly=Avalonia.Controls.ItemsRepeater"
+        mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="860"
+        x:Class="EhViewerForPc.Views.ReaderPage"
+        x:DataType="vm:ReaderViewModel"
+        Background="{Binding BackgroundBrush}">
+  <!-- The work title and the reading commands live in the shell header; this
+       page is the canvas plus one compact progress row. -->
+  <Grid RowDefinitions="*,Auto" Background="{Binding BackgroundBrush}">
+    <Grid Grid.Row="0">
+      <controls:ZoomPanView x:Name="SingleView"
+                           IsVisible="{Binding IsSingleMode}"
+                           Request="{Binding SingleRequest}"
+                           PreloadRequest="{Binding PreloadRequest}"
+                           FitMode="{Binding FitMode}"
+                           RightToLeft="{Binding RightToLeft}"
+                           MaxMegapixels="{Binding MaxMegapixels}"
+                           MaxDimension="{Binding MaxDimension}"
+                           PageTurnRequested="OnPageTurnRequested" />
+
+      <ScrollViewer x:Name="ContinuousScroll"
+                    IsVisible="{Binding IsContinuousMode}"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled"
+                    Padding="0,8,0,24"
+                    ScrollChanged="OnScrollChanged">
+        <ir:ItemsRepeater ItemsSource="{Binding ContinuousItems}">
+          <ir:ItemsRepeater.Layout>
+            <layout:StackLayout Spacing="0" />
+          </ir:ItemsRepeater.Layout>
+          <ir:ItemsRepeater.ItemTemplate>
+            <DataTemplate x:DataType="vm:ContinuousPageItem">
+              <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
+                      HorizontalAlignment="Center" Background="{DynamicResource AppBgAltBrush}">
+                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" />
+              </Border>
+            </DataTemplate>
+          </ir:ItemsRepeater.ItemTemplate>
+        </ir:ItemsRepeater>
+      </ScrollViewer>
+
+      <ScrollViewer x:Name="HorizontalScroll"
+                    IsVisible="{Binding IsHorizontalMode}"
+                    HorizontalScrollBarVisibility="Auto"
+                    VerticalScrollBarVisibility="Disabled"
+                    Padding="0,8,0,8"
+                    ScrollChanged="OnScrollChanged"
+                    PointerWheelChanged="OnHorizontalWheel">
+        <ir:ItemsRepeater ItemsSource="{Binding HorizontalDisplayItems}">
+          <ir:ItemsRepeater.Layout>
+            <layout:StackLayout Orientation="Horizontal" Spacing="0" />
+          </ir:ItemsRepeater.Layout>
+          <ir:ItemsRepeater.ItemTemplate>
+            <DataTemplate x:DataType="vm:ContinuousPageItem">
+              <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
+                      Background="{DynamicResource AppBgAltBrush}">
+                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" />
+              </Border>
+            </DataTemplate>
+          </ir:ItemsRepeater.ItemTemplate>
+        </ir:ItemsRepeater>
+      </ScrollViewer>
+
+      <Border Classes="panel" Padding="22,16" HorizontalAlignment="Center" VerticalAlignment="Center"
+              IsVisible="{Binding IsLoadingDimensions}" MaxWidth="380">
+        <StackPanel Spacing="10">
+          <SelectableTextBlock Text="正在测量页面尺寸" FontWeight="Bold" />
+          <ProgressBar Minimum="0" Maximum="100" Value="{Binding DimensionProgress}" Height="6" />
+          <SelectableTextBlock Classes="muted" FontSize="12"
+                     Text="正在准备连续阅读…" />
+        </StackPanel>
+      </Border>
+
+      <Border Background="#CC000000" CornerRadius="8" Padding="14,8" HorizontalAlignment="Center"
+              VerticalAlignment="Top" Margin="0,14,0,0" IsVisible="{Binding ShowRestoreHint}">
+        <SelectableTextBlock Text="{Binding RestoreHint}" Foreground="#F2F4F8" FontSize="12" />
+      </Border>
+
+      <!-- Immersive leaves the canvas clean but keeps one discoverable exit. -->
+      <Button x:Name="ImmersiveExit" Content="退出沉浸（Esc）" IsVisible="False"
+              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="16"
+              Click="OnExitImmersive" ToolTip.Tip="恢复导航与页头（Esc）" />
+    </Grid>
+
+    <Border Grid.Row="1" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+            BorderThickness="0,1,0,0" Padding="16,8" MinHeight="40">
+      <Grid ColumnDefinitions="Auto,10,*,10,Auto,14,Auto" ColumnSpacing="0">
+        <Button Grid.Column="0" Content="上一页" Command="{Binding PrevPageCommand}" />
+        <Slider Grid.Column="2" Minimum="1" Maximum="{Binding SliderMaximum}" Value="{Binding SliderValue}"
+                VerticalAlignment="Center" IsEnabled="{Binding HasPages}" AutomationProperties.Name="阅读进度" />
+        <Button Grid.Column="4" Content="下一页" Command="{Binding NextPageCommand}" />
+        <SelectableTextBlock Grid.Column="6" Text="{Binding PageLabel}" Classes="secondary" FontSize="12"
+                   FontFamily="{DynamicResource AppMonoFont}" VerticalAlignment="Center" MinWidth="64"
+                   TextAlignment="Right" />
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

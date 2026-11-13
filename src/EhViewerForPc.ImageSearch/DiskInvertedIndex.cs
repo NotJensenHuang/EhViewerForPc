@@ -1,0 +1,147 @@
+using System.IO.Compression;
+using System.Security.Cryptography;
+
+namespace EhViewerForPc.ImageSearch;
+
+/// <summary>Stores a vector's stable identity and centroid-XOR descriptor.</summary>
+public readonly record struct IndexVector(long VectorId, long ImageId, BinaryDescriptor Residual);
+
+/// <summary>Reads and writes checksummed, compressed inverted lists without loading the whole index.</summary>
+public sealed class DiskInvertedIndex
+{
+    private readonly record struct Bucket(long Offset, long Count, long Length);
+    private readonly Bucket[] _buckets;
+    private readonly string _path;
+
+    private DiskInvertedIndex(string path, string profileId, string quantizerHash)
+    {
+        _path = path;
+        using var reader = CheckedFile.Open(path);
+        if (reader.ReadUInt64() != 0x3146564943524d49UL || CheckedFile.ReadShortString(reader) != profileId || CheckedFile.ReadShortString(reader) != quantizerHash)
+            throw new InvalidDataException("IVF format, profile or quantizer mismatch; rebuild required.");
+        int count = reader.ReadInt32();
+        ImageCount = reader.ReadInt64(); VectorCount = reader.ReadInt64();
+        if (count is < 1 or > 1048576 || ImageCount < 0 || VectorCount < 0 || ImageCount > VectorCount)
+            throw new InvalidDataException("Invalid IVF dimensions.");
+        long start = checked(reader.BaseStream.Position + 24L * count), total = 0, end = start;
+        _buckets = new Bucket[count];
+        for (int i = 0; i < count; i++)
+        {
+            long offset = reader.ReadInt64(), records = reader.ReadInt64(), length = reader.ReadInt64();
+            if (offset != end || records < 0 || records > 1_000_000_000 || length < 0 || length > reader.BaseStream.Length - 32 - offset
+                || (records == 0) != (length == 0)) throw new InvalidDataException("Invalid IVF bucket bounds.");
+            _buckets[i] = new(offset, records, length); total = checked(total + records); end = checked(offset + length);
+        }
+        if (total != VectorCount || end != reader.BaseStream.Length - 32) throw new InvalidDataException("Invalid IVF record total.");
+    }
+
+    /// <summary>Gets the number of inverted lists.</summary>
+    public int BucketCount => _buckets.Length;
+    /// <summary>Gets the unique image count recorded in this index.</summary>
+    public long ImageCount { get; }
+    /// <summary>Gets the stored descriptor count.</summary>
+    public long VectorCount { get; }
+
+    /// <summary>Validates and opens a read-only index.</summary>
+    public static DiskInvertedIndex Open(string path, string profileId, string quantizerHash) => new(path, profileId, quantizerHash);
+
+    /// <summary>Computes a quantizer file's identity.</summary>
+    public static string HashQuantizer(string path) { using var file = File.OpenRead(path); return Convert.ToHexStringLower(SHA256.HashData(file)); }
+
+    /// <summary>Writes an index atomically, accepting a streaming source for each bucket.</summary>
+    public static void Write(string path, string profileId, string quantizerHash, int buckets,
+        Func<int, IEnumerable<IndexVector>> readBucket, CancellationToken cancellationToken = default)
+    {
+        if (buckets is < 1 or > 1048576) throw new ArgumentOutOfRangeException(nameof(buckets));
+        CheckedFile.Write(path, writer =>
+        {
+            writer.Write(0x3146564943524d49UL); writer.Write(profileId); writer.Write(quantizerHash); writer.Write(buckets);
+            long countsPosition = writer.BaseStream.Position;
+            writer.Write(0L); writer.Write(0L);
+            long tablePosition = writer.BaseStream.Position;
+            for (int i = 0; i < buckets; i++) { writer.Write(0L); writer.Write(0L); writer.Write(0L); }
+            var table = new Bucket[buckets]; var images = new HashSet<long>(); long total = 0;
+            for (int i = 0; i < buckets; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                long offset = writer.BaseStream.Position, count = 0, previous = 0;
+                using (var iterator = readBucket(i).GetEnumerator())
+                {
+                    if (iterator.MoveNext())
+                    {
+                        using var deflate = new DeflateStream(writer.BaseStream, CompressionLevel.Fastest, leaveOpen: true);
+                        using var records = new BinaryWriter(deflate, System.Text.Encoding.UTF8, leaveOpen: true);
+                        do
+                        {
+                            if ((count & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
+                            IndexVector vector = iterator.Current;
+                            if (vector.VectorId <= previous || vector.ImageId < 1) throw new InvalidDataException("IVF vectors must be unique and ordered.");
+                            previous = vector.VectorId; records.Write(vector.VectorId); records.Write(vector.ImageId); CheckedFile.WriteDescriptor(records, vector.Residual);
+                            images.Add(vector.ImageId); count++;
+                        } while (iterator.MoveNext());
+                    }
+                }
+                table[i] = new(offset, count, writer.BaseStream.Position - offset); total += count;
+            }
+            long end = writer.BaseStream.Position;
+            writer.BaseStream.Position = countsPosition; writer.Write((long)images.Count); writer.Write(total);
+            writer.BaseStream.Position = tablePosition;
+            foreach (var bucket in table) { writer.Write(bucket.Offset); writer.Write(bucket.Count); writer.Write(bucket.Length); }
+            writer.BaseStream.Position = end;
+        });
+    }
+
+    /// <summary>Streams a bucket's records and verifies decompressed size and ordering.</summary>
+    public IEnumerable<IndexVector> ReadBucket(int bucket)
+    {
+        var info = _buckets[bucket]; if (info.Count == 0) yield break;
+        using var file = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.RandomAccess);
+        file.Position = info.Offset;
+        using var limited = new LimitedStream(file, info.Length);
+        using var deflate = new DeflateStream(limited, CompressionMode.Decompress);
+        using var reader = new BinaryReader(deflate);
+        long previous = 0;
+        for (long i = 0; i < info.Count; i++)
+        {
+            long vectorId = reader.ReadInt64(), imageId = reader.ReadInt64();
+            if (vectorId <= previous || imageId < 1) throw new InvalidDataException("Invalid IVF vector identity.");
+            previous = vectorId; yield return new(vectorId, imageId, CheckedFile.ReadDescriptor(reader));
+        }
+        if (deflate.ReadByte() != -1) throw new InvalidDataException("IVF decompression exceeds recorded size.");
+    }
+
+    /// <summary>Merges sorted lists with idempotent vector replay, retaining only one copy of each vector.</summary>
+    public static IEnumerable<IndexVector> MergeBucket(IReadOnlyList<DiskInvertedIndex> indexes, int bucket)
+    {
+        var iterators = indexes.Select(i => i.ReadBucket(bucket).GetEnumerator()).ToArray();
+        try
+        {
+            var queue = new PriorityQueue<int, long>();
+            for (int i = 0; i < iterators.Length; i++) if (iterators[i].MoveNext()) queue.Enqueue(i, iterators[i].Current.VectorId);
+            IndexVector? previous = null;
+            while (queue.TryDequeue(out int i, out _))
+            {
+                IndexVector current = iterators[i].Current;
+                if (previous is null || current.VectorId != previous.Value.VectorId) { yield return current; previous = current; }
+                else if (current != previous.Value) throw new InvalidDataException("Conflicting replayed IVF vector.");
+                if (iterators[i].MoveNext()) queue.Enqueue(i, iterators[i].Current.VectorId);
+            }
+        }
+        finally { foreach (var iterator in iterators) iterator.Dispose(); }
+    }
+
+    private sealed class LimitedStream(Stream source, long remaining) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+        public override int Read(Span<byte> buffer) { if (remaining == 0) return 0; int count = source.Read(buffer[..(int)Math.Min(buffer.Length, remaining)]); remaining -= count; return count; }
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}

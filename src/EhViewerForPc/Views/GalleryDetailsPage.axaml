@@ -1,0 +1,76 @@
+<UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerForPc.ViewModels" xmlns:controls="using:EhViewerForPc.Controls"
+             x:Class="EhViewerForPc.Views.GalleryDetailsPage" x:DataType="vm:LocalGalleryDetailsViewModel">
+  <controls:GalleryDetailsView Details="{Binding Presentation}">
+    <controls:GalleryDetailsView.Actions>
+      <WrapPanel Classes="actions">
+        <Button Content="开始阅读" Classes="accent" IsEnabled="{Binding Item.CanRead}" Click="OnRead" />
+        <Button Content="打开文件夹" Click="OnOpenFolder" />
+        <Button Content="{Binding Item.FavoriteText}" Click="OnToggleFavorite" />
+        <Button Content="清除进度" Click="OnClearProgress" />
+        <Button Content="刷新标签" Command="{Binding RefreshMetadataCommand}" />
+      </WrapPanel>
+    </controls:GalleryDetailsView.Actions>
+    <controls:GalleryDetailsView.SideContent>
+      <StackPanel Spacing="8">
+        <SelectableTextBlock Text="{Binding Item.ProgressDetail}" Classes="secondary" />
+        <SelectableTextBlock Text="{Binding Item.Details}" Classes="caption" TextWrapping="Wrap" />
+      </StackPanel>
+    </controls:GalleryDetailsView.SideContent>
+    <controls:GalleryDetailsView.ExtraContent>
+      <Expander Header="本地文件" HorizontalAlignment="Stretch">
+          <Grid ColumnDefinitions="90,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="7" Margin="0,6,0,0">
+            <SelectableTextBlock Grid.Row="0" Grid.Column="0" Text="文件夹" Classes="muted" FontSize="12" />
+            <SelectableTextBlock HorizontalAlignment="Left" Grid.Row="0" Grid.Column="1" Text="{Binding Item.FolderName}" Classes="secondary" FontSize="12"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding Item.FolderPath}" />
+
+            <SelectableTextBlock Grid.Row="1" Grid.Column="0" Text="GID" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Item.GidText}" Classes="secondary" FontSize="12"
+                       FontFamily="{DynamicResource AppMonoFont}" />
+
+            <SelectableTextBlock Grid.Row="2" Grid.Column="0" Text="页数" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="2" Grid.Column="1" Classes="secondary" FontSize="12"
+                       Text="{Binding Item.PageCount, StringFormat='实际 {0}'}" />
+
+            <SelectableTextBlock Grid.Row="3" Grid.Column="0" Text="预期页数" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Item.ExpectedPagesText}" Classes="secondary" FontSize="12" />
+
+            <SelectableTextBlock Grid.Row="4" Grid.Column="0" Text="缺页" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="4" Grid.Column="1" Text="{Binding Item.MissingText}" Classes="secondary" FontSize="12"
+                       TextWrapping="Wrap" />
+
+            <SelectableTextBlock Grid.Row="5" Grid.Column="0" Text="扩展名" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="5" Grid.Column="1" Text="{Binding Item.ExtensionSummary}" Classes="secondary" FontSize="12" />
+
+            <SelectableTextBlock Grid.Row="6" Grid.Column="0" Text="0 字节文件" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="6" Grid.Column="1" Text="{Binding Item.Info.ZeroByteFiles}" Classes="secondary" FontSize="12" />
+
+            <SelectableTextBlock Grid.Row="7" Grid.Column="0" Text="封面来源" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="7" Grid.Column="1" Text="{Binding Item.CoverSourceText}" Classes="secondary" FontSize="12" />
+
+            <SelectableTextBlock Grid.Row="8" Grid.Column="0" Text="解析错误" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="8" Grid.Column="1" Text="{Binding Item.HeaderErrorText}" Classes="secondary" FontSize="12"
+                       TextWrapping="Wrap" />
+
+            <SelectableTextBlock Grid.Row="9" Grid.Column="0" Text="最后修改" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="9" Grid.Column="1" Text="{Binding Item.LastWriteText}" Classes="secondary" FontSize="12" />
+
+            <SelectableTextBlock Grid.Row="10" Grid.Column="0" Text="阅读进度" Classes="muted" FontSize="12" />
+            <SelectableTextBlock Grid.Row="10" Grid.Column="1" Text="{Binding Item.ProgressDetail}" Classes="secondary" FontSize="12" />
+
+            <SelectableTextBlock Grid.Row="11" Grid.Column="0" Text="数据源" Classes="muted" FontSize="12" />
+            <SelectableTextBlock HorizontalAlignment="Left" Grid.Row="11" Grid.Column="1" Text="{Binding Item.SourceName}" Classes="secondary" FontSize="12"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Item.SourceName}" />
+
+            <SelectableTextBlock Grid.Row="12" Grid.Column="0" Text="版本" Classes="muted" FontSize="12" />
+            <StackPanel Grid.Row="12" Grid.Column="1" Orientation="Horizontal" Spacing="8">
+              <SelectableTextBlock Text="{Binding Item.VersionText}" Classes="secondary" FontSize="12" />
+              <SelectableTextBlock Text="{Binding Item.VersionSummary}" Classes="muted" FontSize="12"
+                         IsVisible="{Binding Item.HasMultipleVersions}" />
+            </StackPanel>
+          </Grid>
+      </Expander>
+    </controls:GalleryDetailsView.ExtraContent>
+  </controls:GalleryDetailsView>
+</UserControl>

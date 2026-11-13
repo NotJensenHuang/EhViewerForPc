@@ -10,7 +10,7 @@ From the repository root, build and verify with no visible windows:
 pwsh -NoProfile -File tools/imsearch/Build-Backend.ps1
 pwsh -NoProfile -File tools/imsearch/Test-Backend.ps1
 pwsh -NoProfile -File tools/imsearch/Build-Backend.ps1 -Aot
-pwsh -NoProfile -File tools/imsearch/Test-Backend.ps1 -HostPath artifacts/image-search-host-aot/EhViewerReader.ImageSearch.Host.exe
+pwsh -NoProfile -File tools/imsearch/Test-Backend.ps1 -HostPath artifacts/image-search-host-aot/EhViewerForPc.ImageSearch.Host.exe
 ```
 
 The helpers use `ProcessStartInfo.ArgumentList`, `UseShellExecute=false`, `CreateNoWindow=true`, below-normal priority and redirected stdout/stderr. Every test run uses a new `.qa/image-search/verification/<id>` directory. A verification failure throws and records `verification.json`; it never substitutes a mock for the real backend.
@@ -18,7 +18,7 @@ The helpers use `ProcessStartInfo.ArgumentList`, `UseShellExecute=false`, `Creat
 Independent tests:
 
 ```powershell
-dotnet test tests/EhViewerReader.ImageSearch.Tests/EhViewerReader.ImageSearch.Tests.csproj -c Debug
+dotnet test tests/EhViewerForPc.ImageSearch.Tests/EhViewerForPc.ImageSearch.Tests.csproj -c Debug
 ```
 
 The host's six commands are `add`, `train`, `build`, `search`, `server`, `clean`; `--help` explains options. Use the managed DLL with `dotnet` for terminal diagnostics, or launch the WinExe via the shared process helper for windowless work. No command starts Avalonia or the reader's single-instance handler.
@@ -42,7 +42,7 @@ Updates copy an independent backend snapshot and reuse unchanged page descriptor
 UI regression is entirely in-memory with Avalonia Headless and never creates a Win32 window:
 
 ```powershell
-dotnet test tests/EhViewerReader.ImageSearch.Ui.Tests/EhViewerReader.ImageSearch.Ui.Tests.csproj -c Debug -p:PublishAot=false
+dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests/EhViewerForPc.ImageSearch.Ui.Tests.csproj -c Debug -p:PublishAot=false
 ```
 
 Run projects referencing the reader sequentially because Avalonia's XAML compilation shares project output files.

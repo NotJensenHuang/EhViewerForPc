@@ -36,7 +36,7 @@
 
 但其 [MainWindow.axaml.cs](G:/SoftwareProject/Avalonia/little-fancy-tool-ava/FancyTool/Views/MainWindow.axaml.cs:55) 明确设置 `TitleBar.ExtendsContentIntoTitleBar = true`。不能照搬这个实现，不能把“视觉上独立”误写成“没有扩展”。参考项目只读，不修改。
 
-本项目目前的 [MainWindow.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/MainWindow.axaml:1) 使用普通 `Window`，没有启用客户端扩展，用户截图也已有系统标题栏。此次应保留这一基础，显式固定意图：
+本项目目前的 [MainWindow.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/MainWindow.axaml:1) 使用普通 `Window`，没有启用客户端扩展，用户截图也已有系统标题栏。此次应保留这一基础，显式固定意图：
 
 ```xml
 <Window ...
@@ -52,7 +52,7 @@
 
 应用保持原生 Fluent 桌面工具的方向：浏览页重视扫描效率，设置页重视可理解的分组，阅读页让画面占据主要空间。布局调整沿用 `FANavigationView + FAFrame`、现有 ViewModel 和共享详情组件。
 
-以下数值是本轮项目设计目标，不是对 Fluent 官方规范的逐字引用。统一定义在 [Theme.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Styles/Theme.axaml:1)，通过资源或共享样式复用：
+以下数值是本轮项目设计目标，不是对 Fluent 官方规范的逐字引用。统一定义在 [Theme.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Styles/Theme.axaml:1)，通过资源或共享样式复用：
 
 | 项目 | 目标 |
 | --- | --- |
@@ -65,7 +65,7 @@
 | 设置滑块 | 常规轨道约 240–320 DIP，最大 360 DIP，当前值独立对齐；窄窗随容器缩小 |
 | 标准控件 | 尺寸、焦点、悬停、禁用状态优先使用 FluentAvalonia 默认主题 |
 
-先处理 [Theme.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Styles/Theme.axaml:201) 的全局 `WrapPanel > Button` / `WrapPanel > ComboBox` 右下边距。它与局部 Margin 叠加，使按钮和下拉框难以对齐。改为具有明确用途的局部容器样式，并检查原先依赖该全局规则的所有页面；不能直接删掉规则后留下零间距。
+先处理 [Theme.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Styles/Theme.axaml:201) 的全局 `WrapPanel > Button` / `WrapPanel > ComboBox` 右下边距。它与局部 Margin 叠加，使按钮和下拉框难以对齐。改为具有明确用途的局部容器样式，并检查原先依赖该全局规则的所有页面；不能直接删掉规则后留下零间距。
 
 一页只保留一个负责表达页面身份的标题。空 StackPanel、已无用途的 Auto 行、空白占位列一并清理。长标题/路径用可伸缩列约束，允许省略或换行，并保留完整信息的 Tooltip/复制方式。
 
@@ -73,10 +73,10 @@
 
 主要文件：
 
-- [MainWindow.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/MainWindow.axaml:28)
-- [MainWindow.axaml.cs](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/MainWindow.axaml.cs:138)
-- [LibraryPage.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/LibraryPage.axaml:180)
-- [LibraryPage.axaml.cs](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/LibraryPage.axaml.cs:27)
+- [MainWindow.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/MainWindow.axaml:28)
+- [MainWindow.axaml.cs](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/MainWindow.axaml.cs:138)
+- [LibraryPage.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/LibraryPage.axaml:180)
+- [LibraryPage.axaml.cs](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/LibraryPage.axaml.cs:27)
 
 已确认：PaneFooter 使用 `Margin="16,8,16,16"`、Spacing 8 的竖排账户/按钮；本地库状态栏单独使用 `Padding="22,9"`、MinHeight 36。两边没有共同高度/对齐规则。实际底部空白还可能受 NavigationView 模板影响，不能断言只减 16 DIP 就一定修好。
 
@@ -95,7 +95,7 @@
 
 ## 5. P1：设置页改为 Fluent 设置行
 
-问题来源：[SettingsPage.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/SettingsPage.axaml:277) 的通栏 tile、四组固定 150 DIP 的控件，以及“标签 → 通栏 Slider → 数值”反复堆叠。更换背景或圆角不能解决层级与对齐问题。
+问题来源：[SettingsPage.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/SettingsPage.axaml:277) 的通栏 tile、四组固定 150 DIP 的控件，以及“标签 → 通栏 Slider → 数值”反复堆叠。更换背景或圆角不能解决层级与对齐问题。
 
 采用左侧标题/必要描述、右侧操作控件的设置行；高级参数使用可展开分组。依据：[Microsoft 设置页指南](https://learn.microsoft.com/en-us/windows/apps/design/app-settings/guidelines-for-app-settings)。这是设计模式参考，不能把 WinUI Community Toolkit 的 SettingsCard 类名直接写进 Avalonia。
 
@@ -148,7 +148,7 @@
 
 ## 6. P1：阅读页收敛为一个页头与一个底部进度区
 
-已确认的三层结构：MainWindow 通用“阅读”标题/站点按钮，加 [ReaderPage.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/ReaderPage.axaml:14) 的作品信息行，再加模式/适应/方向/重试/沉浸/全屏按钮行。页码又在底部重复显示。标题还被 `MaxWidth="560"` 人为限制。
+已确认的三层结构：MainWindow 通用“阅读”标题/站点按钮，加 [ReaderPage.axaml](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/ReaderPage.axaml:14) 的作品信息行，再加模式/适应/方向/重试/沉浸/全屏按钮行。页码又在底部重复显示。标题还被 `MaxWidth="560"` 人为限制。
 
 目标结构：独立系统标题栏 → 阅读专用页头 → 画布 → 紧凑翻页进度区。
 
@@ -161,8 +161,8 @@
 5. 底部保持“上一页 / 弹性进度 / 下一页 / 当前页码”，共用底部栏间距。方向切换后的按钮与方向键行为沿用现有语义；滑块端点、拖动和禁用状态不变。
 6. 画布使用剩余 `*` 空间，按图片比例居中。单页的留黑本身是正确行为，不为消除空白裁图或强制铺满。连续/横向模式继续使用各自的真实滚动视口和虚拟化路径。
 7. 重排页头后核对尺寸计算、Resize 通知与 Fit 重新计算；不能因工具栏换位置导致图片超出视口、反复缩放或进度跳动。
-8. 同步调整 [MainWindow.UpdateAdaptiveLayout](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/MainWindow.axaml.cs:494)，避免它每次恢复通用 NavigationHeader，覆盖阅读专用页头。
-9. 当前 [SetImmersive](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/ReaderPage.axaml.cs:49) 仅隐藏 ReaderHeading。重构后使沉浸时确实收起导航和普通标题，仍有可发现的退出操作、Esc 和必要进度；本轮不要求新增自动隐藏动画。
+8. 同步调整 [MainWindow.UpdateAdaptiveLayout](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/MainWindow.axaml.cs:494)，避免它每次恢复通用 NavigationHeader，覆盖阅读专用页头。
+9. 当前 [SetImmersive](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/ReaderPage.axaml.cs:49) 仅隐藏 ReaderHeading。重构后使沉浸时确实收起导航和普通标题，仍有可发现的退出操作、Esc 和必要进度；本轮不要求新增自动隐藏动画。
 10. 沉浸与全屏继续是两个独立动作：沉浸不能隐式开启标题栏扩展；退出全屏应恢复进入前 Normal/Maximized 状态，避免当前 ToggleFullscreen 固定返回 Normal。Esc 先退出沉浸，再退出全屏，之后返回来源页。
 
 验收：单页、纵向连续、横向连续、沉浸、全屏均有正常/窄窗截图；通用“阅读”标题不再重复，顶部不再出现三层操作区。正常模式保留独立系统标题栏。模式/方向/适应切换、前后翻页、拖动、进度恢复及返回来源页回归通过。
@@ -173,18 +173,18 @@
 
 | 页面/组件 | 位置与证据 | 执行项与验收重点 |
 | --- | --- | --- |
-| 本地库 | [LibraryPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/LibraryPage.axaml:12)，U/S | 数据源、排序、搜索、筛选、语言目前分散多行。搜索为主行，筛选/排序/语言成组并在有空间时共行，窄窗按完整分组换行。卡片、页头、状态栏使用共同内容起点；卡片固定高度需验证大字体/长标题，不以缩小字体解决。第 160 行扫描浮层固定宽 380，改为随视口收缩 |
-| 在线浏览 | [OnlineFeedPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/OnlineFeedPage.axaml:8)，S/H/V | 合并空 Auto 行与工具区；页码靠近翻页按钮。高级选项第 74 行上限 240，在 420 高窗口可能挤没结果区，低高时用可滚动弹出/展开区域，收起后恢复列表空间。结果摘要与保存/清除搜索动作窄窗分行 |
-| 收藏 | [OnlineFeedPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/OnlineFeedPage.axaml:39)，S/H/V | 与在线页共用实现但必须单独验收。搜索框固定 260 加水平按钮，改为弹性输入与可换行动作。11 个分类保留选择和键盘可达性；历史截图已有分类换行，不重复声称它必然裁切 |
-| 阅读历史 | [HistoryPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/HistoryPage.axaml:14)，S/H/V | 顶部操作可换行；第 44 行封面/正文/固定动作三列窄时把动作移到正文下方。保留标题两行、进度与最近时间；零页条目保持不可读语义。历史样本未见裁切，重点测更小高度和大字体 |
-| 下载 | [DownloadsPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/DownloadsPage.axaml:8)，S/H/V | 三个子页逐一测：任务、已完成、归档传输。顶部多层固定区域压缩低高视口；任务/已完成卡片的正文优先，长错误换行，操作窄时下一行。保留暂停/恢复/重试、进度和删除确认，统一底部状态基线 |
-| 共享详情 | [GalleryDetailsView](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Controls/GalleryDetailsView.axaml:9)，S/H/V | 现有 740 DIP 以下小封面+侧栏、标签优先逻辑方向正确，保留并验证断点两侧。宽版 280×374 封面、76 DIP 标签列在长标题/放大文本时检查。标题、元数据、操作统一起点，不复制在线/本地两套布局 |
-| 在线详情 | [OnlineGalleryPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/OnlineGalleryPage.axaml:43)，S/H/V | 评分三列/五个星按钮、评论行、提交状态横排做窄窗验证，必要时堆叠。主操作已有 WrapPanel，先去叠加间距再评估。收藏对话框最小宽度 320，验证真实窄窗、焦点与滚动 |
-| 本地详情 | [GalleryDetailsPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/GalleryDetailsPage.axaml:22)，S/H/V | 文件诊断的固定标签列和底部横向按钮组窄时换行；长路径受弹性宽度约束，保持可复制。诊断展开不应挤压共享标题/封面，也不能遮住末尾操作 |
-| 归档下载 | [ArchivePage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/ArchivePage.axaml:11)，S/H/V | 壳标题与页内“归档下载”重复，保留作品信息/副标题，将刷新等归入统一页级工具区。第 34 行 ComboBox MinWidth 320 改为受容器约束；第 58 行按钮+URL 的水平容器改弹性布局。关闭等同返回时只保留一个清楚入口 |
-| 种子 | [TorrentPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/TorrentPage.axaml:14)，S/H/V | 消除壳/页内重复标题；顶部操作与状态条窄窗可换行。第 37 行已有 AdaptiveGrid，保留其堆叠能力；测长名称、多条记录、空状态和下载动作可达性 |
-| 版本/本地副本 | [VersionsPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/VersionsPage.axaml:13)，S/H/V | 顶部多行信息在低高窗口可能挤压列表，非必要说明并入滚动区。现有三个操作支持换行，避免回退为固定横排；长来源/路径可查看，关闭/返回不被遮挡 |
-| 网页登录 | [WebLoginPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Views/WebLoginPage.axaml:10)，S/H/V | 统一壳/页内标题；浏览器操作、长状态与 Cookie 区改为弹性列/换行。顶部关闭和底部取消按实际语义合并：若会取消正在运行的登录，必须保留取消能力。滚动到底检查所有操作；不能因历史截图未滚到底就断言按钮不可达 |
+| 本地库 | [LibraryPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/LibraryPage.axaml:12)，U/S | 数据源、排序、搜索、筛选、语言目前分散多行。搜索为主行，筛选/排序/语言成组并在有空间时共行，窄窗按完整分组换行。卡片、页头、状态栏使用共同内容起点；卡片固定高度需验证大字体/长标题，不以缩小字体解决。第 160 行扫描浮层固定宽 380，改为随视口收缩 |
+| 在线浏览 | [OnlineFeedPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/OnlineFeedPage.axaml:8)，S/H/V | 合并空 Auto 行与工具区；页码靠近翻页按钮。高级选项第 74 行上限 240，在 420 高窗口可能挤没结果区，低高时用可滚动弹出/展开区域，收起后恢复列表空间。结果摘要与保存/清除搜索动作窄窗分行 |
+| 收藏 | [OnlineFeedPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/OnlineFeedPage.axaml:39)，S/H/V | 与在线页共用实现但必须单独验收。搜索框固定 260 加水平按钮，改为弹性输入与可换行动作。11 个分类保留选择和键盘可达性；历史截图已有分类换行，不重复声称它必然裁切 |
+| 阅读历史 | [HistoryPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/HistoryPage.axaml:14)，S/H/V | 顶部操作可换行；第 44 行封面/正文/固定动作三列窄时把动作移到正文下方。保留标题两行、进度与最近时间；零页条目保持不可读语义。历史样本未见裁切，重点测更小高度和大字体 |
+| 下载 | [DownloadsPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/DownloadsPage.axaml:8)，S/H/V | 三个子页逐一测：任务、已完成、归档传输。顶部多层固定区域压缩低高视口；任务/已完成卡片的正文优先，长错误换行，操作窄时下一行。保留暂停/恢复/重试、进度和删除确认，统一底部状态基线 |
+| 共享详情 | [GalleryDetailsView](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Controls/GalleryDetailsView.axaml:9)，S/H/V | 现有 740 DIP 以下小封面+侧栏、标签优先逻辑方向正确，保留并验证断点两侧。宽版 280×374 封面、76 DIP 标签列在长标题/放大文本时检查。标题、元数据、操作统一起点，不复制在线/本地两套布局 |
+| 在线详情 | [OnlineGalleryPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/OnlineGalleryPage.axaml:43)，S/H/V | 评分三列/五个星按钮、评论行、提交状态横排做窄窗验证，必要时堆叠。主操作已有 WrapPanel，先去叠加间距再评估。收藏对话框最小宽度 320，验证真实窄窗、焦点与滚动 |
+| 本地详情 | [GalleryDetailsPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/GalleryDetailsPage.axaml:22)，S/H/V | 文件诊断的固定标签列和底部横向按钮组窄时换行；长路径受弹性宽度约束，保持可复制。诊断展开不应挤压共享标题/封面，也不能遮住末尾操作 |
+| 归档下载 | [ArchivePage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/ArchivePage.axaml:11)，S/H/V | 壳标题与页内“归档下载”重复，保留作品信息/副标题，将刷新等归入统一页级工具区。第 34 行 ComboBox MinWidth 320 改为受容器约束；第 58 行按钮+URL 的水平容器改弹性布局。关闭等同返回时只保留一个清楚入口 |
+| 种子 | [TorrentPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/TorrentPage.axaml:14)，S/H/V | 消除壳/页内重复标题；顶部操作与状态条窄窗可换行。第 37 行已有 AdaptiveGrid，保留其堆叠能力；测长名称、多条记录、空状态和下载动作可达性 |
+| 版本/本地副本 | [VersionsPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/VersionsPage.axaml:13)，S/H/V | 顶部多行信息在低高窗口可能挤压列表，非必要说明并入滚动区。现有三个操作支持换行，避免回退为固定横排；长来源/路径可查看，关闭/返回不被遮挡 |
+| 网页登录 | [WebLoginPage](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Views/WebLoginPage.axaml:10)，S/H/V | 统一壳/页内标题；浏览器操作、长状态与 Cookie 区改为弹性列/换行。顶部关闭和底部取消按实际语义合并：若会取消正在运行的登录，必须保留取消能力。滚动到底检查所有操作；不能因历史截图未滚到底就断言按钮不可达 |
 
 历史快照中，历史、下载、种子、版本等代表样本没有明显横向裁切；这些页面的窄高/放大风险属于 V 项。审查覆盖所有页面，不代表每页都必须大改。
 
@@ -216,16 +216,16 @@
 
 ```powershell
 Set-Location 'G:\SoftwareProject\Avalonia\EhviewerDownloadReader'
-dotnet build EhViewerReader.slnx -c Debug
-dotnet test tests/EhViewerReader.Core.Tests/EhViewerReader.Core.Tests.csproj -c Debug --no-build
-dotnet run --project src/EhViewerReader -c Debug --no-build -- --ui-audit --data-dir .qa/layout-fluent-audit-data --out .qa/layout-fluent-audit
-dotnet run --project src/EhViewerReader -c Debug --no-build -- --navigation-regression --data-dir .qa/layout-fluent-nav-data --out .qa/layout-fluent-nav
-dotnet run --project src/EhViewerReader -c Debug --no-build -- --reader-regression --data-dir .qa/layout-fluent-reader-data --out .qa/layout-fluent-reader
+dotnet build EhViewerForPc.slnx -c Debug
+dotnet test tests/EhViewerForPc.Core.Tests/EhViewerForPc.Core.Tests.csproj -c Debug --no-build
+dotnet run --project src/EhViewerForPc -c Debug --no-build -- --ui-audit --data-dir .qa/layout-fluent-audit-data --out .qa/layout-fluent-audit
+dotnet run --project src/EhViewerForPc -c Debug --no-build -- --navigation-regression --data-dir .qa/layout-fluent-nav-data --out .qa/layout-fluent-nav
+dotnet run --project src/EhViewerForPc -c Debug --no-build -- --reader-regression --data-dir .qa/layout-fluent-reader-data --out .qa/layout-fluent-reader
 ```
 
 当前 UiAuditService 的固定矩阵只有 1240/540 宽与 760 高，需补充最小高度、断点和账户/页脚的真实 Bounds 测量。设置类别若从 TabControl 调整，不得让脚本找不到 SettingsTabs 后仍截图并误报覆盖，应按实际类别选中并断言当前类别。
 
-[UiSmokeService.SaveScreenshot](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerReader/Services/UiSmokeService.cs:963) 渲染的是 `window.Content`，不会拍到原生系统标题栏。因此还必须捕获真实操作系统完整窗口截图，并实际检查拖动、双击最大化、最小化/恢复、关闭、系统按钮和全屏恢复。仅应用内容截图不能证明“不 extend”验收通过。
+[UiSmokeService.SaveScreenshot](G:/SoftwareProject/Avalonia/EhviewerDownloadReader/src/EhViewerForPc/Services/UiSmokeService.cs:963) 渲染的是 `window.Content`，不会拍到原生系统标题栏。因此还必须捕获真实操作系统完整窗口截图，并实际检查拖动、双击最大化、最小化/恢复、关闭、系统按钮和全屏恢复。仅应用内容截图不能证明“不 extend”验收通过。
 
 复用现有 smoke/回归入口验证布局和交互；仅为布局新增有意义的边界/基线测量，不写只断言 XAML 常量的单元测试。正常 pass 后不反复整套重跑，只有新改动、失败或未解决问题才追加对应检查。
 

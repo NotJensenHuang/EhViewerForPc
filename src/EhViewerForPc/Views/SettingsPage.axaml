@@ -1,0 +1,473 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerForPc.ViewModels"
+             xmlns:controls="using:EhViewerForPc.Controls"
+             x:Class="EhViewerForPc.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel">
+  <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
+    <!-- Page header: one category bar and the single page-level action. The
+         section title itself comes from the shell header, so it is not repeated
+         here. -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="16" Margin="24,12,24,6">
+      <ListBox x:Name="SettingsCategories" Classes="categories" ItemsSource="{Binding Categories}"
+               SelectedIndex="{Binding SelectedCategoryIndex, Mode=TwoWay}"
+               ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+               AutomationProperties.Name="设置类别">
+        <ListBox.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel Orientation="Horizontal" />
+          </ItemsPanelTemplate>
+        </ListBox.ItemsPanel>
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <TextBlock Text="{Binding}" />
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+      <Button Grid.Column="1" Classes="accent" Content="{Binding SaveLabel}" Click="OnApplyAll"
+              IsEnabled="{Binding !IsSaving}" VerticalAlignment="Center" />
+    </Grid>
+
+    <ScrollViewer x:Name="SettingsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+      <StackPanel MaxWidth="1040" Margin="24,6,24,24" Spacing="18">
+
+        <!-- ============================================================ 账号 -->
+        <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='0'}">
+          <TextBlock Classes="group-title" Text="登录" />
+          <Border Classes="settings-row">
+            <StackPanel Spacing="10">
+              <SelectableTextBlock Text="{Binding AccountUserText}" TextWrapping="Wrap" FontWeight="SemiBold" />
+              <WrapPanel Classes="actions">
+                <Button Content="网页登录" Classes="accent" Click="OnWebLogin" IsVisible="{Binding !IsSignedIn}" />
+                <Button Content="更换账号" Click="OnWebLogin" IsVisible="{Binding IsSignedIn}" />
+                <Button Content="检测 ExHentai" Command="{Binding CheckExAccessCommand}" IsEnabled="{Binding IsSignedIn}" />
+                <Button Content="退出登录" Command="{Binding SignOutCommand}" IsVisible="{Binding IsSignedIn}" />
+                <Button Content="注册账号" Classes="ghost" Command="{Binding OpenRegisterPageCommand}" />
+              </WrapPanel>
+              <SelectableTextBlock Text="{Binding AccountStatus}" Classes="caption" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <controls:SettingsRow Header="站点" Description="{Binding ExAccessText}">
+            <controls:SettingsRow.Action>
+              <ComboBox Width="180" ItemsSource="{Binding SiteLabels}" SelectedIndex="{Binding SiteIndex}"
+                        AutomationProperties.Name="站点" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="最近登录" Description="{Binding LastSignInText}" />
+
+          <TextBlock Classes="group-title" Text="其他登录方式" />
+          <Expander Header="密码登录" IsVisible="{Binding !IsSignedIn}" HorizontalAlignment="Stretch">
+            <StackPanel Spacing="10" Margin="4,8,4,4">
+              <controls:AdaptiveGrid Breakpoint="560" ColumnDefinitions="*,*" ColumnSpacing="10" RowSpacing="10">
+                <TextBox Text="{Binding UserNameInput}" PlaceholderText="用户名" AutomationProperties.Name="用户名" />
+                <TextBox Grid.Column="1" Text="{Binding PasswordInput}" PasswordChar="●"
+                         PlaceholderText="密码（不会保存）" AutomationProperties.Name="密码" />
+              </controls:AdaptiveGrid>
+              <Button Content="直接登录" Command="{Binding LoginCommand}" HorizontalAlignment="Left" />
+            </StackPanel>
+          </Expander>
+          <Expander Header="导入 Cookie" IsVisible="{Binding !IsSignedIn}" HorizontalAlignment="Stretch">
+            <StackPanel Spacing="10" Margin="4,8,4,4">
+              <SelectableTextBlock Classes="caption" TextWrapping="Wrap" Text="粘贴 Cookie、cURL 或 JSON。" />
+              <TextBox Text="{Binding CookieInput}" AcceptsReturn="True" Height="88" TextWrapping="Wrap"
+                       PlaceholderText="ipb_member_id=…; ipb_pass_hash=…; igneous=…" AutomationProperties.Name="Cookie" />
+              <Button Content="验证并导入" Command="{Binding ImportCookiesCommand}" HorizontalAlignment="Left" />
+            </StackPanel>
+          </Expander>
+        </StackPanel>
+
+        <!-- ============================================================ 网络 -->
+        <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='1'}">
+          <TextBlock Classes="group-title" Text="代理" />
+          <controls:SettingsRow Header="代理模式" Description="图片与页面请求使用同一模式。">
+            <controls:SettingsRow.Action>
+              <ComboBox Width="200" ItemsSource="{Binding ProxyModeLabels}" SelectedIndex="{Binding ProxyModeIndex}"
+                        AutomationProperties.Name="代理模式" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="图片也走代理" Description="关闭后仅网页请求经过代理。">
+            <controls:SettingsRow.Action>
+              <ToggleSwitch IsChecked="{Binding ProxyForImages}" OnContent="" OffContent=""
+                            AutomationProperties.Name="图片也走代理" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+
+          <Border Classes="settings-row" IsVisible="{Binding IsManualProxy}">
+            <StackPanel Spacing="8">
+              <SelectableTextBlock Text="手动代理地址" FontSize="13" />
+              <controls:AdaptiveGrid Breakpoint="600" ColumnDefinitions="*,110,*,*" ColumnSpacing="10" RowSpacing="8">
+                <TextBox Text="{Binding ProxyHost}" PlaceholderText="代理主机" AutomationProperties.Name="代理主机" />
+                <TextBox Grid.Column="1" Text="{Binding ProxyPort}" PlaceholderText="端口" AutomationProperties.Name="代理端口" />
+                <TextBox Grid.Column="2" Text="{Binding ProxyUserName}" PlaceholderText="用户名（可选）" />
+                <TextBox Grid.Column="3" Text="{Binding ProxyPassword}" PasswordChar="●" PlaceholderText="密码（可选）" />
+              </controls:AdaptiveGrid>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Classes="group-title" Text="域名解析" />
+          <controls:SettingsRow Header="DNS over HTTPS" Description="使用加密 DNS 解析站点域名。">
+            <controls:SettingsRow.Action>
+              <ToggleSwitch IsChecked="{Binding UseDoh}" OnContent="" OffContent=""
+                            AutomationProperties.Name="DNS over HTTPS" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <Border Classes="settings-row" IsVisible="{Binding UseDoh}">
+            <StackPanel Spacing="8">
+              <controls:AdaptiveGrid Breakpoint="600" ColumnDefinitions="*,*" ColumnSpacing="10" RowSpacing="8">
+                <TextBox Text="{Binding DohEndpoint}" PlaceholderText="DoH 端点" AutomationProperties.Name="DoH 端点" />
+                <TextBox Grid.Column="1" Text="{Binding HostsOverride}" PlaceholderText="自定义 hosts（每行：host ip）" />
+              </controls:AdaptiveGrid>
+            </StackPanel>
+          </Border>
+          <controls:SettingsRow Header="连接检查" Description="{Binding NetworkStatus}">
+            <controls:SettingsRow.Action>
+              <Button Content="测试连接" Command="{Binding TestNetworkCommand}" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+        </StackPanel>
+
+        <!-- ============================================================ 浏览 -->
+        <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='2'}">
+          <TextBlock Classes="group-title" Text="在线图片" />
+          <controls:SettingsRow Header="显示中文标签翻译" Description="在标签列表中显示 EhTagTranslation 的中文名。">
+            <controls:SettingsRow.Action>
+              <ToggleSwitch IsChecked="{Binding ShowTagTranslations}" OnContent="" OffContent=""
+                            AutomationProperties.Name="显示中文标签翻译" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="图片尺寸" Description="{Binding ImageQualityHint}">
+            <controls:SettingsRow.Action>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <ComboBox Width="220" ItemsSource="{Binding ImageQualityOptions}"
+                          SelectedIndex="{Binding ImageQualityIndex}" AutomationProperties.Name="图片尺寸">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:FeedOption">
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <ComboBox Width="118" ItemsSource="{Binding ResampledWidths}" SelectedIndex="{Binding ResampledWidthIndex}"
+                          AutomationProperties.Name="压缩图片宽度" />
+              </StackPanel>
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="站点图片设置" Description="压缩图宽度在站点 uconfig.php 中调整。">
+            <controls:SettingsRow.Action>
+              <Button Content="打开站点设置" Classes="ghost" Command="{Binding OpenSiteImageSettingsCommand}" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+
+          <TextBlock Classes="group-title" Text="在线缓存" />
+          <controls:SettingsRow Header="缓存占用" Description="{Binding CacheUsageText}">
+            <controls:SettingsRow.Action>
+              <Button Content="清除在线缓存" Click="OnClearOnlineCache" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="磁盘上限">
+            <controls:SettingsRow.Action>
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <Slider Width="260" Minimum="128" Maximum="32768" TickFrequency="128"
+                        Value="{Binding OnlineCacheMegabytes}" AutomationProperties.Name="在线缓存上限" />
+                <SelectableTextBlock Text="{Binding OnlineCacheLabel}" Width="76" TextAlignment="Right"
+                                     VerticalAlignment="Center" />
+              </StackPanel>
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="保留时间" Description="0 表示不限制保留时间，只按磁盘上限淘汰。">
+            <controls:SettingsRow.Action>
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <Slider Width="260" Minimum="0" Maximum="90" TickFrequency="1" IsSnapToTickEnabled="True"
+                        Value="{Binding OnlineCacheDays}" AutomationProperties.Name="在线缓存保留时间" />
+                <SelectableTextBlock Text="{Binding OnlineCacheDaysLabel}" Width="76" TextAlignment="Right"
+                                     VerticalAlignment="Center" />
+              </StackPanel>
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <SelectableTextBlock Classes="caption" TextWrapping="Wrap" Margin="2,0,0,0"
+                     Text="缩略图与在线阅读页图共用此上限，默认 512 MB；按最近使用时间淘汰。正式下载文件、阅读进度与历史记录不受影响。" />
+
+          <TextBlock Classes="group-title" Text="标签翻译库" />
+          <Border Classes="settings-row">
+            <StackPanel Spacing="8">
+              <SelectableTextBlock Text="库地址" FontSize="13" />
+              <controls:AdaptiveGrid Breakpoint="620" ColumnDefinitions="*,Auto" ColumnSpacing="10" RowSpacing="8">
+                <TextBox Text="{Binding TagTranslationUrl}" PlaceholderText="标签翻译库地址" AutomationProperties.Name="标签翻译库地址" />
+                <Button Grid.Column="1" Content="更新标签库" Command="{Binding UpdateTagTranslationsCommand}"
+                        IsEnabled="{Binding !UpdatingTags}" />
+              </controls:AdaptiveGrid>
+              <SelectableTextBlock Text="{Binding TagTranslationStatus}" Classes="caption" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <TextBlock Classes="group-title" Text="列表过滤" />
+          <controls:SettingsRow Header="过滤规则" Description="{Binding FilterStatus}">
+            <controls:SettingsRow.Action>
+              <Button Content="添加规则" Command="{Binding AddFilterCommand}" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <ItemsControl ItemsSource="{Binding Filters}" IsVisible="{Binding HasFilters}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:FilterRuleViewModel">
+                <Border Classes="settings-row" Margin="0,0,0,4">
+                  <Grid ColumnDefinitions="Auto,10,*,10,*,10,Auto" RowDefinitions="Auto,Auto" RowSpacing="8">
+                    <CheckBox IsChecked="{Binding Enabled}" AutomationProperties.Name="启用过滤规则" VerticalAlignment="Center" />
+                    <ComboBox Grid.Column="2" ItemsSource="{Binding TargetLabels}" SelectedIndex="{Binding TargetIndex}"
+                              AutomationProperties.Name="过滤目标" />
+                    <ComboBox Grid.Column="4" ItemsSource="{Binding IncludeLabels}" SelectedIndex="{Binding IncludeIndex}"
+                              AutomationProperties.Name="过滤方式" />
+                    <Button Grid.Column="6" Content="移除" Classes="ghost" Tag="{Binding}" Click="OnRemoveFilter" />
+                    <TextBox Grid.Row="1" Grid.ColumnSpan="7" Text="{Binding Text}" PlaceholderText="要匹配的文字" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <TextBlock Classes="group-title" Text="收藏分类命名" />
+          <SelectableTextBlock Text="{Binding FavoriteSlotStatus}" Classes="caption" TextWrapping="Wrap" Margin="2,0,0,0" />
+          <ItemsControl ItemsSource="{Binding FavoriteSlots}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel Orientation="Horizontal" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:FavoriteSlotRowViewModel">
+                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,14,8" Width="230">
+                  <SelectableTextBlock Text="{Binding SlotLabel}" Classes="caption" Width="52" VerticalAlignment="Center" />
+                  <TextBox Text="{Binding Name}" Width="166" />
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+        <!-- ============================================================ 下载 -->
+        <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='3'}">
+          <TextBlock Classes="group-title" Text="下载目录" />
+          <Border Classes="settings-row">
+            <StackPanel Spacing="8">
+              <SelectableTextBlock Text="下载根目录" FontSize="13" />
+              <controls:AdaptiveGrid Breakpoint="620" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="8">
+                <TextBox Text="{Binding DownloadRoot}" PlaceholderText="下载根目录" AutomationProperties.Name="下载根目录" />
+                <WrapPanel Grid.Column="1" Classes="actions" VerticalAlignment="Center">
+                  <Button Content="浏览…" Click="OnPickDownloadRoot" />
+                  <Button Content="打开目录" Command="{Binding OpenDownloadFolderCommand}" />
+                </WrapPanel>
+              </controls:AdaptiveGrid>
+            </StackPanel>
+          </Border>
+          <Border Classes="settings-row">
+            <StackPanel Spacing="6">
+              <SelectableTextBlock Text="变更目录时" FontSize="13" />
+              <ComboBox ItemsSource="{Binding DownloadDirectoryModes}" SelectedIndex="{Binding DownloadDirectoryMode}"
+                        HorizontalAlignment="Stretch" AutomationProperties.Name="下载目录变更方式" />
+              <SelectableTextBlock Classes="caption" TextWrapping="Wrap" Text="{Binding DownloadDirectoryHint}" />
+            </StackPanel>
+          </Border>
+          <controls:SettingsRow Header="注册与元数据" Description="下载完成后可被本地库直接读取。">
+            <controls:SettingsRow.Action>
+              <WrapPanel Classes="actions">
+                <CheckBox Content="注册为本地库数据源" IsChecked="{Binding DownloadAddAsSource}" />
+                <CheckBox Content="写入 .thumb 封面" IsChecked="{Binding WriteThumb}" />
+                <CheckBox Content="写入 .ehviewer 元数据" IsChecked="{Binding WriteHeader}" />
+              </WrapPanel>
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+
+          <TextBlock Classes="group-title" Text="任务" />
+          <controls:SettingsRow Header="启动时自动继续" Description="恢复上次未完成的任务。">
+            <controls:SettingsRow.Action>
+              <ToggleSwitch IsChecked="{Binding AutoStart}" OnContent="" OffContent="" AutomationProperties.Name="启动时自动继续" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="自动更新本地库" Description="下载完成后刷新列表与进度。">
+            <controls:SettingsRow.Action>
+              <ToggleSwitch IsChecked="{Binding RefreshAfterDownload}" OnContent="" OffContent="" AutomationProperties.Name="自动更新本地库" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="并发画廊">
+            <controls:SettingsRow.Action>
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <Slider Width="240" Minimum="1" Maximum="8" TickFrequency="1" IsSnapToTickEnabled="True"
+                        Value="{Binding MaxConcurrentTasks}" AutomationProperties.Name="并发画廊" />
+                <SelectableTextBlock Text="{Binding MaxConcurrentTasks}" Width="40" TextAlignment="Right" VerticalAlignment="Center" />
+              </StackPanel>
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="并发页面">
+            <controls:SettingsRow.Action>
+              <StackPanel Orientation="Horizontal" Spacing="12">
+                <Slider Width="240" Minimum="1" Maximum="8" TickFrequency="1" IsSnapToTickEnabled="True"
+                        Value="{Binding MaxConcurrentPages}" AutomationProperties.Name="并发页面" />
+                <SelectableTextBlock Text="{Binding MaxConcurrentPages}" Width="40" TextAlignment="Right" VerticalAlignment="Center" />
+              </StackPanel>
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="默认标签" Description="下载到该子目录。" >
+            <controls:SettingsRow.Action>
+              <TextBox Width="240" Text="{Binding DefaultDownloadLabel}" PlaceholderText="可选" AutomationProperties.Name="默认标签" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+
+          <TextBlock Classes="group-title" Text="H@H / 归档下载" />
+          <controls:SettingsRow Header="H@H 状态" Description="{Binding HathStatus}">
+            <controls:SettingsRow.Action>
+              <Button Content="打开 H@H 页面" Command="{Binding OpenHathPageCommand}" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+        </StackPanel>
+
+        <!-- ============================================================ 阅读 -->
+        <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='4'}">
+          <TextBlock Classes="group-title" Text="默认阅读" />
+          <controls:SettingsRow Header="主题">
+            <controls:SettingsRow.Action>
+              <ComboBox Width="180" ItemsSource="{Binding ThemeLabels}" SelectedIndex="{Binding ThemeIndex}" AutomationProperties.Name="主题" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="默认模式">
+            <controls:SettingsRow.Action>
+              <ComboBox Width="180" ItemsSource="{Binding ModeLabels}" SelectedIndex="{Binding ModeIndex}" AutomationProperties.Name="默认模式" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="背景">
+            <controls:SettingsRow.Action>
+              <ComboBox Width="180" ItemsSource="{Binding BackgroundLabels}" SelectedIndex="{Binding BackgroundIndex}" AutomationProperties.Name="背景" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="适应方式">
+            <controls:SettingsRow.Action>
+              <ComboBox Width="180" ItemsSource="{Binding FitLabels}" SelectedIndex="{Binding FitIndex}" AutomationProperties.Name="适应方式" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="日漫方向（右→左）" Description="翻页方向、进度条与方向键行为随之反转。">
+            <controls:SettingsRow.Action>
+              <ToggleSwitch IsChecked="{Binding RightToLeft}" OnContent="" OffContent="" AutomationProperties.Name="日漫方向" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+
+          <TextBlock Classes="group-title" Text="图像与缓存" />
+          <Expander Header="高级参数" HorizontalAlignment="Stretch" IsExpanded="True">
+            <StackPanel Spacing="4" Margin="4,8,4,4">
+              <controls:SettingsRow Header="解码像素上限">
+                <controls:SettingsRow.Action>
+                  <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Slider Width="260" Minimum="4" Maximum="96" Value="{Binding MaxMegapixels}" AutomationProperties.Name="解码像素上限" />
+                    <SelectableTextBlock Text="{Binding MaxMegapixelsLabel}" Width="76" TextAlignment="Right" VerticalAlignment="Center" />
+                  </StackPanel>
+                </controls:SettingsRow.Action>
+              </controls:SettingsRow>
+              <controls:SettingsRow Header="图像内存预算" Description="包含解码缓冲、预读与动画。">
+                <controls:SettingsRow.Action>
+                  <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Slider Width="260" Minimum="64" Maximum="1536" Value="{Binding PageCacheMegabytes}" AutomationProperties.Name="图像内存预算" />
+                    <SelectableTextBlock Text="{Binding PageCacheLabel}" Width="76" TextAlignment="Right" VerticalAlignment="Center" />
+                  </StackPanel>
+                </controls:SettingsRow.Action>
+              </controls:SettingsRow>
+              <controls:SettingsRow Header="封面解码宽度">
+                <controls:SettingsRow.Action>
+                  <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Slider Width="260" Minimum="160" Maximum="1024" Value="{Binding CoverDecodeWidth}" AutomationProperties.Name="封面解码宽度" />
+                    <SelectableTextBlock Text="{Binding CoverDecodeLabel}" Width="76" TextAlignment="Right" VerticalAlignment="Center" />
+                  </StackPanel>
+                </controls:SettingsRow.Action>
+              </controls:SettingsRow>
+            </StackPanel>
+          </Expander>
+        </StackPanel>
+
+        <!-- ========================================================== 资料库 -->
+        <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='5'}">
+          <TextBlock Classes="group-title" Text="本地数据源" />
+          <Border Classes="settings-row">
+            <StackPanel Spacing="8">
+              <controls:AdaptiveGrid Breakpoint="620" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="8">
+                <SelectableTextBlock Text="数据源目录" FontSize="13" VerticalAlignment="Center" />
+                <Button Grid.Column="1" Content="添加目录…" Click="OnAddSource" />
+              </controls:AdaptiveGrid>
+              <ItemsControl ItemsSource="{Binding Sources}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:SourceRowViewModel">
+                    <Border Classes="row" Margin="0,0,0,6">
+                      <controls:AdaptiveGrid Breakpoint="560" ColumnDefinitions="Auto,12,*,Auto,Auto" ColumnSpacing="0" RowSpacing="8">
+                        <CheckBox IsChecked="{Binding Enabled}" VerticalAlignment="Center" AutomationProperties.Name="启用数据源" />
+                        <StackPanel Grid.Column="2" Spacing="2">
+                          <SelectableTextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" />
+                          <SelectableTextBlock Classes="caption" Text="{Binding RootPath}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding RootPath}" />
+                          <SelectableTextBlock Classes="caption" Text="{Binding StatusText}"
+                                     Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Button Grid.Column="3" Content="打开" Classes="ghost" Tag="{Binding}" Click="OnOpenSource" />
+                        <Button Grid.Column="4" Content="移除" Classes="ghost" Tag="{Binding}" Click="OnRemoveSource" />
+                      </controls:AdaptiveGrid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+
+          <TextBlock Classes="group-title" Text="以图搜图" />
+          <controls:SettingsRow Header="启用本地图片检索" Description="保存后手动建立索引，所有图片在本机处理。">
+            <controls:SettingsRow.Action><ToggleSwitch IsChecked="{Binding ImageSearchEnabled}" OnContent="" OffContent="" AutomationProperties.Name="启用以图搜图" /></controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <Border Classes="settings-row">
+            <StackPanel Spacing="10">
+              <TextBlock Text="图片索引位置" />
+              <TextBox Text="{Binding ImageSearchDirectory}" PlaceholderText="留空使用应用数据目录" AutomationProperties.Name="图片索引目录" />
+              <ComboBox ItemsSource="{Binding ImageSearchProbeLabels}" SelectedIndex="{Binding ImageSearchProbeIndex}" AutomationProperties.Name="图片检索精度" />
+              <CheckBox Content="下载完成后更新图片索引" IsChecked="{Binding ImageSearchAutoUpdate}" />
+              <ItemsControl ItemsSource="{Binding Sources}">
+                <ItemsControl.ItemTemplate><DataTemplate x:DataType="vm:SourceRowViewModel"><CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IndexImages}" AutomationProperties.Name="参与图片检索的数据源" /></DataTemplate></ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Button Content="管理索引 / 以图搜图" Command="{Binding ManageImageSearchCommand}" HorizontalAlignment="Left" AutomationProperties.AutomationId="Settings.ImageSearch" />
+            </StackPanel>
+          </Border>
+          <TextBlock Classes="group-title" Text="扫描" />
+          <controls:SettingsRow Header="重新扫描全部来源" Description="{Binding RescanStatus}">
+            <controls:SettingsRow.Action>
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="开始扫描" Command="{Binding StartRescanCommand}" IsEnabled="{Binding CanStartRescan}" />
+                <Button Content="取消" Classes="ghost" Command="{Binding CancelRescanCommand}" IsVisible="{Binding IsRescanning}" />
+              </StackPanel>
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <SelectableTextBlock Classes="caption" TextWrapping="Wrap" Margin="2,0,0,0"
+                     Text="只清除扫描缓存不会重新扫描；正常启动仍会加载缓存并对变动目录做增量更新。" />
+        </StackPanel>
+
+        <!-- ============================================================ 维护 -->
+        <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='6'}">
+          <TextBlock Classes="group-title" Text="数据" />
+          <controls:SettingsRow Header="数据目录" Description="{Binding DataDirectory}">
+            <controls:SettingsRow.Action>
+              <Button Content="打开数据目录" Click="OnOpenDataDirectory" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="扫描缓存" Description="清除后下次启动会重新读取目录结构，不会删除任何作品文件。">
+            <controls:SettingsRow.Action>
+              <Button Content="清除扫描缓存" Click="OnClearCache" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
+        </StackPanel>
+
+      </StackPanel>
+    </ScrollViewer>
+
+    <Border Grid.Row="2" Classes="statusbar">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" VerticalAlignment="Center">
+        <StackPanel Spacing="2" VerticalAlignment="Center">
+          <SelectableTextBlock Classes="muted" FontSize="12" Text="修改后点击“保存设置”生效。" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="{Binding DownloadStatus}" Classes="caption" TextWrapping="Wrap"
+                               IsVisible="{Binding DownloadStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          <ProgressBar IsVisible="{Binding IsSaving}" IsIndeterminate="True" Height="3" />
+        </StackPanel>
+        <Button Grid.Column="1" IsVisible="{Binding CanCancelMove}" Content="取消迁移" Command="{Binding CancelMoveCommand}"
+                VerticalAlignment="Center" />
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

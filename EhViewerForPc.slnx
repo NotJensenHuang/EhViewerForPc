@@ -1,0 +1,28 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EhViewerForPc.ImageSearch/EhViewerForPc.ImageSearch.csproj" />
+    <Project Path="src/EhViewerForPc.ImageSearch.Host/EhViewerForPc.ImageSearch.Host.csproj" />
+    <Project Path="src/EhViewerForPc.Core/EhViewerForPc.Core.csproj">
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
+    <Project Path="src/EhViewerForPc/EhViewerForPc.csproj" DefaultStartup="true">
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
+  </Folder>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Folder Name="/packaging/">
+    <Project Path="packaging/EhViewerForPc.Msix/EhViewerForPc.Msix.wapproj" Type="c7167f0d-bc9f-4e6e-afe1-012c56b48db5" Id="b27c0465-9c92-441e-8ee1-5909bf5ebde9">
+      <Deploy />
+    </Project>
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EhViewerForPc.ImageSearch.Ui.Tests/EhViewerForPc.ImageSearch.Ui.Tests.csproj" />
+    <Project Path="tests/EhViewerForPc.ImageSearch.Tests/EhViewerForPc.ImageSearch.Tests.csproj" />
+    <Project Path="tests/EhViewerForPc.Core.Tests/EhViewerForPc.Core.Tests.csproj">
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
+  </Folder>
+</Solution>

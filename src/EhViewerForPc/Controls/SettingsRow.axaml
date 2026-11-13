@@ -1,0 +1,21 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:EhViewerForPc.Controls"
+             x:Class="EhViewerForPc.Controls.SettingsRow"
+             x:Name="Root"
+             x:DataType="controls:SettingsRow">
+  <!-- One settings row: label and optional description on the left, the control
+       on the right. Below the breakpoint the control moves under the label so a
+       narrow window never produces two half-width islands. -->
+  <Border Classes="settings-row">
+    <controls:AdaptiveGrid Breakpoint="560" ColumnDefinitions="*,Auto" ColumnSpacing="16" RowSpacing="8">
+      <StackPanel Spacing="2" VerticalAlignment="Center">
+        <SelectableTextBlock Text="{Binding Header, ElementName=Root}" FontSize="13" TextWrapping="Wrap" />
+        <SelectableTextBlock Text="{Binding Description, ElementName=Root}" Classes="caption" TextWrapping="Wrap"
+                             IsVisible="{Binding HasDescription, ElementName=Root}" />
+      </StackPanel>
+      <ContentControl Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right"
+                      Content="{Binding Action, ElementName=Root}" />
+    </controls:AdaptiveGrid>
+  </Border>
+</UserControl>

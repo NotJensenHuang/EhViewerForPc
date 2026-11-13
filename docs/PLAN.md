@@ -15,7 +15,7 @@
 4. 单页阅读器：适应页面/宽度/高度/原始大小、缩放平移、键盘/滚轮/点击翻页、阅读方向、全屏、进度恢复。
 5. 连续阅读（条漫/Webtoon）模式：虚拟化纵向长图流、当前页跟踪、进度恢复。
 6. 双页模式（作为增强）：两页合成一屏，右到左/左到右。
-7. 所有应用数据写入 `%LocalAppData%\EhViewerReader`，资料库目录严格只读。
+7. 所有应用数据写入 `%LocalAppData%\EhViewerForPc`，资料库目录严格只读。
 8. 在真实资料库（6,315 个画廊、244,639 页、约 94 GB）上完成扫描、缩略图、阅读、性能验证。
 
 ### 1.2 非目标
@@ -116,10 +116,10 @@ EhViewer 源码关键点：
 ## 4. 工程结构
 
 ```
-EhViewerReader.sln
+EhViewerForPc.sln
 src/
-  EhViewerReader/
-    EhViewerReader.csproj          # Avalonia 桌面应用
+  EhViewerForPc/
+    EhViewerForPc.csproj          # Avalonia 桌面应用
     App.axaml / App.axaml.cs
     Program.cs                     # CLI 解析、单例、启动
     Assets/                        # 图标、字体（可选）
@@ -155,10 +155,10 @@ src/
         ZoomPanView.axaml(.cs)     # 单页/双页平移缩放绘制
         ContinuousPageView...
     Styles/                        # 颜色、卡片、按钮、滚动条
-  EhViewerReader.Core/             # 纯逻辑（无 Avalonia 依赖）
+  EhViewerForPc.Core/             # 纯逻辑（无 Avalonia 依赖）
     ...
 tests/
-  EhViewerReader.Core.Tests/
+  EhViewerForPc.Core.Tests/
 docs/
   PLAN.md
   FORMAT.md
@@ -218,13 +218,13 @@ PageCandidate { string FilePath; string Extension; long Length; }
   5. HDD 上避免高并发随机寻道，扫描并发度默认 1-4，可配置。
 - 正在下载的目录（存在 0 字节页/临时文件/页数变化）不标记为完整；下次启动重扫。
 - 缓存文件带 schema 版本、临时文件 + 原子替换、损坏回退；单实例运行。
-- 缓存、进度、尺寸缓存、封面缓存都放 `%LocalAppData%\EhViewerReader`。
+- 缓存、进度、尺寸缓存、封面缓存都放 `%LocalAppData%\EhViewerForPc`。
 - 监听根目录顶层变化可选；手动“刷新”必须可用。
 
 ### 5.2.1 页面尺寸缓存（连续模式必需）
 
 - 打开画廊时（或首次切换到连续模式时）用 `SKCodec` 读图片头获取宽高/EXIF 方向，不解码整图。
-- 缓存到 `%LocalAppData%\EhViewerReader\dimensions\{stableId}.json`：原始页号、宽、高、方向、文件长度、mtime。
+- 缓存到 `%LocalAppData%\EhViewerForPc\dimensions\{stableId}.json`：原始页号、宽、高、方向、文件长度、mtime。
 - 只缓存打开过的画廊；文件长度/mtime 变化时失效。
 - 读尺寸并发 4-8、可取消；失败页使用 3:4 占位并标记 `Unknown`。
 - 连续模式在显示前尽量获取全部尺寸（带进度/取消）；这样 `StackLayout` 高度确定，避免滚动跳动。若某个 1,728 页画廊实测读取过慢，再降级为“可见页 ±20 优先测量 + 锚点补偿”。
@@ -234,7 +234,7 @@ PageCandidate { string FilePath; string Extension; long Length; }
 
 - 优先直接读取 `.thumb`；读取至少 12 字节并校验：JPEG `FF D8 FF`、PNG `89 50 4E 47`、GIF `GIF8`、WebP `RIFF....WEBP`。
 - 0 字节/截断/解码失败：回退到“第一个可解码页”，生成 320px 宽缩略图。
-- 可选磁盘缓存到 `%LocalAppData%\EhViewerReader\covers\{stableId}-{thumbLength}-{thumbMtimeTicks}.jpg`（不写资料库）；缓存键包含来源长度+mtime，源变化自动失效。
+- 可选磁盘缓存到 `%LocalAppData%\EhViewerForPc\covers\{stableId}-{thumbLength}-{thumbMtimeTicks}.jpg`（不写资料库）；缓存键包含来源长度+mtime，源变化自动失效。
 - 封面 Bitmap 由 `AsyncImage` 控件独占，容器回收/DataContext 变化时取消加载并 Dispose，不做跨控件共享 LRU（避免悬空引用）。
 - 并发解码上限 4；`SemaphoreSlim` + `CancellationToken`；滚动时取消过期请求。
 - 解码宽度按卡片实际像素宽度 × RenderScaling 计算，避免高 DPI 模糊。

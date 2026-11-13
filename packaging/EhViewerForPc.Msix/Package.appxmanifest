@@ -1,0 +1,54 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WAP 工程的清单。负载 = InjectAotPayload 注入到 EhViewerForPc\ 子目录的
+  NativeAOT 发布产物（替换托管构建产物）。Executable/EntryPoint 用占位符：
+  DesktopBridge 会按入口工程把它展开为 EhViewerForPc\EhViewerForPc.exe，
+  与注入的负载路径一致（实测字面 Executable 会被入口清单生成步骤改写，
+  导致"清单引用了不属于负载的文件"错误，必须用占位符）。
+  ProcessorArchitecture 由打包流程按构建平台写入，不在清单里固定。
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <Identity Name="EhViewerForPc.Local"
+            Publisher="CN=CF259542-70C0-4852-9523-066A80212473"
+            Version="1.0.1.0" />
+
+  <Properties>
+    <DisplayName>EhViewer for PC</DisplayName>
+    <PublisherDisplayName>EhViewerForPc</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>离线读取 EhViewer 下载目录的本地漫画阅读器，只读资料库</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application Id="EhViewerForPc" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="EhViewer for PC"
+        Description="离线读取 EhViewer 下载目录的本地漫画阅读器"
+        BackgroundColor="#0B0D10"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile
+          Wide310x150Logo="Assets\Wide310x150Logo.png"
+          Square71x71Logo="Assets\Square71x71Logo.png"
+          Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
