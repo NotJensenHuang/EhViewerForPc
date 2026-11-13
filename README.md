@@ -5,7 +5,7 @@
 面向桌面的 E-Hentai / ExHentai 客户端与本地阅读器：在线浏览、搜索、账号登录、代理、下载队列，与原有的 **只读本地资料库**（EhViewer 下载目录）统一在左侧导航中。
 
 - UI：Avalonia 12.1.6 + FluentAvaloniaUI 3.0.2（深色 / 浅色）
-- 运行时：.NET 10；Windows / Linux / macOS 使用 Avalonia.Desktop 后端，Windows x64 支持 NativeAOT 发布
+- 运行时：.NET 11；Windows / Linux / macOS 使用 Avalonia.Desktop 后端，Windows x64 支持 NativeAOT 发布
 - 本地库已验证规模：6,327 个画廊 / 245,548 页（2.8 TB 机械盘，冷扫 81 s，热缓存 0.5 s 内启动）
 - 在线解析已对齐 2026-11 的站点结构（`#gdd` 元数据行、`#taglist` 命名空间单元格、sprite 缩略图、`/s/{hash}/{gid}-{page}` 视图 URL）
 
@@ -130,7 +130,8 @@ Fluent 迁移后的逐页检查、修复与覆盖范围见 [UI 检查记录](doc
 ## 系统要求
 
 - Windows 10 / Windows 11（x64）已验证；Linux x64 已通过托管发布检查，macOS 后端已接入，Linux/macOS 实机验证仍需在对应系统进行
-- 依赖框架构建需 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/)；NativeAOT / MSIX 构建无运行时依赖
+- 依赖框架构建需 [.NET 11 运行时](https://dotnet.microsoft.com/)（`runtimeconfig.json` 仅引用 `Microsoft.NETCore.App 11.0.0`，不依赖 WindowsDesktop.App）；NativeAOT / MSIX 构建无运行时依赖
+- 构建使用 .NET 11 SDK（11.0.100 或更高）；项目不再通过 `global.json` 锁定 SDK 版本，命令行与 IDE 会选用其解析到的最高版本 SDK
 - 建议开启系统「长路径」策略；应用同时内置 `\\?\` 回退
 
 
@@ -158,7 +159,7 @@ dotnet run --project src/EhViewerReader -c Release
 发布：
 
 ```bash
-# 依赖框架（体积小，需要 .NET 10 Desktop Runtime）
+# 依赖框架（体积小，需要 .NET 11 运行时）
 dotnet publish src/EhViewerReader -c Release -r win-x64 --self-contained false -o artifacts/win-x64
 
 # NativeAOT（自包含原生单文件，无需 .NET 运行时）
@@ -205,7 +206,7 @@ VS 中的用法：
 
 ```bash
 # 在线链路自检（不需要登录）
-src/EhViewerReader/bin/Debug/net10.0/EhViewerReader.exe --online-probe --out docs/online-probe.json
+src/EhViewerReader/bin/Debug/net11.0/EhViewerReader.exe --online-probe --out docs/online-probe.json
 
 # 本地库自检
 dotnet run --project src/EhViewerReader -c Release -- --self-test --root "D:\path\to\ehviewer" --out docs/selftest.json
@@ -261,10 +262,10 @@ dotnet test tests/EhViewerReader.Core.Tests
 EHVIEWER_TEST_ROOT="D:/BackUp/phoneGT5pro/ehviewer" dotnet test tests/EhViewerReader.Core.Tests
 
 # 在线链路自检（前端 → 详情 → 页面列表 → 图片 URL）
-src/EhViewerReader/bin/Debug/net10.0/EhViewerReader.exe --online-probe --out docs/online-probe.json
+src/EhViewerReader/bin/Debug/net11.0/EhViewerReader.exe --online-probe --out docs/online-probe.json
 
 # UI 冒烟与逐页截图（合成库 + 在线详情）
-src/EhViewerReader/bin/Debug/net10.0/EhViewerReader.exe --ui-smoke --out docs/screenshots
+src/EhViewerReader/bin/Debug/net11.0/EhViewerReader.exe --ui-smoke --out docs/screenshots
 ```
 
 覆盖范围与实测数据详见 [docs/TEST_REPORT.md](docs/TEST_REPORT.md)：在线解析器使用从真实页面截取的 fixture 做回归（列表行、`#gdd` 元数据、命名空间标签、sprite 预览、`nl` 键、gid 在前的视图 URL、分类掩码）；本地部分覆盖 VERSION1/2/CBOR、0 字节/缺页、多源合并、设置迁移等。
