@@ -1,5 +1,7 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/EhViewerReader.ImageSearch/EhViewerReader.ImageSearch.csproj" />
+    <Project Path="src/EhViewerReader.ImageSearch.Host/EhViewerReader.ImageSearch.Host.csproj" />
     <Project Path="src/EhViewerReader.Core/EhViewerReader.Core.csproj">
       <Platform Solution="*|x64" Project="x64" />
     </Project>
@@ -17,6 +19,8 @@
     </Project>
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/EhViewerReader.ImageSearch.Ui.Tests/EhViewerReader.ImageSearch.Ui.Tests.csproj" />
+    <Project Path="tests/EhViewerReader.ImageSearch.Tests/EhViewerReader.ImageSearch.Tests.csproj" />
     <Project Path="tests/EhViewerReader.Core.Tests/EhViewerReader.Core.Tests.csproj">
       <Platform Solution="*|x64" Project="x64" />
     </Project>

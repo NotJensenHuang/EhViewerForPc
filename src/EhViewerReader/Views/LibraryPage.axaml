@@ -19,6 +19,7 @@
                   IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
         </Grid>
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Content="以图搜图" Click="OnImageSearch" AutomationProperties.AutomationId="Library.ImageSearch" />
           <ComboBox Width="132" ItemsSource="{Binding SortOptions}" SelectedItem="{Binding SelectedSort}"
                     AutomationProperties.Name="排序方式">
             <ComboBox.ItemTemplate>

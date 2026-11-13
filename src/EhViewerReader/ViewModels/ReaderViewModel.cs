@@ -53,16 +53,21 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private bool _suppressScrollSync;
     private int _relocationVersion;
 
-    public ReaderViewModel(AppServices services, GalleryInfo gallery)
-        : this(services, new LocalReaderSource(services, gallery))
+    public ReaderViewModel(AppServices services, GalleryInfo gallery, int? initialPageNumber = null)
+        : this(services, new LocalReaderSource(services, gallery), initialPageNumber)
     {
     }
 
-    public ReaderViewModel(AppServices services, IReaderSource source)
+    public ReaderViewModel(AppServices services, IReaderSource source, int? initialPageNumber = null)
     {
         _services = services;
         _source = source;
         _pages = source.Pages.ToList();
+        if (initialPageNumber is int requested)
+        {
+            _index = _pages.FindIndex(p => p.Number == requested);
+            if (_index < 0) throw new FileNotFoundException("命中页已不在该副本中。");
+        }
 
         _fitOptions =
         [
@@ -89,7 +94,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             ShowRestoreHint = false;
         };
 
-        RestoreProgress();
+        if (initialPageNumber is null) RestoreProgress();
         UpdateCurrentRequests();
         UpdateLabels();
 
@@ -426,6 +431,18 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     {
         if (_pages.Count == 0) return;
         SetIndex(index, scrollContinuous);
+    }
+
+    /// <summary>Navigates to an exact original page and clears historical offsets, including a repeated current-page hit.</summary>
+    public bool TryNavigateToPageNumber(int pageNumber)
+    {
+        if (_disposed) return false;
+        int index = _pages.FindIndex(page => page.Number == pageNumber);
+        if (index < 0) return false;
+        RestoreHint = string.Empty; ShowRestoreHint = false;
+        SetIndex(index, scrollContinuous: true, offset: 0);
+        ScheduleSave();
+        return true;
     }
 
     public async Task SetModeAsync(ReadingMode mode)

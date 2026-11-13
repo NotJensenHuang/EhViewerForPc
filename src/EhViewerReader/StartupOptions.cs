@@ -13,6 +13,8 @@ public sealed class StartupOptions
     public string? DataDirectory { get; private set; }
     public string? OutputPath { get; private set; }
     public string? ProbeFile { get; private set; }
+    /// <summary>Gets an empty isolated root for the managed image-search application probe.</summary>
+    public string? ImageSearchProbeRoot { get; private set; }
 
     /// <summary>File measured by the animation probe; no window is created.</summary>
     public string? AnimProbe { get; private set; }
@@ -64,6 +66,9 @@ public sealed class StartupOptions
                     break;
                 case "--probe-file":
                     options.ProbeFile = Next(args, ref i);
+                    break;
+                case "--image-search-probe-root":
+                    options.ImageSearchProbeRoot = Next(args, ref i);
                     break;
                 case "--anim-probe":
                     options.AnimProbe = Next(args, ref i);

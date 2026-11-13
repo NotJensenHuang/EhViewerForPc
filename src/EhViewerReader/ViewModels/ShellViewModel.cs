@@ -50,6 +50,8 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     private string _toastText = string.Empty;
     private bool _showToast;
     private bool _disposed;
+    private CancellationTokenSource? _imageUpdateCancellation;
+    private bool _imageUpdateRunning, _imageUpdateDirty, _imageMaintenanceReady;
 
     public ShellViewModel(AppServices services)
     {
@@ -68,6 +70,8 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Downloads = new DownloadsViewModel(services, Library);
         Settings = new SettingsViewModel(services);
         Settings.AccountChanged += (_, _) => RaiseAccount();
+        Library.LocalIndexChanged += OnImageIndexLibraryChanged;
+        services.Downloads.TaskCompleted += OnImageIndexDownloadCompleted;
 
         // The local index drives the "已在本机" badges on every online listing.
         Library.LocalIndexChanged += (_, _) => { Online.RefreshLocalState(); Favorites.RefreshLocalState(); LocalStateChanged?.Invoke(this, EventArgs.Empty); };
@@ -173,6 +177,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         _services.EnsureDownloadSource();
         _services.Downloads.AutoStart();
         await Library.InitializeAsync().ConfigureAwait(true);
+        _imageMaintenanceReady = true;
         Settings.RefreshAccount();
         await Online.LoadAsync(reset: true).ConfigureAwait(true);
     }
@@ -348,10 +353,49 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     {
         if (_disposed) return;
         _disposed = true;
+        Library.LocalIndexChanged -= OnImageIndexLibraryChanged;
+        _services.Downloads.TaskCompleted -= OnImageIndexDownloadCompleted;
+        _imageUpdateCancellation?.Cancel();
         _toastTimer.Stop();
         Downloads.Dispose();
         History.Dispose();
         Library.Dispose();
         Settings.Dispose();
+    }
+
+    private void OnImageIndexLibraryChanged(object? sender, EventArgs e) { if (_imageMaintenanceReady) QueueImageIndexUpdate(); }
+    private void OnImageIndexDownloadCompleted(object? sender, EhViewerReader.Core.Download.DownloadTask task)
+        => Dispatcher.UIThread.Post(QueueImageIndexUpdate);
+    private void QueueImageIndexUpdate()
+    {
+        if (!Dispatcher.UIThread.CheckAccess()) { Dispatcher.UIThread.Post(QueueImageIndexUpdate); return; }
+        if (_disposed || !_services.Settings.ImageSearch.Enabled || !_services.Settings.ImageSearch.AutoUpdateAfterDownload) return;
+        // Automatic maintenance starts only after an explicit first build.
+        if (!File.Exists(Path.Combine(_services.ImageSearch.DirectoryPath, "current.json"))) return;
+        _imageUpdateDirty = true;
+        if (_imageUpdateRunning) return;
+        _imageUpdateCancellation?.Cancel(); _imageUpdateCancellation = new();
+        _ = UpdateImageIndexAfterQuietPeriodAsync(_imageUpdateCancellation.Token);
+    }
+    private async Task UpdateImageIndexAfterQuietPeriodAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), token);
+            if (_disposed || !_services.Settings.ImageSearch.Enabled || !_services.Settings.ImageSearch.AutoUpdateAfterDownload) return;
+            _imageUpdateRunning = true;
+            while (_imageUpdateDirty && !token.IsCancellationRequested)
+            {
+                _imageUpdateDirty = false;
+                while (_services.ImageSearch.IsBuilding) await Task.Delay(500, token);
+                var copies = Library.SnapshotAllWorks().SelectMany(item => item.Versions).DistinctBy(g => (g.SourceId, g.StableId))
+                    .Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+                await _services.ImageSearch.BuildAsync(copies, null, token);
+                if (_imageUpdateDirty) await Task.Delay(TimeSpan.FromSeconds(10), token);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { _services.Log.Warn("Image index update: " + error.GetType().Name); }
+        finally { _imageUpdateRunning = false; }
     }
 }

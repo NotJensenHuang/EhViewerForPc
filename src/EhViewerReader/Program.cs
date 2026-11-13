@@ -22,6 +22,9 @@ internal static class Program
         StartupOptions options = StartupOptions.Parse(args);
         StartupOptions.Current = options;
 
+        if (!string.IsNullOrWhiteSpace(options.ImageSearchProbeRoot))
+            return LocalImageSearchAppProbe.RunAsync(options.ImageSearchProbeRoot, options.OutputPath).GetAwaiter().GetResult();
+
         if (!string.IsNullOrWhiteSpace(options.ProbeFile))
         {
             return FormatProbe.Run(options.ProbeFile);

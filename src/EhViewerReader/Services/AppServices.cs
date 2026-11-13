@@ -38,6 +38,7 @@ public sealed class AppServices : IDisposable
         OnlineImages = new OnlineImageService(paths, Online, Images, Log, settings, PageImages);
         TagTranslation = new TagTranslationService(paths, settings, Online, Log);
         Downloads = new DownloadManager(paths, settings, Online, message => Log.Warn(message), PageImages);
+        ImageSearch = new LocalImageSearchService(this);
         PageImages.FindLocalPage = Downloads.FindPage;
         ApplySettings(settings);
     }
@@ -71,6 +72,9 @@ public sealed class AppServices : IDisposable
     /// <summary>Independent download engine.</summary>
     public DownloadManager Downloads { get; }
 
+    /// <summary>Gets the lazy managed local image retrieval service.</summary>
+    public LocalImageSearchService ImageSearch { get; }
+
     public static AppServices Initialize(AppPaths? paths = null)
     {
         paths ??= new AppPaths();
@@ -90,6 +94,8 @@ public sealed class AppServices : IDisposable
     public void ApplySettings(AppSettings settings)
     {
         Settings = settings;
+        if (!settings.ImageSearch.Enabled) ImageSearch?.Cancel();
+        ImageSearch?.ApplySettings();
         ImageMemoryBudget.Configure(settings.PageCacheMegabytes);
         Images.MaxMegapixels = settings.MaxDecodeMegapixels;
         Images.MaxDimension = settings.MaxDecodeDimension;
@@ -182,6 +188,7 @@ public sealed class AppServices : IDisposable
         }
 
         Downloads.Dispose();
+        ImageSearch.Dispose();
         Writes.Dispose();
         Online.Dispose();
         Covers.Dispose();

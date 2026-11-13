@@ -194,7 +194,8 @@ public sealed class OnlineReaderRepairTests : IDisposable
         oldDefaults.Normalize();
         Assert.Equal(512, oldDefaults.OnlineCacheMegabytes);
         Assert.Equal(0, oldDefaults.OnlineCacheDays);
-        Assert.Equal(6, oldDefaults.SchemaVersion);
+        Assert.Equal(7, oldDefaults.SchemaVersion);
+        Assert.False(oldDefaults.ImageSearch.Enabled);
 
         var custom = new AppSettings { SchemaVersion = 5, OnlineCacheMegabytes = 4096, OnlineCacheDays = 30 };
         custom.Normalize();

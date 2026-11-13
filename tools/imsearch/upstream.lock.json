@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/lolishinshi/imsearch",
+  "commit": "2bf2546822ca2b9b1522d868eb9f21ba441f20d2",
+  "cargoVersion": "3.0.2",
+  "cargoLockSha256": "c499243e76b0ec6adfca1eee7bbf1522cb628564516ab851acd8414bdbf4f300",
+  "orbSourceSha256": "1cdb707cb1a15c2e23c3d299649b5e9a59507626fa8d8ee19fca8f57059d7a69",
+  "extractorVersion": "managed-slam-orb-v1",
+  "indexFormat": "imsearch-csharp/1",
+  "differences": [
+    "Managed HNSW replaces Faiss/hnsw_rs; graph bytes and random sequences differ",
+    "Deflate replaces zstd; Rust indexes require rebuild",
+    "Managed area/gray/atan2 rounding may differ from OpenCV; no bitwise extraction parity claim",
+    "Input normalization handles orientation/alpha and limits size before extraction",
+    "Authentication and empty-result handling are implemented; import failures propagate"
+  ]
+}

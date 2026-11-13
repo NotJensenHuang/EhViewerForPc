@@ -410,6 +410,22 @@
             </StackPanel>
           </Border>
 
+          <TextBlock Classes="group-title" Text="以图搜图" />
+          <controls:SettingsRow Header="启用本地图片检索" Description="保存后手动建立索引，所有图片在本机处理。">
+            <controls:SettingsRow.Action><ToggleSwitch IsChecked="{Binding ImageSearchEnabled}" OnContent="" OffContent="" AutomationProperties.Name="启用以图搜图" /></controls:SettingsRow.Action>
+          </controls:SettingsRow>
+          <Border Classes="settings-row">
+            <StackPanel Spacing="10">
+              <TextBlock Text="图片索引位置" />
+              <TextBox Text="{Binding ImageSearchDirectory}" PlaceholderText="留空使用应用数据目录" AutomationProperties.Name="图片索引目录" />
+              <ComboBox ItemsSource="{Binding ImageSearchProbeLabels}" SelectedIndex="{Binding ImageSearchProbeIndex}" AutomationProperties.Name="图片检索精度" />
+              <CheckBox Content="下载完成后更新图片索引" IsChecked="{Binding ImageSearchAutoUpdate}" />
+              <ItemsControl ItemsSource="{Binding Sources}">
+                <ItemsControl.ItemTemplate><DataTemplate x:DataType="vm:SourceRowViewModel"><CheckBox Content="{Binding DisplayName}" IsChecked="{Binding IndexImages}" AutomationProperties.Name="参与图片检索的数据源" /></DataTemplate></ItemsControl.ItemTemplate>
+              </ItemsControl>
+              <Button Content="管理索引 / 以图搜图" Command="{Binding ManageImageSearchCommand}" HorizontalAlignment="Left" AutomationProperties.AutomationId="Settings.ImageSearch" />
+            </StackPanel>
+          </Border>
           <TextBlock Classes="group-title" Text="扫描" />
           <controls:SettingsRow Header="重新扫描全部来源" Description="{Binding RescanStatus}">
             <controls:SettingsRow.Action>

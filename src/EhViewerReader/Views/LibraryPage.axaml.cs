@@ -26,6 +26,9 @@ public partial class LibraryPage : UserControl
 
     public event EventHandler<GalleryItemViewModel>? LocalDetailsRequested;
     public event EventHandler<GalleryItemViewModel>? VersionsRequested;
+    /// <summary>Requests the image search document inside the current Frame.</summary>
+    public event EventHandler? ImageSearchRequested;
+    private void OnImageSearch(object? sender, RoutedEventArgs e) => ImageSearchRequested?.Invoke(this, EventArgs.Empty);
 
     public ScrollViewer Scroller => LibraryScroll;
 

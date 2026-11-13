@@ -82,7 +82,10 @@ public enum LibraryFilter
 
 public sealed class AppSettings
 {
-    public int SchemaVersion { get; set; } = 6;
+    public int SchemaVersion { get; set; } = 7;
+
+    /// <summary>Gets or sets optional on-device image retrieval preferences.</summary>
+    public LocalImageSearchSettings ImageSearch { get; set; } = new();
 
     /// <summary>Legacy single-root field; migrated into <see cref="Sources"/> on load.</summary>
     public string? LibraryRoot { get; set; }
@@ -154,6 +157,8 @@ public sealed class AppSettings
 
     public AppSettings Normalize()
     {
+        ImageSearch ??= new();
+        ImageSearch.Normalize();
         if (SchemaVersion < 5) { ImageQuality = ImageQuality.Resampled; SchemaVersion = 5; }
 
         if (SchemaVersion < 6)
@@ -166,6 +171,7 @@ public sealed class AppSettings
             SchemaVersion = 6;
         }
         if (ResampledWidth is not (780 or 980 or 1280 or 1600 or 2400)) ResampledWidth = 1280;
+        if (SchemaVersion < 7) SchemaVersion = 7;
         MaxDecodeMegapixels = Math.Clamp(MaxDecodeMegapixels, 4, 96);
         MaxDecodeDimension = Math.Clamp(MaxDecodeDimension, 2048, 16384);
         PageCacheMegabytes = Math.Clamp(PageCacheMegabytes, 64, 1536);

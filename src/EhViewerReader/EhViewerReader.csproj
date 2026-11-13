@@ -44,6 +44,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EhViewerReader.Core\EhViewerReader.Core.csproj" />
+    <ProjectReference Include="..\EhViewerReader.ImageSearch\EhViewerReader.ImageSearch.csproj" />
   </ItemGroup>
 
   <!-- NativeAOT linking needs the Windows SDK import libraries. Some Visual

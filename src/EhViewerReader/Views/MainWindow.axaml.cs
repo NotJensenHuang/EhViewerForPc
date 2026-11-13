@@ -22,6 +22,8 @@ public partial class MainWindow : Window
     private readonly Dictionary<object, Control> _views = [];
     private ShellViewModel? _shell;
     private LibraryPage? _libraryPage;
+    private ImageSearchPage? _imageSearchPage;
+    private long _imageReadSequence;
     private OnlineFeedPage? _onlinePage;
     private SettingsPage? _settingsPage;
     private readonly Dictionary<Control, NavigationTarget> _targets = [];
@@ -113,6 +115,7 @@ public partial class MainWindow : Window
         shell.Downloads.ReadRequested += OnDownloadReadRequested;
         shell.Downloads.NotifyRequested += (_, message) => _shell?.Notify(message);
         shell.LocalReadRequested += OnLocalReadRequested;
+        shell.Settings.ImageSearchRequested += OnImageSearchRequested;
         // The library view model outlives its page, so reading a local copy must
         // work even when the library page has never been shown.
         shell.Library.OpenGalleryRequested += OnLocalReadRequested;
@@ -122,7 +125,7 @@ public partial class MainWindow : Window
 
     private void OnNavigationRequested(object? sender, NavItem item)
     {
-        if (!_syncingNavigation) ShowPage(item.Page);
+        if (!_syncingNavigation) { _imageReadSequence++; ShowPage(item.Page); }
     }
 
     private void ShowPage(object? page)
@@ -147,6 +150,7 @@ public partial class MainWindow : Window
                 _libraryPage = new LibraryPage();
                 _libraryPage.LocalDetailsRequested += (_, item) => OpenLocalDetails(item);
                 _libraryPage.VersionsRequested += (_, item) => OpenVersions(item);
+                _libraryPage.ImageSearchRequested += OnImageSearchRequested;
                 return _libraryPage;
             case OnlineFeedViewModel online:
                 var onlineView = new OnlineFeedPage();
@@ -294,6 +298,7 @@ public partial class MainWindow : Window
 
     private async void OnDownloadReadRequested(object? sender, DownloadReadRequest request)
     {
+        _imageReadSequence++;
         if (_shell?.Settings.IsSaving == true) return;
         if (ActiveReader is { } existing &&
             string.Equals(existing.ViewModel.Source.StableId, request.Info.StableId, StringComparison.OrdinalIgnoreCase))
@@ -321,6 +326,7 @@ public partial class MainWindow : Window
 
     private async void OnLocalReadRequested(object? sender, GalleryItemViewModel item)
     {
+        _imageReadSequence++;
         if (_shell?.Settings.IsSaving == true) return;
         if (ActiveReader is { } existing && existing.ViewModel.Source.ProgressKey == item.WorkId) return;
         if (!_openingReaders.Add(item.WorkId)) return;
@@ -334,8 +340,68 @@ public partial class MainWindow : Window
         finally { _openingReaders.Remove(item.WorkId); }
     }
 
+    private void OnImageSearchRequested(object? sender, EventArgs e) => OpenImageSearch();
+
+    /// <summary>Opens or reactivates the retained local image search document.</summary>
+    internal void OpenImageSearch()
+    {
+        if (_shell is null || _shell.Settings.IsSaving) return;
+        if (_imageSearchPage is null)
+        {
+            var viewModel = new ImageSearchViewModel(AppServices.Current,
+                () => _shell.Library.SnapshotAllWorks().SelectMany(item => item.Versions).DistinctBy(g => (g.SourceId, g.StableId)).ToArray());
+            viewModel.ReadRequested += OnImageHitReadRequested;
+            viewModel.SettingsRequested += OnImageSearchSettingsRequested;
+            _imageSearchPage = new ImageSearchPage(viewModel);
+        }
+        PushDocument(_imageSearchPage);
+    }
+
+    private void OnImageSearchSettingsRequested(object? sender, EventArgs e)
+    {
+        if (_shell is null) return;
+        _shell.Settings.SelectedCategoryIndex = 5;
+        _shell.Navigate("settings");
+    }
+
+    private async void OnImageHitReadRequested(object? sender, LocalPageReadRequest request)
+    {
+        if (_shell is null || _shell.Settings.IsSaving) return;
+        long sequence = ++_imageReadSequence;
+        try
+        {
+            var existing = _targets.Keys.OfType<ReaderPage>().FirstOrDefault(page => page.ViewModel.Source is LocalReaderSource local
+                && local.Gallery.SourceId == request.Gallery.SourceId && local.Gallery.StableId == request.Gallery.StableId);
+            if (existing is not null)
+            {
+                if (!existing.ViewModel.TryNavigateToPageNumber(request.PageNumber)) throw new FileNotFoundException("命中页已不在该副本中。");
+                RemoveOtherReaders(request.Gallery.WorkId, existing);
+                PushDocument(existing); return;
+            }
+            var source = await Task.Run(() => new LocalReaderSource(AppServices.Current, request.Gallery), _lifetime.Token);
+            if (_closing || sequence != _imageReadSequence || _shell.Settings.IsSaving) return;
+            var reader = new ReaderPage(new ReaderViewModel(AppServices.Current, source, request.PageNumber)) { Title = request.Gallery.DisplayTitle };
+            RemoveOtherReaders(request.Gallery.WorkId, reader); PushDocument(reader);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { _shell.Notify("打开命中页失败：" + error.Message); }
+    }
+
+    private void RemoveOtherReaders(string workId, ReaderPage keep)
+    {
+            foreach (var prior in _targets.Keys.OfType<ReaderPage>().Where(page => !ReferenceEquals(page, keep) && page.ViewModel.Source.ProgressKey == workId).ToArray())
+            {
+                if (ReferenceEquals(ContentHost.Content, prior)) CloseDocument(prior);
+                foreach (var stack in new[] { ContentHost.BackStack, ContentHost.ForwardStack })
+                    for (int i = stack.Count - 1; i >= 0; i--)
+                        if (stack[i].Context is NavigationTarget target && ReferenceEquals(target.View, prior)) stack.RemoveAt(i);
+            }
+            ReleaseUnusedDocuments();
+    }
+
     private async void OnOnlineReadRequested(object? sender, OnlineReadRequest request)
     {
+        _imageReadSequence++;
         if (_shell is null || _shell.Settings.IsSaving) return;
         string workId = request.Details.Gid.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (ActiveReader is { } current && current.ViewModel.Source.ProgressKey == workId) return;
@@ -481,6 +547,7 @@ public partial class MainWindow : Window
     }
     private void PopDocument()
     {
+        _imageReadSequence++;
         if (_shell?.Settings.IsSaving == true) return;
         ContentHost.GoBack();
         _shell?.Library.RefreshAllProgress();
@@ -506,6 +573,7 @@ public partial class MainWindow : Window
             page.Dispose();
             _targets.Remove(page);
             if (ReferenceEquals(page, _loginPage)) _loginPage = null;
+            if (ReferenceEquals(page, _imageSearchPage)) _imageSearchPage = null;
         }
     }
     private void ClearDocuments()

@@ -15,12 +15,16 @@ namespace EhViewerReader.ViewModels;
 public sealed class SourceRowViewModel : ObservableObject
 {
     private bool _enabled;
+    private bool _indexImages = true;
 
     public SourceRowViewModel(LibrarySource source)
     {
         Source = source;
         _enabled = source.Enabled;
     }
+
+    /// <summary>Gets or sets whether this source participates in image retrieval.</summary>
+    public bool IndexImages { get => _indexImages; set => SetProperty(ref _indexImages, value); }
 
     public LibrarySource Source { get; private set; }
     public string DisplayName => Source.DisplayName;
@@ -140,6 +144,25 @@ public sealed partial class FavoriteSlotRowViewModel : ObservableObject
 public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 {
     private readonly AppServices _services;
+    private bool _imageSearchEnabled;
+    private string _imageSearchDirectory = "";
+    private int _imageSearchProbeIndex = 1;
+    private bool _imageSearchAutoUpdate = true;
+
+    /// <summary>Gets or sets the unsaved local image search switch.</summary>
+    public bool ImageSearchEnabled { get => _imageSearchEnabled; set => SetProperty(ref _imageSearchEnabled, value); }
+    /// <summary>Gets or sets the unsaved index storage directory.</summary>
+    public string ImageSearchDirectory { get => _imageSearchDirectory; set => SetProperty(ref _imageSearchDirectory, value ?? ""); }
+    /// <summary>Gets or sets the unsaved speed/recall setting.</summary>
+    public int ImageSearchProbeIndex { get => _imageSearchProbeIndex; set => SetProperty(ref _imageSearchProbeIndex, Math.Clamp(value, 0, 2)); }
+    /// <summary>Gets or sets whether completed downloads schedule index updates.</summary>
+    public bool ImageSearchAutoUpdate { get => _imageSearchAutoUpdate; set => SetProperty(ref _imageSearchAutoUpdate, value); }
+    /// <summary>Gets the localized retrieval presets.</summary>
+    public string[] ImageSearchProbeLabels { get; } = ["快速", "均衡", "精细"];
+    /// <summary>Requests the same image search document as the library toolbar.</summary>
+    public event EventHandler? ImageSearchRequested;
+    [RelayCommand] private void ManageImageSearch() => ImageSearchRequested?.Invoke(this, EventArgs.Empty);
+    private string ImageSearchSourceSelection => string.Join("\n", Sources.Where(row => row.IndexImages).Select(row => row.Source.Id).Order(StringComparer.Ordinal));
     private int _themeIndex;
     private int _modeIndex;
     private int _fitIndex;
@@ -223,6 +246,10 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     {
         _services = services;
         AppSettings settings = services.Settings;
+        _imageSearchEnabled = settings.ImageSearch.Enabled;
+        _imageSearchDirectory = settings.ImageSearch.StorageDirectory;
+        _imageSearchProbeIndex = Array.IndexOf(new[] { 4, 16, 64 }, settings.ImageSearch.NProbe);
+        _imageSearchAutoUpdate = settings.ImageSearch.AutoUpdateAfterDownload;
         _themeIndex = (int)settings.Theme;
         _modeIndex = (int)settings.DefaultReadingMode;
         _fitIndex = (int)settings.DefaultFitMode;
@@ -234,7 +261,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
         foreach (LibrarySource source in settings.Sources)
         {
-            Sources.Add(new SourceRowViewModel(source));
+            Sources.Add(new SourceRowViewModel(source) { IndexImages = settings.ImageSearch.SourceIds.Count == 0 || settings.ImageSearch.SourceIds.Contains(source.Id) });
             _enabledSnapshot[source.Id] = source.Enabled;
         }
 
@@ -1102,7 +1129,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
             string.Equals(r.Source.Id, source.Id, StringComparison.OrdinalIgnoreCase));
         if (row is null)
         {
-            Sources.Add(new SourceRowViewModel(source) { Enabled = source.Enabled });
+            Sources.Add(new SourceRowViewModel(source) { Enabled = source.Enabled, IndexImages = _services.Settings.ImageSearch.SourceIds.Count == 0 || _services.Settings.ImageSearch.SourceIds.Contains(source.Id) });
         }
         else if (source.Enabled)
         {
@@ -1246,6 +1273,9 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public void Apply()
     {
         AppSettings settings = _services.Settings;
+        string imageDirectory = string.IsNullOrWhiteSpace(ImageSearchDirectory) ? Path.Combine(_services.Paths.BaseDirectory, "image-search") : ImageSearchDirectory.Trim();
+        if (ImageSearchEnabled) LocalImageSearchService.ValidateStorage(imageDirectory, Sources.Select(row => row.Source));
+        if (ImageSearchEnabled && Sources.Count > 0 && !Sources.Any(row => row.IndexImages)) throw new InvalidOperationException("请至少选择一个图片检索数据源，或关闭以图搜图。");
 
         foreach (var row in Sources)
         {
@@ -1253,6 +1283,11 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
             if (!_enabledSnapshot.TryGetValue(row.Source.Id, out bool before) || before != row.Enabled) source.Enabled = row.Enabled;
         }
         foreach (string id in _removedSources) settings.RemoveSource(id);
+        ApplyEdited("ImageSearch.Enabled", ImageSearchEnabled, value => settings.ImageSearch.Enabled = value);
+        ApplyEdited("ImageSearch.StorageDirectory", ImageSearchDirectory.Trim(), value => settings.ImageSearch.StorageDirectory = value);
+        ApplyEdited("ImageSearch.NProbe", new[] { 4, 16, 64 }[ImageSearchProbeIndex], value => settings.ImageSearch.NProbe = value);
+        ApplyEdited("ImageSearch.AutoUpdate", ImageSearchAutoUpdate, value => settings.ImageSearch.AutoUpdateAfterDownload = value);
+        ApplyEdited("ImageSearch.SourceIds", ImageSearchSourceSelection, _ => settings.ImageSearch.SourceIds = Sources.All(row => row.IndexImages) ? [] : Sources.Where(row => row.IndexImages).Select(row => row.Source.Id).ToList());
         _removedSources.Clear();
         ApplyEdited("Theme", (AppTheme)_themeIndex, value => settings.Theme = value);
         ApplyEdited("DefaultReadingMode", (ReadingMode)_modeIndex, value => settings.DefaultReadingMode = value);
@@ -1313,6 +1348,11 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
     private void CaptureBaseline()
     {
+        _editBaseline["ImageSearch.Enabled"] = ImageSearchEnabled;
+        _editBaseline["ImageSearch.StorageDirectory"] = ImageSearchDirectory;
+        _editBaseline["ImageSearch.NProbe"] = new[] { 4, 16, 64 }[ImageSearchProbeIndex];
+        _editBaseline["ImageSearch.AutoUpdate"] = ImageSearchAutoUpdate;
+        _editBaseline["ImageSearch.SourceIds"] = ImageSearchSourceSelection;
         _editBaseline["Download.RootPath"] = DownloadRoot;
         _editBaseline["Download.DefaultLabel"] = _defaultDownloadLabel.Trim();
         _editBaseline["Download.RefreshLibraryOnComplete"] = _refreshAfterDownload;
@@ -1342,6 +1382,10 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
     public void RefreshSources()
     {
+        RefreshUnedited("ImageSearch.Enabled", ImageSearchEnabled, _services.Settings.ImageSearch.Enabled, value => ImageSearchEnabled = value);
+        RefreshUnedited("ImageSearch.StorageDirectory", ImageSearchDirectory, _services.Settings.ImageSearch.StorageDirectory, value => ImageSearchDirectory = value);
+        RefreshUnedited("ImageSearch.NProbe", new[] { 4, 16, 64 }[ImageSearchProbeIndex], _services.Settings.ImageSearch.NProbe, value => ImageSearchProbeIndex = Array.IndexOf(new[] { 4, 16, 64 }, value));
+        RefreshUnedited("ImageSearch.AutoUpdate", ImageSearchAutoUpdate, _services.Settings.ImageSearch.AutoUpdateAfterDownload, value => ImageSearchAutoUpdate = value);
         // A cached page follows effective values until its draft is edited.
         RefreshUnedited("ImageQuality", ImageQualityIndex == 0 ? ImageQuality.Original : ImageQuality.Resampled,
             _services.Settings.ImageQuality, value => ImageQualityIndex = value == ImageQuality.Original ? 0 : 1);
@@ -1358,7 +1402,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
             if (_removedSources.Contains(source.Id)) continue;
             var existing = Sources.FirstOrDefault(r => r.Source.Id == source.Id);
             if (existing is not null) existing.UpdateSource(source);
-            else { Sources.Add(new SourceRowViewModel(source)); _enabledSnapshot[source.Id] = source.Enabled; }
+            else { Sources.Add(new SourceRowViewModel(source) { IndexImages = _services.Settings.ImageSearch.SourceIds.Count == 0 || _services.Settings.ImageSearch.SourceIds.Contains(source.Id) }); _enabledSnapshot[source.Id] = source.Enabled; }
         }
         foreach (var stale in Sources.Where(r => _enabledSnapshot.ContainsKey(r.Source.Id) && !_services.Settings.Sources.Any(s => s.Id == r.Source.Id)).ToArray()) Sources.Remove(stale);
         OnPropertyChanged(nameof(HasSources));
