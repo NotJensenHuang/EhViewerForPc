@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using EhViewerReader.ViewModels;
 
 namespace EhViewerReader.Views;
@@ -10,6 +11,7 @@ public partial class OnlineFeedPage : UserControl
     public OnlineFeedPage()
     {
         InitializeComponent();
+        SizeChanged += (_, _) => SearchOptionsScroll.MaxHeight = Math.Clamp(Bounds.Height - 210, 100, 400);
     }
 
     /// <summary>Ctrl+F lands here: focus the merged search box.</summary>
@@ -74,4 +76,20 @@ public partial class OnlineFeedPage : UserControl
             viewModel.RemoveSavedSearchCommand.Execute(name);
         }
     }
+
+    private async void OnSelectSearchImage(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not OnlineFeedViewModel vm || TopLevel.GetTopLevel(this)?.StorageProvider is not { } provider) return;
+        var files = await provider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "选择在线搜索图片", AllowMultiple = false,
+            FileTypeFilter = [new FilePickerFileType("图片") { Patterns = ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.bmp"] }] });
+        if (files.FirstOrDefault()?.TryGetLocalPath() is { } path) await vm.LoadSearchImageAsync(path);
+    }
+    private void OnInsertTag(object? sender, RoutedEventArgs e)
+    { if (DataContext is OnlineFeedViewModel vm && sender is Button { Tag: TagLookupItem item }) vm.InsertTagCommand.Execute(item); }
+    private void OnTagKeywordKeyDown(object? sender, KeyEventArgs e)
+    { if (e.Key == Key.Enter && DataContext is OnlineFeedViewModel vm) { vm.LookupTagsCommand.Execute(null); e.Handled = true; } }
+    private void OnRankingPeriod(object? sender, RoutedEventArgs e)
+    { if (DataContext is OnlineFeedViewModel vm && sender is Button { Tag: EhViewerReader.Core.Online.EhRankingPeriod period }) vm.BrowseRankingPeriodCommand.Execute(period); }
+    private void OnRankingEntry(object? sender, RoutedEventArgs e)
+    { if (DataContext is OnlineFeedViewModel vm && sender is Button { Tag: EhViewerReader.Core.Online.EhRankingEntry entry }) vm.OpenRankingCommand.Execute(entry); }
 }

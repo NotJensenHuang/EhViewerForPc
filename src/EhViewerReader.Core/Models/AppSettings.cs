@@ -477,10 +477,26 @@ public sealed class DownloadSettings
 /// <summary>Serialisable form of a saved search.</summary>
 public sealed class SavedSearchEntry
 {
+    /// <summary>Gets or sets the stable identity used by the bookmark editor.</summary>
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    /// <summary>Gets or sets the upstream ordering value.</summary>
+    public long Time { get; set; }
+    /// <summary>Gets or sets the complete request; null preserves older settings documents.</summary>
+    public EhViewerReader.Core.Online.EhSearchRequest? Search { get; set; }
     public string Name { get; set; } = string.Empty;
     public string Query { get; set; } = string.Empty;
     public int CategoryMask { get; set; } = 1023;
     public int MinPages { get; set; }
     public int MaxPages { get; set; }
     public string Language { get; set; } = string.Empty;
+
+    /// <summary>Creates an independent request, including migration from older saved searches.</summary>
+    public EhViewerReader.Core.Online.EhSearchRequest ToRequest() => Search?.Clone() ?? new()
+    { Query = Query, CategoryMask = CategoryMask, MinPages = MinPages, MaxPages = MaxPages, Language = Language };
+
+    /// <summary>Creates a bookmark retaining every search option.</summary>
+    public static SavedSearchEntry Create(string name, EhViewerReader.Core.Online.EhSearchRequest request) => new()
+    { Name = name, Search = request.Clone(), Query = request.Query, CategoryMask = request.CategoryMask,
+        MinPages = request.MinPages, MaxPages = request.MaxPages, Language = request.Language,
+        Time = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() };
 }

@@ -240,6 +240,8 @@ public sealed class EhPageList
 /// <summary>A parsed gallery listing (front page, search, favorites, …).</summary>
 public sealed class EhGalleryListPage
 {
+    /// <summary>Gets or sets the final response URL, including an image-search session URL.</summary>
+    public string SourceUrl { get; set; } = string.Empty;
     public List<EhGallerySummary> Items { get; } = [];
     public bool HasMore { get; set; }
     public int PageIndex { get; set; }
@@ -249,9 +251,34 @@ public sealed class EhGalleryListPage
     public string NextUrl { get; set; } = string.Empty;
 }
 
+/// <summary>Identifies an upstream list/search mode; values match Android QuickSearch exports.</summary>
+public enum EhSearchMode
+{
+    /// <summary>Searches the public index.</summary>
+    Normal = 0,
+    /// <summary>Browses one uploader.</summary>
+    Uploader = 1,
+    /// <summary>Browses one exact tag.</summary>
+    Tag = 2,
+    /// <summary>Browses popular galleries.</summary>
+    Popular = 3,
+    /// <summary>Searches subscribed tags.</summary>
+    Subscription = 5,
+    /// <summary>Runs the upstream filter query.</summary>
+    Filter = 6,
+    /// <summary>Browses a gallery leaderboard.</summary>
+    Toplist = 7,
+}
+
 /// <summary>Advanced search parameters, mirroring EhViewer's search screen.</summary>
 public sealed class EhSearchRequest
 {
+    /// <summary>Gets or sets the search destination.</summary>
+    public EhSearchMode Mode { get; set; }
+    /// <summary>Gets or sets whether advanced values are sent to the site.</summary>
+    public bool AdvancedEnabled { get; set; } = true;
+    /// <summary>Gets or sets the gallery leaderboard period (11, 12, 13 or 15).</summary>
+    public int ToplistIndex { get; set; } = 15;
     public string Query { get; set; } = string.Empty;
     public int CategoryMask { get; set; } = EhCategories.All;
     public int MinPages { get; set; }
@@ -259,20 +286,37 @@ public sealed class EhSearchRequest
     public bool SearchName { get; set; } = true;
     public bool SearchTags { get; set; } = true;
     public bool SearchDescription { get; set; }
+    /// <summary>Gets or sets whether torrent filenames are searched.</summary>
+    public bool SearchTorrentNames { get; set; }
     public bool OnlyTorrents { get; set; }
     public bool OnlyExpunged { get; set; }
+    /// <summary>Gets or sets whether low-power tags are searched.</summary>
+    public bool SearchLowPowerTags { get; set; }
+    /// <summary>Gets or sets whether downvoted tags are searched.</summary>
+    public bool SearchDownvotedTags { get; set; }
+    /// <summary>Gets or sets whether the site's language exclusions are bypassed.</summary>
+    public bool DisableLanguageFilter { get; set; }
+    /// <summary>Gets or sets whether the site's uploader exclusions are bypassed.</summary>
+    public bool DisableUploaderFilter { get; set; }
+    /// <summary>Gets or sets whether the site's tag exclusions are bypassed.</summary>
+    public bool DisableTagFilter { get; set; }
+    /// <summary>Gets or sets the minimum rating, or zero to disable it.</summary>
+    public int MinRating { get; set; }
     public string Language { get; set; } = string.Empty;
 
     public bool IsEmpty =>
         Query.Trim().Length == 0 && CategoryMask == EhCategories.All && MinPages <= 0 && MaxPages <= 0 &&
-        !SearchDescription && !OnlyTorrents && Language.Length == 0;
+        Mode == EhSearchMode.Normal && SearchName && SearchTags && !SearchDescription &&
+        !SearchTorrentNames && !OnlyTorrents && !OnlyExpunged && !SearchLowPowerTags &&
+        !SearchDownvotedTags && !DisableLanguageFilter && !DisableUploaderFilter && !DisableTagFilter &&
+        MinRating == 0 && Language.Length == 0;
 
     public string EffectiveQuery
     {
         get
         {
             string query = Query.Trim();
-            if (Language.Length > 0)
+            if (Language.Length > 0 && Mode is EhSearchMode.Normal or EhSearchMode.Subscription or EhSearchMode.Filter)
             {
                 string tag = "language:" + Language;
                 query = query.Length == 0 ? tag : query + " " + tag;
@@ -284,6 +328,9 @@ public sealed class EhSearchRequest
 
     public EhSearchRequest Clone() => new()
     {
+        Mode = Mode,
+        AdvancedEnabled = AdvancedEnabled,
+        ToplistIndex = ToplistIndex,
         Query = Query,
         CategoryMask = CategoryMask,
         MinPages = MinPages,
@@ -291,8 +338,15 @@ public sealed class EhSearchRequest
         SearchName = SearchName,
         SearchTags = SearchTags,
         SearchDescription = SearchDescription,
+        SearchTorrentNames = SearchTorrentNames,
         OnlyTorrents = OnlyTorrents,
         OnlyExpunged = OnlyExpunged,
+        SearchLowPowerTags = SearchLowPowerTags,
+        SearchDownvotedTags = SearchDownvotedTags,
+        DisableLanguageFilter = DisableLanguageFilter,
+        DisableUploaderFilter = DisableUploaderFilter,
+        DisableTagFilter = DisableTagFilter,
+        MinRating = MinRating,
         Language = Language,
     };
 }

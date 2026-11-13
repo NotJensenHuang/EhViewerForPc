@@ -53,6 +53,9 @@ public sealed class EhClient : IDisposable
         _images = EhHttp.Create(settings.Network, _session.Cookies, forImages: true, log);
     }
 
+    internal EhClient(AppSettings settings, HttpClient webClient) : this(settings)
+    { _web.Dispose(); _web = webClient; }
+
     public EhSession Session => _session;
     public int ResampledWidth => _settings.ResampledWidth;
 
@@ -354,6 +357,31 @@ public sealed class EhClient : IDisposable
             page.StatusMessage = EhParser.DetectMessage(html) ?? "没有结果";
         }
 
+        return page;
+    }
+
+    /// <summary>Uploads a JPEG using the upstream multipart image-search protocol and parses its results.</summary>
+    public async Task<EhGalleryListPage> SearchImageAsync(byte[] jpeg, bool similar, bool coversOnly, bool expunged, CancellationToken cancellationToken)
+    {
+        if (jpeg.Length is < 1 or > 20 * 1024 * 1024) throw new ArgumentException("查询图片需介于 1 字节和 20 MiB 之间。", nameof(jpeg));
+        using var content = new MultipartFormDataContent();
+        var image = new ByteArrayContent(jpeg); image.Headers.ContentType = new("image/jpeg");
+        content.Add(image, "sfile", "query.jpg");
+        if (similar) content.Add(new StringContent("on"), "fs_similar");
+        if (coversOnly) content.Add(new StringContent("on"), "fs_covers");
+        if (expunged) content.Add(new StringContent("on"), "fs_exp");
+        content.Add(new StringContent("File Search"), "f_sfile");
+        using var request = new HttpRequestMessage(HttpMethod.Post, EhUrls.ImageSearch(Site)) { Content = content };
+        request.Headers.Referrer = new Uri(EhUrls.Home(Site));
+        request.Headers.TryAddWithoutValidation("Origin", EhUrls.Base(Site));
+        using var response = await _web.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (response.Headers.Contains("CF-Mitigated") || body.Contains("challenges.cloudflare.com", StringComparison.OrdinalIgnoreCase))
+            throw new EhException("站点要求人机验证，请先使用网页登录完成验证。", requiresSignIn: true);
+        if (!response.IsSuccessStatusCode) throw new EhException(EhParser.DetectMessage(body) ?? $"图片搜索失败：HTTP {(int)response.StatusCode}");
+        var page = EhParser.ParseGalleryList(body, Site, 0);
+        page.SourceUrl = response.RequestMessage?.RequestUri?.AbsoluteUri ?? EhUrls.Home(Site);
+        if (page.Items.Count == 0) page.StatusMessage = EhParser.DetectMessage(body) ?? "没有匹配图片";
         return page;
     }
 

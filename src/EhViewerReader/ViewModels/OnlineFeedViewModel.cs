@@ -10,6 +10,10 @@ namespace EhViewerReader.ViewModels;
 
 public enum OnlineFeedMode
 {
+    /// <summary>Browses watched tags from its own navigation section.</summary>
+    Subscription = 2,
+    /// <summary>Browses gallery rankings from its own navigation section.</summary>
+    Toplist = 3,
     /// <summary>Front page with 首页 / 热门 / 关注 / 排行 tabs, plus the search bar.</summary>
     Front = 0,
     Favorites = 1,
@@ -21,7 +25,7 @@ public enum OnlineFeedMode
 /// Searching swaps the URL builder, not the page — so there is a single place
 /// to browse and to search.
 /// </summary>
-public sealed partial class OnlineFeedViewModel : ObservableObject
+public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
 {
     private readonly AppServices _services;
     private readonly IOnlineHost _host;
@@ -67,8 +71,6 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
             case OnlineFeedMode.Front:
                 Tabs.Add(new FeedOption("front", "首页"));
                 Tabs.Add(new FeedOption("popular", "热门"));
-                Tabs.Add(new FeedOption("watched", "关注"));
-                Tabs.Add(new FeedOption("toplist", "排行"));
                 break;
             case OnlineFeedMode.Favorites:
                 for (int slot = 0; slot < 10; slot++)
@@ -98,6 +100,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         ];
         _selectedLanguage = _languages[0];
 
+        _selectedSearchMode = SearchModes[_mode == OnlineFeedMode.Subscription ? 1 : 0];
         ReloadSearchHistory();
     }
 
@@ -124,7 +127,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     public bool IsSearchMode => _searchMode;
 
     /// <summary>The merged search bar only exists on the browse page.</summary>
-    public bool ShowSearchBar => IsFront;
+    public bool ShowSearchBar => !IsFavorites;
 
     public bool ShowFavoriteSearch => IsFavorites;
 
@@ -132,11 +135,11 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
     public bool ShowSearchResultHeader => _searchMode;
 
-    public bool ShowAdvancedPanel => _showAdvanced && IsFront;
+    public bool ShowAdvancedPanel => _showAdvanced && ShowSearchBar;
 
-    public bool ShowHistoryPanel => HasHistory && _showHistory && IsFront;
+    public bool ShowHistoryPanel => HasHistory && _showHistory && ShowSearchBar;
 
-    public bool ShowToplistSelector => IsFront && !_searchMode && _selectedTab?.Key == "toplist";
+    public bool ShowToplistSelector => !_searchMode && _mode == OnlineFeedMode.Toplist && !ShowRankingOverview;
 
     /// <summary>Keyword searched inside the current favourite slot.</summary>
     public string FavoriteQuery
@@ -213,7 +216,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         }
     }
 
-    public string SearchResultText => _searchRequest.EffectiveQuery.Length > 0
+    public string SearchResultText => _imageResults ? "图片搜索结果 · " + ImageName : _searchRequest.EffectiveQuery.Length > 0
         ? "搜索结果 · " + _searchRequest.EffectiveQuery
         : "搜索结果";
 
@@ -273,7 +276,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
     public bool IsIdle => !_busy;
 
-    public bool ShowEmpty => !_busy && Items.Count == 0;
+    public bool ShowEmpty => !_busy && (ShowRankingOverview ? RankingSections.Count == 0 : Items.Count == 0);
 
     public bool HasMore
     {
@@ -281,7 +284,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         private set => SetProperty(ref _hasMore, value);
     }
 
-    public bool CanGoBack => !_busy && _urlIndex > 0;
+    public bool CanGoBack => !_busy && !ShowRankingOverview && _urlIndex > 0;
 
     public string StatusText
     {
@@ -319,6 +322,8 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     /// <summary>Runs a search from outside the page (tag chips, GID search).</summary>
     public void RunSearch(string query)
     {
+        SelectedSearchMode = SearchModes[0];
+        SelectedLanguage = _languages[0];
         Query = query;
         _ = SearchAsync();
     }
@@ -326,8 +331,11 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     [RelayCommand]
     private async Task SearchAsync()
     {
-        EhSearchRequest request = BuildRequest();
+        EhSearchRequest request;
+        try { request = BuildRequest(); }
+        catch (ArgumentException error) { StatusText = error.Message; return; }
         _searchRequest = request;
+        _imageResults = false;
         AddSearchHistory(request.EffectiveQuery);
         SetSearchMode(true);
         OnPropertyChanged(nameof(SearchResultText));
@@ -338,6 +346,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     private async Task ClearSearchAsync()
     {
         Query = string.Empty;
+        _imageResults = false;
         if (!_searchMode)
         {
             await LoadAsync(reset: true);
@@ -369,14 +378,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         SavedSearchEntry? entry = _services.Settings.SavedSearches.FirstOrDefault(s => s.Name == name);
         if (entry is null) return;
 
-        Query = entry.Query;
-        MinPages = entry.MinPages > 0 ? entry.MinPages.ToString() : string.Empty;
-        MaxPages = entry.MaxPages > 0 ? entry.MaxPages.ToString() : string.Empty;
-        SelectedLanguage = _languages.FirstOrDefault(l => l.Key == entry.Language) ?? _languages[0];
-        foreach (CategoryToggle toggle in Categories)
-        {
-            toggle.IsEnabled = (entry.CategoryMask & (1 << (int)toggle.Category)) != 0;
-        }
+        ApplyRequest(entry.ToRequest());
 
         _ = SearchAsync();
     }
@@ -384,33 +386,21 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     [RelayCommand]
     private async Task SaveSearchAsync()
     {
-        EhSearchRequest request = BuildRequest();
+        EhSearchRequest request = CurrentRequest;
+        if (_imageResults) { _host.Notify("图片搜索结果不能保存为书签"); return; }
         string key = request.EffectiveQuery;
-        if (key.Length == 0)
-        {
-            _host.Notify("当前搜索为空，无法保存");
-            return;
-        }
-
-        var entry = new SavedSearchEntry
-        {
-            Name = key.Length > 40 ? key[..40] : key,
-            Query = request.Query,
-            CategoryMask = request.CategoryMask,
-            MinPages = request.MinPages,
-            MaxPages = request.MaxPages,
-            Language = request.Language,
-        };
-
+        if (key.Length == 0) key = request.Mode switch
+        { EhSearchMode.Subscription => "订阅", EhSearchMode.Toplist => "排行榜 · " + SelectedToplistOption?.Label,
+          EhSearchMode.Popular => "热门", _ => "首页" };
+        var entry = SavedSearchEntry.Create(key.Length > 80 ? key[..80] : key, request);
         if (_services.Settings.SavedSearches.Any(s => s.Name == entry.Name))
-        {
-            _host.Notify("同名搜索已保存");
-            return;
-        }
+        { _host.Notify("同名书签已存在，可在书签栏编辑"); return; }
 
         _services.Settings.SavedSearches.Add(entry);
         _services.TrySaveSettings(out _);
         ReloadSearchHistory();
+        BookmarksChanged?.Invoke(this, EventArgs.Empty);
+        _host.Notify("已加入书签栏");
         await Task.CompletedTask;
     }
 
@@ -421,6 +411,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         _services.Settings.SavedSearches.RemoveAll(s => s.Name == name);
         _services.TrySaveSettings(out _);
         ReloadSearchHistory();
+        BookmarksChanged?.Invoke(this, EventArgs.Empty);
     }
 
     [RelayCommand]
@@ -432,6 +423,10 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         SearchTags = true;
         SearchDescription = false;
         OnlyTorrents = false;
+        SelectedSearchMode = SearchModes[_mode == OnlineFeedMode.Subscription ? 1 : 0];
+        SearchTorrentNames = OnlyExpunged = SearchLowPowerTags = SearchDownvotedTags = false;
+        DisableLanguageFilter = DisableUploaderFilter = DisableTagFilter = false;
+        AdvancedEnabled = true; SelectedRating = RatingOptions[0];
         SelectedLanguage = _languages[0];
         foreach (CategoryToggle toggle in Categories) toggle.IsEnabled = true;
         await Task.CompletedTask;
@@ -440,67 +435,54 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     public async Task LoadAsync(bool reset)
     {
         if (_busy && !reset) return;
+        if (ShowRankingOverview) { await LoadRankingOverviewAsync(); return; }
+        if (reset && _imageResults) { await SearchImageAsync(); return; }
+        int target = reset ? 0 : _urlIndex + 1;
+        string url = reset ? BuildUrl(0) : _nextUrl.Length > 0 ? _nextUrl : BuildUrl(target);
+        if (reset) { _visitedUrls.Clear(); _urlIndex = 0; _nextUrl = string.Empty; HasMore = false; }
+        await FetchListAsync(url, target, reset);
+    }
+
+    private async Task FetchListAsync(string url, int target, bool reset)
+    {
         int generation = ++_requestGeneration;
-
-        string url;
-        if (reset)
-        {
-            _visitedUrls.Clear();
-            _nextUrl = string.Empty;
-            _urlIndex = 0;
-            url = BuildUrl(0);
-        }
-        else
-        {
-            url = _nextUrl.Length > 0 ? _nextUrl : BuildUrl(_urlIndex + 1);
-            _urlIndex = _visitedUrls.Count;
-        }
-
-        _cancellation?.Cancel();
-        _cancellation?.Dispose();
-        _cancellation = new CancellationTokenSource();
+        _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = new CancellationTokenSource();
         CancellationToken token = _cancellation.Token;
-
-        IsBusy = true;
-        StatusText = _searchMode ? "搜索中…" : "载入中…";
-
+        IsBusy = true; StatusText = _searchMode ? "搜索中…" : "载入中…";
         try
         {
-            EhGalleryListPage page = await _services.Online.GetListAsync(url, _urlIndex, token).ConfigureAwait(true);
-            token.ThrowIfCancellationRequested();
-
-            ApplyPage(page, url, reset);
+            var page = await _services.Online.GetListAsync(url, target, token).ConfigureAwait(true);
+            token.ThrowIfCancellationRequested(); if (generation != _requestGeneration) return;
+            _urlIndex = target; ApplyPage(page, url, reset);
         }
         catch (OperationCanceledException)
-        {
-            if (generation == _requestGeneration) StatusText = token.IsCancellationRequested ? "已取消" : "请求超时，请重试";
-        }
+        { if (generation == _requestGeneration) StatusText = token.IsCancellationRequested ? "已取消" : "请求超时，请重试"; }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
-            StatusText = ex.Message;
-            if (reset) Items.Clear();
-            OnPropertyChanged(nameof(ShowEmpty));
+            if (generation != _requestGeneration) return;
+            StatusText = ex.Message; if (reset) Items.Clear(); OnPropertyChanged(nameof(ShowEmpty));
         }
         finally
         {
-            if (generation == _requestGeneration) IsBusy = false;
-            OnPropertyChanged(nameof(CanGoBack));
+            if (generation == _requestGeneration) { IsBusy = false; OnPropertyChanged(nameof(CanGoBack)); }
         }
     }
 
     internal void ApplyPage(EhGalleryListPage page, string url, bool reset)
     {
         int filtered = 0;
+        Items.Clear();
         if (reset)
         {
-            Items.Clear();
             _visitedUrls.Clear();
             _visitedUrls.Add(url);
             _urlIndex = 0;
         }
-        else if (_visitedUrls.Count <= _urlIndex)
+        else if (_visitedUrls.Count <= _urlIndex) _visitedUrls.Add(url);
+        else if (_visitedUrls[_urlIndex] != url)
         {
-            _visitedUrls.Add(url);
+            _visitedUrls[_urlIndex] = url;
+            _visitedUrls.RemoveRange(_urlIndex + 1, _visitedUrls.Count - _urlIndex - 1);
         }
 
         foreach (EhGallerySummary summary in page.Items)
@@ -550,59 +532,11 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     [RelayCommand]
     private async Task PreviousPageAsync()
     {
-        if (_busy) return;
-        if (_urlIndex <= 0)
-        {
-            await LoadAsync(reset: true);
-            return;
-        }
-
-        _urlIndex--;
-        _nextUrl = string.Empty;
-        await LoadAsyncAt(_visitedUrls[_urlIndex]);
-    }
-
-    private async Task LoadAsyncAt(string url)
-    {
-        // Re-fetch the URL that was already visited without touching the stack.
-        IsBusy = true;
-        StatusText = "载入中…";
-        int filtered = 0;
-        try
-        {
-            EhGalleryListPage page = await _services.Online
-                .GetListAsync(url, _urlIndex, CancellationToken.None)
-                .ConfigureAwait(true);
-
-            Items.Clear();
-            foreach (EhGallerySummary summary in page.Items)
-            {
-                if (!EhFilter.IsVisible(summary, _services.Settings.Online.Filters))
-                {
-                    filtered++;
-                    continue;
-                }
-
-                Items.Add(CreateItem(summary));
-            }
-
-            _nextUrl = page.NextUrl;
-            HasMore = page.HasMore;
-            PageLabel = $"第 {_urlIndex + 1} 页";
-            StatusText = page.Items.Count == 0
-                ? page.StatusMessage ?? EmptyText
-                : page.StatusMessage ?? StatusTextFor(page.Items.Count, filtered);
-            OnPropertyChanged(nameof(ShowEmpty));
-        }
-        catch (Exception ex) when (ex is EhException or HttpRequestException)
-        {
-            StatusText = ex.Message;
-        }
-        finally
-        {
-            IsBusy = false;
-            OnPropertyChanged(nameof(CanGoBack));
-        }
+        if (_busy || _urlIndex <= 0) return;
+        int target = _urlIndex - 1;
+        if (_imageResults && target == 0 && _imageFirstPage is { } first)
+        { _urlIndex = 0; ApplyPage(first, _visitedUrls[0], reset: false); return; }
+        await FetchListAsync(_visitedUrls[target], target, reset: false);
     }
 
     [RelayCommand]
@@ -652,7 +586,9 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
     {
         if (_searchMode == value) return;
         _searchMode = value;
+        if (!value) _imageResults = false;
         OnPropertyChanged(nameof(IsSearchMode));
+        OnPropertyChanged(nameof(ShowRankingOverview));
         OnPropertyChanged(nameof(ShowTabs));
         OnPropertyChanged(nameof(ShowSearchResultHeader));
         OnPropertyChanged(nameof(ShowToplistSelector));
@@ -695,21 +631,36 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         }
     }
 
-    private EhSearchRequest BuildRequest()
+    /// <summary>Builds and validates all visible search settings.</summary>
+    internal EhSearchRequest BuildRequest()
     {
+        int ReadPage(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+            if (!int.TryParse(value, out int number) || number <= 0) throw new ArgumentException("页数请输入大于零的整数。");
+            return number;
+        }
         var request = new EhSearchRequest
         {
-            Query = Query.Trim(),
+            Mode = Enum.TryParse<EhSearchMode>(SelectedSearchMode?.Key, out var mode) ? mode : EhSearchMode.Normal,
+            Query = Query.Trim(), AdvancedEnabled = AdvancedEnabled,
+            ToplistIndex = _toplistIndex,
             CategoryMask = EhCategories.MaskOf(Categories.Where(c => c.IsEnabled).Select(c => c.Category)),
-            SearchName = SearchName,
-            SearchTags = SearchTags,
-            SearchDescription = SearchDescription,
-            OnlyTorrents = OnlyTorrents,
-            Language = SelectedLanguage?.Key ?? string.Empty,
+            SearchName = SearchName, SearchTags = SearchTags, SearchDescription = SearchDescription,
+            SearchTorrentNames = SearchTorrentNames, OnlyTorrents = OnlyTorrents, OnlyExpunged = OnlyExpunged,
+            SearchLowPowerTags = SearchLowPowerTags, SearchDownvotedTags = SearchDownvotedTags,
+            DisableLanguageFilter = DisableLanguageFilter, DisableUploaderFilter = DisableUploaderFilter, DisableTagFilter = DisableTagFilter,
+            MinRating = int.TryParse(SelectedRating?.Key, out int rating) ? rating : 0,
+            Language = AdvancedEnabled ? SelectedLanguage?.Key ?? string.Empty : string.Empty,
         };
-
-        if (int.TryParse(MinPages, out int min)) request.MinPages = Math.Max(0, min);
-        if (int.TryParse(MaxPages, out int max)) request.MaxPages = Math.Max(0, max);
+        if (AdvancedEnabled)
+        {
+            request.MinPages = ReadPage(MinPages); request.MaxPages = ReadPage(MaxPages);
+            if (request.MinPages > 0 && request.MaxPages > 0 && request.MinPages > request.MaxPages)
+                throw new ArgumentException("最少页数不能大于最多页数。");
+        }
+        if (request.Mode is EhSearchMode.Uploader or EhSearchMode.Tag && request.Query.Length == 0)
+            throw new ArgumentException("请填写上传者或标签。");
         return request;
     }
 
@@ -742,7 +693,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
         OnPropertyChanged(nameof(ShowHistoryPanel));
     }
 
-    private string BuildUrl(int page)
+    internal string BuildUrl(int page)
     {
         EhSite site = _services.Online.Site;
         if (_searchMode)
@@ -752,6 +703,8 @@ public sealed partial class OnlineFeedViewModel : ObservableObject
 
         return _mode switch
         {
+            OnlineFeedMode.Subscription => EhUrls.Watched(site, page),
+            OnlineFeedMode.Toplist => EhUrls.Toplist(site, _toplistIndex, page),
             OnlineFeedMode.Favorites => EhUrls.Favorites(
                 site,
                 _favoriteSlot,

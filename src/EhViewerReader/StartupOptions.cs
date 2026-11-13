@@ -15,6 +15,8 @@ public sealed class StartupOptions
     public string? ProbeFile { get; private set; }
     /// <summary>Gets an empty isolated root for the managed image-search application probe.</summary>
     public string? ImageSearchProbeRoot { get; private set; }
+    /// <summary>Gets an empty isolated root for windowless bookmark compatibility verification.</summary>
+    public string? BookmarkProbeRoot { get; private set; }
 
     /// <summary>File measured by the animation probe; no window is created.</summary>
     public string? AnimProbe { get; private set; }
@@ -69,6 +71,9 @@ public sealed class StartupOptions
                     break;
                 case "--image-search-probe-root":
                     options.ImageSearchProbeRoot = Next(args, ref i);
+                    break;
+                case "--bookmark-probe-root":
+                    options.BookmarkProbeRoot = Next(args, ref i);
                     break;
                 case "--anim-probe":
                     options.AnimProbe = Next(args, ref i);

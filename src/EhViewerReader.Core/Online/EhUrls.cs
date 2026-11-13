@@ -28,41 +28,60 @@ public static class EhUrls
 
     public static string Toplist(EhSite site, int toplistIndex, int page)
     {
-        var builder = new StringBuilder(Base(site));
+        // Android also always uses the public site's leaderboard endpoint.
+        var builder = new StringBuilder(EHentaiBase);
         builder.Append("/toplist.php?tl=").Append(toplistIndex);
-        if (page > 0) builder.Append("&page=").Append(page);
+        if (page > 0) builder.Append("&p=").Append(page);
         return builder.ToString();
     }
 
     public static string Search(EhSite site, EhSearchRequest request, int page)
     {
+        if (request.Mode == EhSearchMode.Popular) return Popular(site, page);
+        if (request.Mode == EhSearchMode.Toplist) return Toplist(site, request.ToplistIndex, page);
+        if (request.Mode is EhSearchMode.Uploader or EhSearchMode.Tag)
+            return Base(site) + (request.Mode == EhSearchMode.Uploader ? "/uploader/" : "/tag/") +
+                Uri.EscapeDataString(request.EffectiveQuery) + (page > 0 ? "/" + page : string.Empty);
         var builder = new StringBuilder(Base(site));
-        builder.Append("/?f_search=").Append(Uri.EscapeDataString(request.EffectiveQuery));
+        builder.Append(request.Mode == EhSearchMode.Subscription ? "/watched?f_search=" : "/?f_search=")
+            .Append(Uri.EscapeDataString(request.EffectiveQuery));
 
         // f_cats is the mask of categories to *exclude*.
         int exclude = EhCategories.All & ~request.CategoryMask;
         if (exclude != 0) builder.Append("&f_cats=").Append(exclude);
 
-        if (request.MinPages > 0) builder.Append("&f_spf=").Append(request.MinPages);
-        if (request.MaxPages > 0) builder.Append("&f_spt=").Append(request.MaxPages);
-
-        // Advanced form is only sent when a non-default scope/option is used;
-        // without it the site searches titles and tags by default.
-        bool advanced = !request.SearchName || !request.SearchTags || request.SearchDescription ||
-                        request.OnlyTorrents || request.OnlyExpunged;
-        if (advanced)
+        if (request.AdvancedEnabled && request.Mode != EhSearchMode.Filter)
         {
             builder.Append("&advsearch=1");
             if (request.SearchName) builder.Append("&f_sname=on");
             if (request.SearchTags) builder.Append("&f_stags=on");
             if (request.SearchDescription) builder.Append("&f_sdesc=on");
-            if (request.OnlyTorrents) builder.Append("&f_storr=on");
-            if (request.OnlyExpunged) builder.Append("&f_sto=on");
+            if (request.SearchTorrentNames) builder.Append("&f_storr=on");
+            if (request.OnlyTorrents) builder.Append("&f_sto=on");
+            if (request.OnlyExpunged) builder.Append("&f_sh=on");
+            if (request.SearchLowPowerTags) builder.Append("&f_sdt1=on");
+            if (request.SearchDownvotedTags) builder.Append("&f_sdt2=on");
+            if (request.DisableLanguageFilter) builder.Append("&f_sfl=on");
+            if (request.DisableUploaderFilter) builder.Append("&f_sfu=on");
+            if (request.DisableTagFilter) builder.Append("&f_sft=on");
+            if (request.MinRating > 0) builder.Append("&f_sr=on&f_srdd=").Append(Math.Clamp(request.MinRating, 2, 5));
+            if (request.MinPages > 0 || request.MaxPages > 0)
+            {
+                builder.Append("&f_sp=on&f_spf=");
+                if (request.MinPages > 0) builder.Append(request.MinPages);
+                builder.Append("&f_spt=");
+                if (request.MaxPages > 0) builder.Append(request.MaxPages);
+            }
         }
 
         if (page > 0) builder.Append("&page=").Append(page);
         return builder.ToString();
     }
+
+    /// <summary>Gets the site's image upload search endpoint.</summary>
+    public static string ImageSearch(EhSite site) => site == EhSite.ExHentai
+        ? "https://upld.exhentai.org/upld/image_lookup.php"
+        : "https://upld.e-hentai.org/image_lookup.php";
 
     public static string Favorites(EhSite site, int slot, EhSearchRequest? request, int page)
     {

@@ -22,6 +22,9 @@ public sealed partial class NavItem : ObservableObject
         IconSource = new FASymbolIconSource { Symbol = key switch
         {
             "online" => FASymbol.Globe,
+            "subscriptions" => FASymbol.Favorite,
+            "rankings" => FASymbol.List,
+            "bookmarks" => FASymbol.Bookmark,
             "favorites" => FASymbol.Favorite,
             "history" => FASymbol.Clock,
             "downloads" => FASymbol.Download,
@@ -52,6 +55,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     private bool _disposed;
     private CancellationTokenSource? _imageUpdateCancellation;
     private bool _imageUpdateRunning, _imageUpdateDirty, _imageMaintenanceReady;
+    private OnlineFeedViewModel? _bookmarkSource;
 
     public ShellViewModel(AppServices services)
     {
@@ -62,6 +66,25 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             "E-Hentai / ExHentai 首页、热门、关注与排行");
         Favorites = new OnlineFeedViewModel(services, this, OnlineFeedMode.Favorites, "收藏夹",
             "按 E-Hentai 收藏分类浏览，登录后可用");
+        Subscriptions = new OnlineFeedViewModel(services, this, OnlineFeedMode.Subscription, "订阅", "浏览和搜索已订阅的标签，登录后可用");
+        Rankings = new OnlineFeedViewModel(services, this, OnlineFeedMode.Toplist, "排行榜", "昨日、本月、今年与全部画廊排行");
+        _bookmarkSource = Online;
+        Bookmarks = new BookmarksViewModel(services, () => (_bookmarkSource ?? Online).CanBookmarkCurrent ? (_bookmarkSource ?? Online).CurrentRequest : null);
+        foreach (var feed in new[] { Online, Subscriptions, Rankings })
+        {
+            feed.BookmarksRequested += (_, _) => Navigate("bookmarks");
+            feed.BookmarksChanged += (_, _) => Bookmarks.Reload();
+            feed.BookmarkOptionsSaved += (entry, request) => { Bookmarks.UpdateOptions(entry, request); Navigate("bookmarks"); };
+        }
+        Bookmarks.OpenRequested += (_, entry) =>
+        {
+            var feed = FeedFor(entry);
+            _ = feed.OpenBookmarkAsync(entry);
+            Navigate(KeyFor(feed));
+        };
+        Bookmarks.EditRequested += (_, entry) =>
+        { var feed = FeedFor(entry); feed.EditBookmark(entry); Navigate(KeyFor(feed)); };
+        Bookmarks.Changed += (_, _) => { Online.RefreshBookmarks(); Subscriptions.RefreshBookmarks(); Rankings.RefreshBookmarks(); };
         History = new HistoryViewModel(services, Library);
         History.OnlineRequested += (_, summary) => OpenGallery(summary);
         History.OpenLibraryRequested += (_, _) => Navigate("library");
@@ -74,11 +97,14 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         services.Downloads.TaskCompleted += OnImageIndexDownloadCompleted;
 
         // The local index drives the "已在本机" badges on every online listing.
-        Library.LocalIndexChanged += (_, _) => { Online.RefreshLocalState(); Favorites.RefreshLocalState(); LocalStateChanged?.Invoke(this, EventArgs.Empty); };
+        Library.LocalIndexChanged += (_, _) => { Online.RefreshLocalState(); Favorites.RefreshLocalState(); Subscriptions.RefreshLocalState(); Rankings.RefreshLocalState(); LocalStateChanged?.Invoke(this, EventArgs.Empty); };
 
         NavItems =
         [
             new NavItem("online", "在线浏览", Online),
+            new NavItem("subscriptions", "订阅", Subscriptions),
+            new NavItem("rankings", "排行榜", Rankings),
+            new NavItem("bookmarks", "书签栏", Bookmarks),
             new NavItem("favorites", "收藏", Favorites),
             new NavItem("history", "阅读历史", History),
             new NavItem("downloads", "下载", Downloads),
@@ -116,6 +142,12 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     public MainViewModel Library { get; }
     public OnlineFeedViewModel Online { get; }
     public OnlineFeedViewModel Favorites { get; }
+    /// <summary>Gets the dedicated watched-tag feed.</summary>
+    public OnlineFeedViewModel Subscriptions { get; }
+    /// <summary>Gets the dedicated leaderboard feed.</summary>
+    public OnlineFeedViewModel Rankings { get; }
+    /// <summary>Gets the ordered search bookmark manager.</summary>
+    public BookmarksViewModel Bookmarks { get; }
     public HistoryViewModel History { get; }
     public DownloadsViewModel Downloads { get; }
     public SettingsViewModel Settings { get; }
@@ -130,6 +162,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             if (value is null || ReferenceEquals(value, _selectedNav)) return;
             if (Settings.IsSaving) return;
             _selectedNav = value;
+            if (value.Page is OnlineFeedViewModel feed && !feed.IsFavorites) _bookmarkSource = feed;
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentPage));
             OnPropertyChanged(nameof(CurrentPageTitle));
@@ -186,12 +219,15 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     {
         switch (page)
         {
-            case OnlineFeedViewModel feed when feed.Items.Count == 0 && !feed.IsBusy:
+            case OnlineFeedViewModel feed when feed.Items.Count == 0 && !feed.IsBusy && !feed.IsEditingBookmark:
                 _ = feed.LoadAsync(reset: true);
                 break;
             case SettingsViewModel:
                 Settings.RefreshAccount();
                 Settings.RefreshSources();
+                break;
+            case BookmarksViewModel bookmarks:
+                bookmarks.Reload();
                 break;
             case DownloadsViewModel downloads:
                 downloads.SyncAll();
@@ -229,6 +265,8 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             : "已切换到 E-Hentai");
 
         await Online.LoadAsync(reset: true).ConfigureAwait(true);
+        if (Subscriptions.Items.Count > 0) await Subscriptions.LoadAsync(reset: true).ConfigureAwait(true);
+        if (Rankings.Items.Count > 0) await Rankings.LoadAsync(reset: true).ConfigureAwait(true);
         if (Favorites.Items.Count > 0) await Favorites.LoadAsync(reset: true).ConfigureAwait(true);
     }
 
@@ -255,6 +293,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         RaiseAccount();
         Online.RefreshProgress();
         Favorites.RefreshProgress();
+        Subscriptions.RefreshProgress(); Rankings.RefreshProgress();
         Notify(result.Message);
     }
 
@@ -347,6 +386,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Favorites.RefreshFavoriteNames();
         Favorites.RefreshProgress();
         History.Reload();
+        Subscriptions.RefreshProgress(); Rankings.RefreshProgress();
     }
 
     public void Dispose()
@@ -361,7 +401,12 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         History.Dispose();
         Library.Dispose();
         Settings.Dispose();
+        Online.Dispose(); Favorites.Dispose(); Subscriptions.Dispose(); Rankings.Dispose();
     }
+
+    private OnlineFeedViewModel FeedFor(SavedSearchEntry entry) => entry.ToRequest().Mode switch
+    { EhSearchMode.Subscription => Subscriptions, EhSearchMode.Toplist => Rankings, _ => Online };
+    private string KeyFor(OnlineFeedViewModel feed) => ReferenceEquals(feed, Subscriptions) ? "subscriptions" : ReferenceEquals(feed, Rankings) ? "rankings" : "online";
 
     private void OnImageIndexLibraryChanged(object? sender, EventArgs e) { if (_imageMaintenanceReady) QueueImageIndexUpdate(); }
     private void OnImageIndexDownloadCompleted(object? sender, EhViewerReader.Core.Download.DownloadTask task)

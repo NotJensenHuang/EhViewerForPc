@@ -158,6 +158,8 @@ public partial class MainWindow : Window
                 return onlineView;
             case HistoryViewModel:
                 return new HistoryPage();
+            case BookmarksViewModel:
+                return new BookmarksPage();
             case DownloadsViewModel:
                 return new DownloadsPage();
             case SettingsViewModel:
