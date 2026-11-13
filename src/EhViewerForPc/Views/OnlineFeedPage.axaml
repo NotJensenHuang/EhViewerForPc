@@ -8,8 +8,7 @@
              x:Class="EhViewerForPc.Views.OnlineFeedPage"
              x:DataType="vm:OnlineFeedViewModel">
   <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto" Background="Transparent">
-    <!-- Toolbar: one row of actions plus the page position next to the paging
-         buttons, so the reader never has to hunt for the page number. -->
+    <!-- Shared feed actions; continuation belongs to the scroll surface. -->
     <WrapPanel Grid.Row="0" Classes="actions" Orientation="Horizontal" Margin="24,16,24,8">
       <Button Content="高级选项" Classes="chip" Classes.active="{Binding ShowAdvanced}"
               Command="{Binding ToggleAdvancedCommand}" IsVisible="{Binding ShowSearchBar}" />
@@ -27,9 +26,10 @@
       <Button Content="标签检索" Command="{Binding ToggleTagLookupCommand}" IsVisible="{Binding ShowSearchBar}" />
       <Button Content="刷新" Command="{Binding RefreshCommand}" />
       <Button Content="取消" Command="{Binding CancelSearchCommand}" IsVisible="{Binding IsBusy}" />
-      <Button Content="上一页" Command="{Binding PreviousPageCommand}" IsEnabled="{Binding CanGoBack}" />
-      <Button Content="下一页" Command="{Binding NextPageCommand}" IsEnabled="{Binding HasMore}" />
-      <SelectableTextBlock Text="{Binding PageLabel}" Classes="caption" VerticalAlignment="Center" MinWidth="52" />
+      <ComboBox ItemsSource="{Binding RankingKinds}" SelectedItem="{Binding SelectedRankingKind}"
+                IsVisible="{Binding ShowRankingOverview}" Width="180" PlaceholderText="排行榜类型" AutomationProperties.Name="排行榜类型">
+        <ComboBox.ItemTemplate><DataTemplate x:DataType="vm:FeedOption"><TextBlock Text="{Binding Label}" /></DataTemplate></ComboBox.ItemTemplate>
+      </ComboBox>
     </WrapPanel>
 
     <!-- Search bar (browse page) -->
@@ -65,11 +65,6 @@
       </ItemsControl.ItemTemplate>
     </ItemsControl>
 
-    <ComboBox Grid.Row="2" ItemsSource="{Binding RankingKinds}" SelectedItem="{Binding SelectedRankingKind}"
-              IsVisible="{Binding ShowRankingOverview}" Width="180" HorizontalAlignment="Left" Margin="24,0,24,10"
-              PlaceholderText="排行榜类型" AutomationProperties.Name="排行榜类型">
-      <ComboBox.ItemTemplate><DataTemplate x:DataType="vm:FeedOption"><TextBlock Text="{Binding Label}" /></DataTemplate></ComboBox.ItemTemplate>
-    </ComboBox>
 
     <!-- Search result header: summary on the left, save/clear as one group
          that moves under the summary when the row is narrow. -->
@@ -238,8 +233,9 @@
 
     <!-- Grid -->
     <Grid Grid.Row="4">
-      <ScrollViewer VerticalScrollBarVisibility="Auto" IsVisible="{Binding !ShowRankingOverview}">
-        <Border Padding="24,0,24,20">
+      <ScrollViewer x:Name="GalleryScroll" VerticalScrollBarVisibility="Auto" IsVisible="{Binding !ShowRankingOverview}"
+                    ScrollChanged="OnGalleryScrollChanged">
+        <StackPanel Margin="24,0,24,20" Spacing="14">
           <ir:ItemsRepeater ItemsSource="{Binding Items}" ItemTemplate="{StaticResource OnlineGalleryCard}">
             <ir:ItemsRepeater.Layout>
               <layout:UniformGridLayout MinItemWidth="196" MinItemHeight="352"
@@ -247,7 +243,13 @@
                                         ItemsStretch="Fill" />
             </ir:ItemsRepeater.Layout>
           </ir:ItemsRepeater>
-        </Border>
+          <StackPanel HorizontalAlignment="Center" Spacing="8" Margin="0,4,0,8">
+            <SelectableTextBlock Text="{Binding LoadMoreText}" Classes="caption" HorizontalAlignment="Center"
+                                 AutomationProperties.AutomationId="Online.LoadMoreStatus" />
+            <Button Content="{Binding LoadMoreButtonLabel}" Command="{Binding LoadMoreCommand}" IsVisible="{Binding ShowLoadMoreButton}"
+                    HorizontalAlignment="Center" AutomationProperties.AutomationId="Online.LoadMore" />
+          </StackPanel>
+        </StackPanel>
       </ScrollViewer>
 
       <ScrollViewer VerticalScrollBarVisibility="Auto" IsVisible="{Binding ShowRankingOverview}">

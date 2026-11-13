@@ -66,8 +66,10 @@
                                      ToolTip.Tip="{Binding MissingSummary}" />
               </StackPanel>
             </StackPanel>
-            <ui:FACommandBar Grid.Column="1" x:Name="ReaderCommands" DefaultLabelPosition="Right"
-                             IsDynamicOverflowEnabled="True" HorizontalAlignment="Right"
+            <Grid Grid.Column="1" ColumnDefinitions="Auto,Auto" ColumnSpacing="4" VerticalAlignment="Center">
+            <ui:FACommandBar x:Name="ReaderCommands" DefaultLabelPosition="Right"
+                             FontSize="13" FontWeight="Normal" OverflowButtonVisibility="Collapsed"
+                             IsDynamicOverflowEnabled="False" HorizontalAlignment="Right"
                              VerticalAlignment="Center">
               <ui:FACommandBar.PrimaryCommands>
                 <ui:FACommandBarToggleButton Label="单页" Click="OnReaderSingleMode"
@@ -92,12 +94,13 @@
                   </ui:FACommandBarToggleButton.IconSource>
                 </ui:FACommandBarToggleButton>
                 <ui:FACommandBarElementContainer>
-                  <ComboBox Width="128" ItemsSource="{Binding FitOptions}"
+                  <ComboBox Width="128" FontSize="13" FontWeight="Normal" MinHeight="32" VerticalAlignment="Center"
+                            AutomationProperties.AutomationId="Reader.FitMode" ItemsSource="{Binding FitOptions}"
                             SelectedItem="{Binding SelectedFit}" ToolTip.Tip="适应方式"
                             AutomationProperties.Name="适应方式">
                     <ComboBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:FitOption">
-                        <TextBlock Text="{Binding Label}" />
+                        <TextBlock Text="{Binding Label}" FontSize="13" FontWeight="Normal" />
                       </DataTemplate>
                     </ComboBox.ItemTemplate>
                   </ComboBox>
@@ -113,17 +116,24 @@
                   </ui:FACommandBarButton.IconSource>
                 </ui:FACommandBarButton>
               </ui:FACommandBar.PrimaryCommands>
-              <ui:FACommandBar.SecondaryCommands>
-                <ui:FACommandBarButton Label="{Binding DirectionLabel}" Click="OnReaderDirection"
-                                       ToolTip.Tip="切换阅读方向（D）" />
-                <ui:FACommandBarButton Label="背景色" Click="OnReaderBackground" ToolTip.Tip="切换背景（B）" />
-                <ui:FACommandBarSeparator />
-                <ui:FACommandBarButton Label="重试本页" Click="OnReaderRetry" ToolTip.Tip="重新解析并加载当前页" />
-                <ui:FACommandBarButton Label="快捷键帮助" Click="OnReaderHelp" ToolTip.Tip="快捷键（?）" />
-                <ui:FACommandBarSeparator />
-                <ui:FACommandBarButton Label="关闭阅读器" Click="OnReaderClose" ToolTip.Tip="返回来源页（Esc）" />
-              </ui:FACommandBar.SecondaryCommands>
             </ui:FACommandBar>
+            <Button Grid.Column="1" x:Name="ReaderMoreButton" Width="36" Height="36" Padding="0"
+                    VerticalAlignment="Center" FontSize="13" FontWeight="Normal"
+                    AutomationProperties.AutomationId="Reader.More" AutomationProperties.Name="更多阅读选项" ToolTip.Tip="更多阅读选项">
+              <ui:FASymbolIcon Symbol="More" FontSize="16" />
+              <Button.Flyout>
+                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                  <MenuItem Header="{Binding DirectionLabel}" Click="OnReaderDirection" />
+                  <MenuItem Header="背景色" Click="OnReaderBackground" />
+                  <Separator />
+                  <MenuItem Header="重试本页" Click="OnReaderRetry" />
+                  <MenuItem Header="快捷键帮助" Click="OnReaderHelp" />
+                  <Separator />
+                  <MenuItem Header="关闭阅读器" Click="OnReaderClose" />
+                </MenuFlyout>
+              </Button.Flyout>
+            </Button>
+            </Grid>
           </controls:AdaptiveGrid>
         </Grid>
       </ui:FANavigationView.Header>

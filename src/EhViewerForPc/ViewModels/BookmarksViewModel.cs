@@ -25,6 +25,7 @@ public sealed partial class BookmarksViewModel : ObservableObject
     public ObservableCollection<SavedSearchEntry> Items { get; } = [];
     /// <summary>Gets whether a bookmark can be edited.</summary>
     public bool HasSelection => Selected is not null;
+    public bool HasItems => Items.Count > 0;
     /// <summary>Gets whether transfer controls can be used.</summary>
     public bool IsIdle => !IsBusy;
     /// <summary>Raised to execute a saved request.</summary>
@@ -43,6 +44,7 @@ public sealed partial class BookmarksViewModel : ObservableObject
         string? id = Selected?.Id; Items.Clear();
         foreach (var item in _services.Settings.SavedSearches) Items.Add(item);
         Selected = Items.FirstOrDefault(i => i.Id == id);
+        OnPropertyChanged(nameof(HasItems));
     }
     [RelayCommand] private void AddCurrent()
     {

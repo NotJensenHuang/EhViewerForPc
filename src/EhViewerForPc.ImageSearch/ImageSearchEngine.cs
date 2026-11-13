@@ -15,12 +15,12 @@ public sealed class ImageSearchEngine
     private readonly DiskInvertedIndex _index;
 
     /// <summary>Opens a validated quantizer and published IVF index for querying.</summary>
-    public ImageSearchEngine(ImageDatabase database)
+    public ImageSearchEngine(ImageDatabase database, bool allowLinkedPublication = false)
     {
         _database = database;
         string quantizer = Path.Combine(database.DirectoryPath, "quantizer.bin");
         _quantizer = BinaryHnsw.Load(quantizer, database.Profile.Id);
-        _index = DiskInvertedIndex.Open(Path.Combine(database.DirectoryPath, "invlists.bin"), database.Profile.Id, DiskInvertedIndex.HashQuantizer(quantizer));
+        _index = DiskInvertedIndex.Open(Path.Combine(database.DirectoryPath, "invlists.bin"), database.Profile.Id, DiskInvertedIndex.HashQuantizer(quantizer), allowLinkedPublication);
         if (_index.BucketCount != _quantizer.Count) throw new InvalidDataException("Index and quantizer bucket counts differ.");
     }
 
@@ -59,7 +59,7 @@ public sealed class ImageSearchEngine
 
     /// <summary>Builds bounded segments and publishes a streaming merge; a paused build remains resumable.</summary>
     public static BuildResult Build(ImageDatabase database, int batchSize = 2000, bool stopBeforeMerge = false,
-        bool cleanBeforeMerge = false, int? stopAfterSegments = null, CancellationToken cancellationToken = default)
+        bool cleanBeforeMerge = false, int? stopAfterSegments = null, CancellationToken cancellationToken = default, IReadOnlySet<long>? allowedImageIds = null)
     {
         database.RequireWriter();
         if (batchSize is < 1 or > 2000 || stopAfterSegments is < 1) throw new ArgumentOutOfRangeException(nameof(batchSize));
@@ -67,6 +67,23 @@ public sealed class ImageSearchEngine
         string quantizerPath = Path.Combine(directory, "quantizer.bin");
         var quantizer = BinaryHnsw.Load(quantizerPath, profileId);
         string quantizerHash = DiskInvertedIndex.HashQuantizer(quantizerPath);
+        // 文件落盘与 SQLite 检查点之间崩溃会留下孤立段；它们没有任何已提交引用。
+        var pendingSegments = new HashSet<string>(StringComparer.Ordinal);
+        using (var connection = database.Open())
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT DISTINCT segment FROM vector_stats WHERE indexed=0 AND segment IS NOT NULL";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) pendingSegments.Add(reader.GetString(0));
+        }
+        if (File.Exists(Path.Combine(directory, "invlists.bin")))
+            _ = DiskInvertedIndex.Open(Path.Combine(directory, "invlists.bin"), profileId, quantizerHash);
+        foreach (string file in Directory.EnumerateFiles(directory, "segment-*.ivf"))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string name = Path.GetFileName(file);
+            if (IsSegmentName(name) && !pendingSegments.Contains(name)) File.Delete(file);
+        }
         int written = 0;
         while (true)
         {
@@ -98,7 +115,7 @@ public sealed class ImageSearchEngine
         }
         using (var connection = database.Open())
         {
-            if ((long)ImageDatabase.Scalar(connection, "SELECT count(*) FROM vector_stats WHERE indexed=0 AND segment IS NULL")! != 0)
+            if ((long)ImageDatabase.Scalar(connection, "SELECT count(*) FROM vector_stats s WHERE indexed=0 AND segment IS NULL AND EXISTS(SELECT 1 FROM alias a WHERE a.image_id=s.image_id)")! != 0)
                 throw new InvalidOperationException("MissingDescriptorCache: reimport the affected source images before building.");
         }
         if (stopBeforeMerge) return new(false, written, 0, 0);
@@ -126,7 +143,8 @@ public sealed class ImageSearchEngine
         }
         // A separate destination preserves the old index until every new bucket and checksum is durable.
         string candidate = Path.Combine(directory, "invlists.new.bin");
-        DiskInvertedIndex.Write(candidate, profileId, quantizerHash, quantizer.Count, b => DiskInvertedIndex.MergeBucket(sources, b), cancellationToken);
+        DiskInvertedIndex.Write(candidate, profileId, quantizerHash, quantizer.Count,
+            b => allowedImageIds is null ? DiskInvertedIndex.MergeBucket(sources, b) : DiskInvertedIndex.MergeBucket(sources, b).Where(v => allowedImageIds.Contains(v.ImageId)), cancellationToken);
         var validated = DiskInvertedIndex.Open(candidate, profileId, quantizerHash);
         cancellationToken.ThrowIfCancellationRequested();
         File.Move(candidate, published, overwrite: true);

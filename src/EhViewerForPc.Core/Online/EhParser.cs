@@ -25,6 +25,9 @@ public static partial class EhParser
     [GeneratedRegex(@"(?:Average|Rating):\s*([0-9]+(?:\.[0-9]+)?)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex RatingRegex();
 
+    [GeneratedRegex(@"background-position\s*:\s*(-?\d+)(?:px)?\s+(-?\d+)(?:px)?\s*(?:;|$)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex ListRatingPositionRegex();
+
     [GeneratedRegex(@"[?&]p=(\d+)", RegexOptions.CultureInvariant)]
     private static partial Regex PageParamRegex();
 
@@ -90,6 +93,7 @@ public static partial class EhParser
                 Category = ExtractCategory(scope),
                 ThumbUrl = ExtractThumb(scope),
                 Pages = ExtractPages(scope),
+                Rating = ExtractListRating(scope),
                 Posted = ExtractPosted(scope),
                 Uploader = ExtractUploader(scope),
             };
@@ -196,6 +200,19 @@ public static partial class EhParser
     {
         Match match = PagesRegex().Match(scope.InnerText);
         return match.Success && int.TryParse(match.Groups[1].Value, out int pages) ? pages : 0;
+    }
+
+    private static double ExtractListRating(HtmlNode scope)
+    {
+        HtmlNode? stars = scope.FirstDescendantByClass("ir");
+        if (stars is null) return 0;
+        Match position = ListRatingPositionRegex().Match(stars.GetAttribute("style"));
+        if (!position.Success ||
+            !int.TryParse(position.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int x) ||
+            !int.TryParse(position.Groups[2].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int y) ||
+            x is > 0 or < -80 || x % 16 != 0 || y is not (-1 or -21)) return 0;
+        // 列表只提供半星精度；横向每格 16px，第二行的 sprite 表示半星。
+        return Math.Clamp(5 + x / 16d - (y == -21 ? .5 : 0), 0, 5);
     }
 
     private static string ExtractPosted(HtmlNode scope)

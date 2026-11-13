@@ -29,12 +29,13 @@ public partial class MainWindow : Window
     private readonly Dictionary<Control, NavigationTarget> _targets = [];
     private readonly NavigationPageFactory _navigationFactory = new();
     private WebLoginPage? _loginPage;
+    private FAContentDialog? _bookmarksDialog;
+    internal FAContentDialog? BookmarksDialog => _bookmarksDialog;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly HashSet<string> _openingReaders = new(StringComparer.Ordinal);
     private bool _closing;
     private bool? _lastNarrow;
     private bool _syncingNavigation;
-    private bool _updatingLayout;
 
     public MainWindow()
     {
@@ -109,6 +110,8 @@ public partial class MainWindow : Window
         if (settings.WindowMaximized) WindowState = WindowState.Maximized;
 
         shell.NavigationRequested += OnNavigationRequested;
+        shell.BookmarksRequested += OnBookmarksRequested;
+        shell.BookmarksDismissRequested += OnBookmarksDismissRequested;
         shell.GalleryRequested += OnGalleryRequested;
         shell.WebLoginRequested += OnWebLoginRequested;
         shell.Downloads.ArchiveRequested += (_, vm) => PushDocument(new ArchivePage(vm) { Title = vm.Title });
@@ -158,8 +161,6 @@ public partial class MainWindow : Window
                 return onlineView;
             case HistoryViewModel:
                 return new HistoryPage();
-            case BookmarksViewModel:
-                return new BookmarksPage();
             case DownloadsViewModel:
                 return new DownloadsPage();
             case SettingsViewModel:
@@ -580,12 +581,41 @@ public partial class MainWindow : Window
     }
     private void ClearDocuments()
     {
+        _bookmarksDialog?.Hide();
         ContentHost.Content = null;
         ContentHost.BackStack.Clear();
         ContentHost.ForwardStack.Clear();
         ReleaseUnusedDocuments();
-        if (_shell is not null) _shell.NavigationRequested -= OnNavigationRequested;
+        if (_shell is not null)
+        {
+            _shell.NavigationRequested -= OnNavigationRequested;
+            _shell.BookmarksRequested -= OnBookmarksRequested;
+            _shell.BookmarksDismissRequested -= OnBookmarksDismissRequested;
+        }
     }
+
+    private async void OnBookmarksRequested(object? sender, EventArgs e)
+    {
+        if (_shell is null || _closing || _bookmarksDialog is not null) return;
+        var view = new BookmarksView
+        {
+            DataContext = _shell.Bookmarks,
+            Width = Math.Clamp(Bounds.Width - 112, 280, 780),
+            MaxHeight = Math.Max(140, Bounds.Height - 200),
+        };
+        var dialog = new FAContentDialog
+        {
+            Title = "书签栏", Content = view, CloseButtonText = "关闭",
+            FontSize = 13, FontWeight = Avalonia.Media.FontWeight.Normal,
+        };
+        dialog.Resources["ContentDialogMaxWidth"] = 860d;
+        _bookmarksDialog = dialog;
+        try { await dialog.ShowAsync(this); }
+        catch (Exception error) { _shell.Notify("书签栏打开失败：" + error.Message); }
+        finally { _bookmarksDialog = null; }
+    }
+
+    private void OnBookmarksDismissRequested(object? sender, EventArgs e) => _bookmarksDialog?.Hide();
     private void OnGoBack(object? sender, FANavigationViewBackRequestedEventArgs e) => PopDocument();
     internal void ShowDiagnosticPage(DocumentPage page) => PushDocument(page);
     private void OnReaderImmersiveChanged(object? sender, bool immersive) => UpdateAdaptiveLayout();
@@ -604,30 +634,36 @@ public partial class MainWindow : Window
 
     private void UpdateAdaptiveLayout()
     {
-        _updatingLayout = true;
-        try
+        if (_bookmarksDialog?.Content is BookmarksView bookmarks)
         {
-            bool narrow = Bounds.Width < 920;
-            bool immersive = ActiveReader?.IsImmersive == true;
-            Navigation.IsPaneVisible = !immersive;
-            Navigation.IsPaneToggleButtonVisible = !immersive;
-            Navigation.IsBackButtonVisible = !immersive;
-            Navigation.AlwaysShowHeader = !immersive;
-            Navigation.Header = immersive ? null : HeaderHost;
-            if (!immersive) UpdateHeaderForContent();
-            // Narrow headers keep icons only so the command row always fits;
-            // the labels stay available as tooltips and in the overflow menu.
-            ReaderCommands.DefaultLabelPosition = narrow
-                ? FACommandBarDefaultLabelPosition.Collapsed
-                : FACommandBarDefaultLabelPosition.Right;
-            if (_lastNarrow != narrow)
-            {
-                Navigation.IsPaneOpen = !narrow && !AppServices.Current.Settings.SidebarCollapsed;
-                _lastNarrow = narrow;
-            }
-            UpdateAccountArea();
+            bookmarks.Width = Math.Clamp(Bounds.Width - 112, 280, 780);
+            bookmarks.MaxHeight = Math.Max(140, Bounds.Height - 200);
         }
-        finally { _updatingLayout = false; }
+        bool narrow = Bounds.Width < 920;
+        bool immersive = ActiveReader?.IsImmersive == true;
+        Navigation.IsPaneVisible = !immersive;
+        Navigation.IsPaneToggleButtonVisible = !immersive;
+        Navigation.IsBackButtonVisible = !immersive;
+        Navigation.AlwaysShowHeader = !immersive;
+        Navigation.Header = immersive ? null : HeaderHost;
+        if (!immersive) UpdateHeaderForContent();
+        // Narrow headers keep icons only so the command row always fits;
+        // the labels stay available as tooltips and in the overflow menu.
+        ReaderCommands.DefaultLabelPosition = narrow
+            ? FACommandBarDefaultLabelPosition.Collapsed
+            : FACommandBarDefaultLabelPosition.Right;
+        foreach (var command in ReaderCommands.PrimaryCommands.OfType<Control>())
+        {
+            if (command is not (FACommandBarButton or FACommandBarToggleButton)) continue;
+            command.MinWidth = narrow ? 36 : 0;
+            command.Width = narrow ? 36 : double.NaN;
+        }
+        if (_lastNarrow != narrow)
+        {
+            Navigation.IsPaneOpen = !narrow && !AppServices.Current.Settings.SidebarCollapsed;
+            _lastNarrow = narrow;
+        }
+        UpdateAccountArea();
     }
 
     /// <summary>

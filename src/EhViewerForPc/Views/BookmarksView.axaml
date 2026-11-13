@@ -3,15 +3,19 @@
              xmlns:vm="using:EhViewerForPc.ViewModels"
              xmlns:models="using:EhViewerForPc.Core.Models"
              xmlns:controls="using:EhViewerForPc.Controls"
-             x:Class="EhViewerForPc.Views.BookmarksPage" x:DataType="vm:BookmarksViewModel">
+             x:Class="EhViewerForPc.Views.BookmarksView" x:DataType="vm:BookmarksViewModel">
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
   <Grid RowDefinitions="Auto,*,Auto">
-    <WrapPanel Classes="actions" Margin="24,16,24,12" IsEnabled="{Binding IsIdle}">
+    <WrapPanel Classes="actions" Margin="0,0,0,12" IsEnabled="{Binding IsIdle}">
       <Button Content="添加当前列表" Command="{Binding AddCurrentCommand}" Classes="accent" AutomationProperties.AutomationId="Bookmarks.Add" />
       <Button Content="导入书签" Click="OnImport" AutomationProperties.AutomationId="Bookmarks.Import" />
       <Button Content="导出书签" Click="OnExport" AutomationProperties.AutomationId="Bookmarks.Export" />
     </WrapPanel>
-    <controls:AdaptiveGrid Grid.Row="1" Breakpoint="760" ColumnDefinitions="*,340" RowSpacing="12" ColumnSpacing="20" Margin="24,0,24,16">
-      <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" MinHeight="140" MaxHeight="650"
+    <controls:AdaptiveGrid Grid.Row="1" Breakpoint="600" ColumnDefinitions="*,300" RowSpacing="12" ColumnSpacing="20" Margin="0,0,0,16">
+      <Grid>
+      <SelectableTextBlock Text="尚无书签，可添加当前列表或导入备份。" TextWrapping="Wrap"
+                           Classes="secondary" IsVisible="{Binding !HasItems}" Margin="0,8" />
+      <ListBox ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}" MinHeight="100" MaxHeight="320" IsVisible="{Binding HasItems}"
                AutomationProperties.Name="书签列表" DoubleTapped="OnOpenSelected">
         <ListBox.ItemTemplate>
           <DataTemplate x:DataType="models:SavedSearchEntry">
@@ -19,10 +23,10 @@
           </DataTemplate>
         </ListBox.ItemTemplate>
       </ListBox>
-      <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto">
+      </Grid>
+      <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" IsVisible="{Binding HasSelection}">
         <StackPanel Spacing="12" IsEnabled="{Binding IsIdle}">
-          <TextBlock Text="书签管理" Classes="h2" />
-          <TextBlock Text="保存完整搜索条件；双击书签或点击“打开”执行。导入时保留现有书签，同名项跳过。" TextWrapping="Wrap" Classes="secondary" />
+          <SelectableTextBlock Text="双击书签或点击“打开”执行搜索。" TextWrapping="Wrap" Classes="secondary" />
           <StackPanel Spacing="10" IsEnabled="{Binding HasSelection}">
             <TextBlock Text="名称" />
             <TextBox Text="{Binding EditName}" AutomationProperties.Name="书签名称" />
@@ -39,15 +43,16 @@
               <Button Content="删除" Command="{Binding DeleteCommand}" />
             </WrapPanel>
           </StackPanel>
-          <TextBlock Text="原版备份兼容：.db（QUICK_SEARCH）及 JSON。导出 .db 可在原版“导入数据”中读取，其中仅包含书签，其他数据表为空。" TextWrapping="Wrap" Classes="caption" />
+          <SelectableTextBlock Text="支持原版 .db 备份及 JSON；导入时保留现有书签，同名项跳过。" TextWrapping="Wrap" Classes="caption" />
         </StackPanel>
       </ScrollViewer>
     </controls:AdaptiveGrid>
     <Border Grid.Row="2" Classes="statusbar">
       <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Classes="secondary" FontSize="12" />
+        <SelectableTextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Classes="secondary" FontSize="12" />
         <TextBlock Grid.Column="1" Text="{Binding Items.Count, StringFormat='{}{0} 项'}" Margin="12,0,0,0" Classes="caption" />
       </Grid>
     </Border>
   </Grid>
+  </ScrollViewer>
 </UserControl>

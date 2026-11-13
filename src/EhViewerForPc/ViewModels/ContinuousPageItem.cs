@@ -46,6 +46,8 @@ public sealed class ContinuousPageItem : ObservableObject
     public int OriginalHeight => _originalHeight;
     public bool Known { get; private set; }
     public int Number => Page.Number;
+    public bool IsMissing => Page is { State: PageState.Empty, Candidates.Count: 0 };
+    public string MissingPageText => $"第 {Number} 页缺失";
 
     /// <summary>
     /// Replaces the estimated aspect ratio with the real one once the page has

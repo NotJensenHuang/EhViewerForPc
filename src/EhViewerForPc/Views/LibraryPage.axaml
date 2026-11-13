@@ -122,7 +122,13 @@
                       </Grid>
                     </Border>
 
-                    <Button Grid.Row="0" Content="阅读" IsEnabled="{Binding CanRead}" Click="OnReadCard" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="6" AutomationProperties.Name="阅读此作品" />
+                    <Border Grid.Row="0" Background="{DynamicResource AppBgBrush}" CornerRadius="4"
+                            HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8"
+                            AutomationProperties.AutomationId="Library.ReadSurface">
+                      <Button Content="阅读" FontWeight="SemiBold" FontSize="13" MinHeight="32" Padding="12,4"
+                              IsEnabled="{Binding CanRead}" Click="OnReadCard"
+                              AutomationProperties.Name="阅读此作品" AutomationProperties.AutomationId="Library.Read" />
+                    </Border>
                     <TextBlock Grid.Row="1" Classes="title" Text="{Binding Title}" TextWrapping="Wrap"
                                MaxLines="2" MinHeight="40" Margin="0,8,0,0" />
                     <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Center" Margin="0,6,0,0">

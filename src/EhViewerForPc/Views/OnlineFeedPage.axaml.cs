@@ -2,16 +2,73 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
+using System.ComponentModel;
+using EhViewerForPc.Services;
 using EhViewerForPc.ViewModels;
 
 namespace EhViewerForPc.Views;
 
 public partial class OnlineFeedPage : UserControl
 {
+    private OnlineFeedViewModel? _observed;
+    private bool _loadCheckQueued;
+    private int _listRevision = -1;
+
     public OnlineFeedPage()
     {
         InitializeComponent();
-        SizeChanged += (_, _) => SearchOptionsScroll.MaxHeight = Math.Clamp(Bounds.Height - 210, 100, 400);
+        SizeChanged += (_, _) =>
+        {
+            SearchOptionsScroll.MaxHeight = Math.Clamp(Bounds.Height - 210, 100, 400);
+            QueueLoadCheck();
+        };
+        Loaded += (_, _) => ObserveViewModel();
+        DataContextChanged += (_, _) => { if (IsLoaded) ObserveViewModel(); };
+        Unloaded += (_, _) =>
+        {
+            if (_observed is not null) _observed.PropertyChanged -= OnListingChanged;
+            _observed = null;
+        };
+    }
+
+    private void ObserveViewModel()
+    {
+        if (_observed is not null) _observed.PropertyChanged -= OnListingChanged;
+        _observed = DataContext as OnlineFeedViewModel;
+        if (_observed is not null) _observed.PropertyChanged += OnListingChanged;
+        UpdateListPosition();
+        QueueLoadCheck();
+    }
+
+    private void UpdateListPosition()
+    {
+        if (_observed is null || _listRevision == _observed.ListRevision) return;
+        _listRevision = _observed.ListRevision;
+        GalleryScroll.Offset = default;
+    }
+
+    private void OnListingChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(OnlineFeedViewModel.ListRevision)) UpdateListPosition();
+        if (e.PropertyName is nameof(OnlineFeedViewModel.CanAutoLoadMore) or nameof(OnlineFeedViewModel.ListRevision)) QueueLoadCheck();
+    }
+
+    private void OnGalleryScrollChanged(object? sender, ScrollChangedEventArgs e) => QueueLoadCheck();
+
+    private void QueueLoadCheck()
+    {
+        if (!IsLoaded || _loadCheckQueued) return;
+        _loadCheckQueued = true;
+        Dispatcher.UIThread.Post(async () =>
+        {
+            _loadCheckQueued = false;
+            if (!IsLoaded || _observed is not { CanAutoLoadMore: true } vm || !GalleryScroll.IsEffectivelyVisible) return;
+            double viewport = GalleryScroll.Viewport.Height;
+            if (viewport <= 0 || GalleryScroll.Extent.Height - GalleryScroll.Offset.Y - viewport > Math.Max(300, viewport / 2)) return;
+            try { await vm.LoadMoreCommand.ExecuteAsync(null); }
+            catch (Exception error) { AppServices.Current.Log.Error("Lazy gallery load failed", error); }
+        }, DispatcherPriority.Background);
     }
 
     /// <summary>Ctrl+F lands here: focus the merged search box.</summary>

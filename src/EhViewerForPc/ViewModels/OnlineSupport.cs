@@ -64,6 +64,7 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
     private readonly IOnlineHost _host;
     private ReadingProgress? _progress;
     private bool _isLocal;
+    private bool _isLocalComplete;
 
     public OnlineGalleryItemViewModel(EhGallerySummary summary, IImageRequest cover, IOnlineHost host)
     {
@@ -71,7 +72,8 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
         CoverRequest = cover;
         _host = host;
         CategoryBrush = new SolidColorBrush(Color.Parse(summary.CategoryColor));
-        _isLocal = host.HasLocalCopy(summary.Gid);
+        _isLocal = host.HasLocalCopy(summary.Gid, requireComplete: false);
+        _isLocalComplete = host.HasLocalCopy(summary.Gid);
         LanguageText = ResolveLanguage(summary);
     }
 
@@ -112,13 +114,17 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
 
     /// <summary>True when the same gallery id exists in a local source.</summary>
     public bool IsInLocalLibrary => _isLocal;
+    public string LocalLibraryLabel => _isLocalComplete ? "已在本地" : "本地缺页";
 
     public void RefreshLocalState()
     {
-        bool value = _host.HasLocalCopy(Gid);
-        if (_isLocal == value) return;
+        bool value = _host.HasLocalCopy(Gid, requireComplete: false);
+        bool complete = _host.HasLocalCopy(Gid);
+        if (_isLocal == value && _isLocalComplete == complete) return;
         _isLocal = value;
+        _isLocalComplete = complete;
         OnPropertyChanged(nameof(IsInLocalLibrary));
+        OnPropertyChanged(nameof(LocalLibraryLabel));
     }
 
     private static string ResolveLanguage(EhGallerySummary summary)
@@ -141,6 +147,7 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
     }
     public string PostedText => Summary.Posted;
     public string RatingText => Summary.RatingText;
+    public string RatingLabel => HasRating ? "评分 " + RatingText : "暂无评分";
     public bool HasRating => Summary.HasRating;
     public bool HasPosted => Summary.Posted.Length > 0;
 
@@ -149,7 +156,6 @@ public sealed partial class OnlineGalleryItemViewModel : ObservableObject
         get
         {
             var parts = new List<string>(3) { PagesText };
-            if (HasRating) parts.Add("★ " + RatingText);
             if (HasPosted) parts.Add(PostedText);
             return string.Join(" · ", parts);
         }

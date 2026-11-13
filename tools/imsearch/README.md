@@ -37,7 +37,7 @@ The generated 64-image probe verifies import, two-level training, paused-build r
 
 Application use: Settings → local library → enable image retrieval, select sources and save. Open image search from the library toolbar and build the index. Select, drop or paste a local image, optionally drag a crop rectangle, search, then use “从此页阅读”. The selected source copy and original page number override history. Returning keeps the query and results.
 
-Updates copy an independent backend snapshot and reuse unchanged page descriptors. New/changed pages are processed; deleted or disabled locations are filtered. “重新提取重建” performs a fresh generation and removes accumulated stale vectors. Publication retains the prior generation and active-query generations; cleanup deletes only marked application-owned generations with checked paths and no reparse points.
+Application updates copy metadata snapshots, share content-addressed descriptors in `features.db`, and prefer hard links for immutable search files. Completed pages and committed segments resume after interruption; explicit cancellation stays paused until manually continued. Legacy unfinished generations can be adopted and their descriptor blobs migrate before unused directories are reclaimed. Publication retains the current snapshot, pending job and active-query snapshots; the backup pointer no longer retains an entire prior generation. Cleanup deletes only marked application-owned generations with checked paths and no reparse points. The standalone Host keeps its self-contained backend format unless the shared-cache API is explicitly used. See [storage and recovery](../../docs/索引共享存储与断点恢复-2026-11-13.md).
 
 UI regression is entirely in-memory with Avalonia Headless and never creates a Win32 window:
 

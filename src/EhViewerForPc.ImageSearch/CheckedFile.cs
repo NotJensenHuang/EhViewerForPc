@@ -26,9 +26,9 @@ internal static class CheckedFile
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    internal static BinaryReader Open(string path)
+    internal static BinaryReader Open(string path, bool allowDelete = false)
     {
-        var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | (allowDelete ? FileShare.Delete : 0));
         try
         {
             if (file.Length < 40) throw new InvalidDataException("Truncated search file.");

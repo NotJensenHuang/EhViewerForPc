@@ -37,15 +37,18 @@ internal static class LocalImageSearchAppProbe
             checks.Add(new("application-build", built.Indexed == 8));
             var updated = await services.ImageSearch.BuildAsync(galleries.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray(), null, CancellationToken.None);
             checks.Add(new("incremental-reuses-pages", updated.Indexed == 8 && updated.Reused == 8));
+            checks.Add(new("single-published-snapshot", Directory.GetDirectories(Path.Combine(services.ImageSearch.DirectoryPath, "generations")).Length == 1));
+            checks.Add(new("shared-features", File.Exists(Path.Combine(services.ImageSearch.DirectoryPath, "features.db"))));
+            checks.Add(new("completed-checkpoint-removed", !File.Exists(Path.Combine(services.ImageSearch.DirectoryPath, "build-job.json"))));
             byte[] query = File.ReadAllBytes(Path.Combine(galleries[0].FolderPath, "00000005.png"));
             var hits = await services.ImageSearch.SearchAsync(query, null, galleries, CancellationToken.None);
             checks.Add(new("exact-copy-mapping", hits.Any(h => h.Gallery.SourceId == galleries[1].SourceId && h.PageNumber == 5)));
             services.Progress.Set("42", new ReadingProgress { PageNumber = 3, PageOffset = .8, Completed = true });
             using (var reader = new ReaderViewModel(services, galleries[1], initialPageNumber: 5))
             {
-                checks.Add(new("reader-explicit-page", reader.OriginalPageLabel == "原始第 5 页" && !reader.ShowRestoreHint));
+                checks.Add(new("reader-explicit-page", reader.PageLabel == "5 / 7" && !reader.ShowRestoreHint));
                 checks.Add(new("reader-repeated-page", reader.TryNavigateToPageNumber(5) && reader.PageOffsetForTest == 0));
-                checks.Add(new("reader-missing-page", !reader.TryNavigateToPageNumber(2)));
+                checks.Add(new("reader-missing-page", reader.TryNavigateToPageNumber(2) && reader.IsCurrentPageMissing && reader.PageLabel == "2 / 7"));
             }
             services.Settings.Sources[1].Enabled = false;
             hits = await services.ImageSearch.SearchAsync(query, null, galleries, CancellationToken.None);

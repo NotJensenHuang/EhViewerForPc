@@ -10,18 +10,14 @@ namespace EhViewerForPc.ViewModels;
 
 public enum OnlineFeedMode
 {
-    /// <summary>Browses watched tags from its own navigation section.</summary>
-    Subscription = 2,
-    /// <summary>Browses gallery rankings from its own navigation section.</summary>
-    Toplist = 3,
-    /// <summary>Front page with 首页 / 热门 / 关注 / 排行 tabs, plus the search bar.</summary>
+    /// <summary>Front page with 首页 / 热门 / 订阅 / 排行 tabs, plus the search bar.</summary>
     Front = 0,
     Favorites = 1,
 }
 
 /// <summary>
-/// The one online listing page: the front feeds (首页/热门/关注/排行) and the
-/// search results share the same card grid, paging stack and status bar.
+/// The one online listing page: the front feeds (首页/热门/订阅/排行) and the
+/// search results share the same virtualized card grid, continuation and status bar.
 /// Searching swaps the URL builder, not the page — so there is a single place
 /// to browse and to search.
 /// </summary>
@@ -30,7 +26,12 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
     private readonly AppServices _services;
     private readonly IOnlineHost _host;
     private readonly OnlineFeedMode _mode;
-    private readonly List<string> _visitedUrls = [];
+    private readonly HashSet<string> _loadedUrls = new(StringComparer.Ordinal);
+    private readonly HashSet<long> _loadedGids = [];
+    private bool _loadMoreFailed;
+    private int _emptyBatches;
+    private int _filteredCount;
+    private int _listRevision;
     private readonly List<FeedOption> _languages;
 
     private EhSearchRequest _searchRequest = new();
@@ -71,6 +72,8 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
             case OnlineFeedMode.Front:
                 Tabs.Add(new FeedOption("front", "首页"));
                 Tabs.Add(new FeedOption("popular", "热门"));
+                Tabs.Add(new FeedOption("watched", "订阅"));
+                Tabs.Add(new FeedOption("toplist", "排行"));
                 break;
             case OnlineFeedMode.Favorites:
                 for (int slot = 0; slot < 10; slot++)
@@ -100,7 +103,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
         ];
         _selectedLanguage = _languages[0];
 
-        _selectedSearchMode = SearchModes[_mode == OnlineFeedMode.Subscription ? 1 : 0];
+        _selectedSearchMode = SearchModes[IsSubscription ? 1 : 0];
         ReloadSearchHistory();
     }
 
@@ -139,7 +142,26 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
 
     public bool ShowHistoryPanel => HasHistory && _showHistory && ShowSearchBar;
 
-    public bool ShowToplistSelector => !_searchMode && _mode == OnlineFeedMode.Toplist && !ShowRankingOverview;
+    public bool IsSubscription => IsFront && _selectedTab?.Key == "watched";
+
+    public bool ShowToplistSelector => !_searchMode && IsRankings && !ShowRankingOverview;
+    public int ListRevision => _listRevision;
+    public bool LoadMoreFailed => _loadMoreFailed;
+    public bool AutoLoadPaused => _emptyBatches >= 3;
+    public bool CanAutoLoadMore => HasMore && !IsBusy && !LoadMoreFailed && !AutoLoadPaused && !ShowRankingOverview;
+    public string LoadMoreButtonLabel => LoadMoreFailed ? "重试加载" : "继续加载";
+    public bool ShowLoadMoreButton => HasMore && !IsBusy && (LoadMoreFailed || AutoLoadPaused);
+    public string LoadMoreText
+    {
+        get
+        {
+            if (IsBusy) return "正在加载…";
+            if (LoadMoreFailed) return "加载失败，可重试";
+            if (AutoLoadPaused) return "暂未找到可显示的作品";
+            if (HasMore) return "向下滚动加载更多";
+            return Items.Count > 0 ? "已加载全部作品" : string.Empty;
+        }
+    }
 
     /// <summary>Keyword searched inside the current favourite slot.</summary>
     public string FavoriteQuery
@@ -239,25 +261,38 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
     public FeedOption? SelectedTab
     {
         get => _selectedTab;
-        set
+        set { if (value is not null) SelectTab(value, load: true); }
+    }
+
+    private void SelectTab(FeedOption value, bool load)
+    {
+        if (ReferenceEquals(value, _selectedTab)) return;
+        if (_selectedTab is not null) _selectedTab.IsActive = false;
+        _selectedTab = value;
+        value.IsActive = true;
+        _showRankingOverview = true;
+        SelectedSearchMode = SearchModes[IsSubscription ? 1 : 0];
+
+        if (IsFavorites)
         {
-            if (value is null || ReferenceEquals(value, _selectedTab)) return;
-            if (_selectedTab is not null) _selectedTab.IsActive = false;
-            _selectedTab = value;
-            value.IsActive = true;
-
-            if (IsFavorites)
-            {
-                _favoriteSlot = int.TryParse(value.Key, out int slot) ? slot : -1;
-            }
-
-            // Picking a feed tab leaves the search results behind.
-            SetSearchMode(false);
-
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ShowToplistSelector));
-            _ = LoadAsync(reset: true);
+            _favoriteSlot = int.TryParse(value.Key, out int slot) ? slot : -1;
         }
+
+        // Picking a feed tab leaves the search results behind.
+        SetSearchMode(false);
+
+        OnPropertyChanged(nameof(SelectedTab));
+        OnPropertyChanged(nameof(ShowToplistSelector));
+        OnPropertyChanged(nameof(IsSubscription));
+        OnPropertyChanged(nameof(IsRankings));
+        OnPropertyChanged(nameof(ShowRankingOverview));
+        if (load) _ = LoadAsync(reset: true);
+    }
+
+    private void RestoreFeedTab(EhSearchMode mode)
+    {
+        string key = mode switch { EhSearchMode.Subscription => "watched", EhSearchMode.Popular => "popular", EhSearchMode.Toplist => "toplist", _ => "front" };
+        if (Tabs.FirstOrDefault(t => t.Key == key) is { } tab) SelectTab(tab, load: false);
     }
 
     public bool IsBusy
@@ -269,22 +304,30 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
             {
                 OnPropertyChanged(nameof(IsIdle));
                 OnPropertyChanged(nameof(ShowEmpty));
-                OnPropertyChanged(nameof(CanGoBack));
+                NotifyLoadMoreState();
             }
         }
     }
 
     public bool IsIdle => !_busy;
 
-    public bool ShowEmpty => !_busy && (ShowRankingOverview ? RankingSections.Count == 0 : Items.Count == 0);
+    public bool ShowEmpty => !_busy && (ShowRankingOverview ? RankingSections.Count == 0 : Items.Count == 0 && !HasMore);
 
     public bool HasMore
     {
         get => _hasMore;
-        private set => SetProperty(ref _hasMore, value);
+        private set { if (SetProperty(ref _hasMore, value)) NotifyLoadMoreState(); }
     }
 
-    public bool CanGoBack => !_busy && !ShowRankingOverview && _urlIndex > 0;
+    private void NotifyLoadMoreState()
+    {
+        OnPropertyChanged(nameof(LoadMoreFailed));
+        OnPropertyChanged(nameof(AutoLoadPaused));
+        OnPropertyChanged(nameof(CanAutoLoadMore));
+        OnPropertyChanged(nameof(ShowLoadMoreButton));
+        OnPropertyChanged(nameof(LoadMoreText));
+        OnPropertyChanged(nameof(LoadMoreButtonLabel));
+    }
 
     public string StatusText
     {
@@ -423,7 +466,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
         SearchTags = true;
         SearchDescription = false;
         OnlyTorrents = false;
-        SelectedSearchMode = SearchModes[_mode == OnlineFeedMode.Subscription ? 1 : 0];
+        SelectedSearchMode = SearchModes[IsSubscription ? 1 : 0];
         SearchTorrentNames = OnlyExpunged = SearchLowPowerTags = SearchDownvotedTags = false;
         DisableLanguageFilter = DisableUploaderFilter = DisableTagFilter = false;
         AdvancedEnabled = true; SelectedRating = RatingOptions[0];
@@ -432,14 +475,31 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
         await Task.CompletedTask;
     }
 
+    private void ResetList()
+    {
+        _loadedUrls.Clear();
+        _loadedGids.Clear();
+        Items.Clear();
+        _urlIndex = 0;
+        _nextUrl = string.Empty;
+        _loadMoreFailed = false;
+        _emptyBatches = 0;
+        _filteredCount = 0;
+        HasMore = false;
+        _listRevision++;
+        OnPropertyChanged(nameof(ListRevision));
+        NotifyLoadMoreState();
+    }
+
     public async Task LoadAsync(bool reset)
     {
-        if (_busy && !reset) return;
+        if (_disposed || (!reset && (_busy || !HasMore))) return;
+        if (reset) ResetList();
         if (ShowRankingOverview) { await LoadRankingOverviewAsync(); return; }
         if (reset && _imageResults) { await SearchImageAsync(); return; }
         int target = reset ? 0 : _urlIndex + 1;
-        string url = reset ? BuildUrl(0) : _nextUrl.Length > 0 ? _nextUrl : BuildUrl(target);
-        if (reset) { _visitedUrls.Clear(); _urlIndex = 0; _nextUrl = string.Empty; HasMore = false; }
+        string url = reset ? BuildUrl(0) : _nextUrl;
+        if (url.Length == 0) return;
         await FetchListAsync(url, target, reset);
     }
 
@@ -448,62 +508,68 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
         int generation = ++_requestGeneration;
         _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = new CancellationTokenSource();
         CancellationToken token = _cancellation.Token;
-        IsBusy = true; StatusText = _searchMode ? "搜索中…" : "载入中…";
+        IsBusy = true;
+        StatusText = reset ? _searchMode ? "搜索中…" : "载入中…" : "正在加载更多…";
         try
         {
             var page = await _services.Online.GetListAsync(url, target, token).ConfigureAwait(true);
-            token.ThrowIfCancellationRequested(); if (generation != _requestGeneration) return;
-            _urlIndex = target; ApplyPage(page, url, reset);
+            token.ThrowIfCancellationRequested();
+            if (generation != _requestGeneration || _disposed) return;
+            _urlIndex = target;
+            ApplyPage(page, url, reset: false);
         }
         catch (OperationCanceledException)
-        { if (generation == _requestGeneration) StatusText = token.IsCancellationRequested ? "已取消" : "请求超时，请重试"; }
-        catch (Exception ex) when (ex is EhException or HttpRequestException)
         {
-            if (generation != _requestGeneration) return;
-            StatusText = ex.Message; if (reset) Items.Clear(); OnPropertyChanged(nameof(ShowEmpty));
+            if (generation != _requestGeneration || _disposed) return;
+            _loadMoreFailed = !reset;
+            StatusText = token.IsCancellationRequested ? "已取消，可继续加载" : "请求超时，请重试";
+        }
+        catch (Exception error)
+        {
+            if (generation != _requestGeneration || _disposed) return;
+            _loadMoreFailed = !reset;
+            StatusText = error.Message;
+            _services.Log.Warn("Online list: " + error.GetType().Name);
         }
         finally
         {
-            if (generation == _requestGeneration) { IsBusy = false; OnPropertyChanged(nameof(CanGoBack)); }
+            if (generation == _requestGeneration && !_disposed)
+            {
+                IsBusy = false;
+                OnPropertyChanged(nameof(ShowEmpty));
+                NotifyLoadMoreState();
+            }
         }
     }
 
     internal void ApplyPage(EhGalleryListPage page, string url, bool reset)
     {
         int filtered = 0;
-        Items.Clear();
-        if (reset)
-        {
-            _visitedUrls.Clear();
-            _visitedUrls.Add(url);
-            _urlIndex = 0;
-        }
-        else if (_visitedUrls.Count <= _urlIndex) _visitedUrls.Add(url);
-        else if (_visitedUrls[_urlIndex] != url)
-        {
-            _visitedUrls[_urlIndex] = url;
-            _visitedUrls.RemoveRange(_urlIndex + 1, _visitedUrls.Count - _urlIndex - 1);
-        }
-
+        if (reset) ResetList();
+        _loadedUrls.Add(url);
+        int before = Items.Count;
         foreach (EhGallerySummary summary in page.Items)
         {
+            if (!_loadedGids.Add(summary.Gid)) continue;
             if (!EhFilter.IsVisible(summary, _services.Settings.Online.Filters))
             {
                 filtered++;
                 continue;
             }
-
             Items.Add(CreateItem(summary));
         }
-
+        _emptyBatches = Items.Count == before ? _emptyBatches + 1 : 0;
+        _filteredCount += filtered;
+        _loadMoreFailed = false;
         _nextUrl = page.NextUrl;
-        HasMore = page.HasMore;
-        PageLabel = $"第 {_urlIndex + 1} 页";
+        HasMore = page.HasMore && _nextUrl.Length > 0 && !_loadedUrls.Contains(_nextUrl);
+        PageLabel = $"已加载 {Items.Count} 项";
         StatusText = page.Items.Count == 0
             ? page.StatusMessage ?? EmptyText
-            : page.StatusMessage ?? StatusTextFor(page.Items.Count, filtered);
+            : page.StatusMessage ?? StatusTextFor(Items.Count, _filteredCount);
         OnPropertyChanged(nameof(ShowEmpty));
         IsBusy = false;
+        NotifyLoadMoreState();
     }
 
     /// <summary>Reloads the first page; used after sign-in or a site switch.</summary>
@@ -523,20 +589,12 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task NextPageAsync()
+    private async Task LoadMoreAsync()
     {
-        if (!HasMore || _busy) return;
+        if (_disposed || _busy || !HasMore || ShowRankingOverview) return;
+        if (AutoLoadPaused) _emptyBatches = 0;
+        _loadMoreFailed = false;
         await LoadAsync(reset: false);
-    }
-
-    [RelayCommand]
-    private async Task PreviousPageAsync()
-    {
-        if (_busy || _urlIndex <= 0) return;
-        int target = _urlIndex - 1;
-        if (_imageResults && target == 0 && _imageFirstPage is { } first)
-        { _urlIndex = 0; ApplyPage(first, _visitedUrls[0], reset: false); return; }
-        await FetchListAsync(_visitedUrls[target], target, reset: false);
     }
 
     [RelayCommand]
@@ -619,7 +677,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
     }
 
     private static string StatusTextFor(int total, int filtered) =>
-        filtered > 0 ? $"本页 {total} 项 · 已过滤 {filtered} 项" : $"本页 {total} 项";
+        filtered > 0 ? $"已加载 {total} 项 · 已过滤 {filtered} 项" : $"已加载 {total} 项";
 
     /// <summary>Re-reads custom favourite slot names after settings were saved.</summary>
     public void RefreshFavoriteNames()
@@ -703,8 +761,6 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
 
         return _mode switch
         {
-            OnlineFeedMode.Subscription => EhUrls.Watched(site, page),
-            OnlineFeedMode.Toplist => EhUrls.Toplist(site, _toplistIndex, page),
             OnlineFeedMode.Favorites => EhUrls.Favorites(
                 site,
                 _favoriteSlot,

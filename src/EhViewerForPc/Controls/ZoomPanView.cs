@@ -269,6 +269,14 @@ public sealed class ZoomPanView : Control
     private void BeginLoad(bool resetView)
     {
         IImageRequest? request = Request;
+        if (request is null or NullImageRequest)
+        {
+            _failed = false;
+            _error = null;
+            _status = default;
+            InvalidateVisual();
+            return;
+        }
         if (!_attached || !IsEffectivelyVisible || request is null || Bounds.Width < 8 || Bounds.Height < 8)
         {
             InvalidateVisual();

@@ -53,6 +53,7 @@ public static class OnlineProbeService
                     ("title", i.Title),
                     ("category", i.Category),
                     ("pages", i.Pages),
+                    ("rating", i.Rating),
                     ("posted", i.Posted),
                     ("tags", i.Tags.Count),
                     ("tagSample", i.Tags.Take(4).ToArray()),

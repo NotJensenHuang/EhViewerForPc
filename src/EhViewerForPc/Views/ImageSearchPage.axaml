@@ -9,15 +9,16 @@
   <Grid RowDefinitions="Auto,*,Auto" Background="Transparent">
     <Border Classes="page-header">
       <controls:AdaptiveGrid ColumnDefinitions="*,Auto" Breakpoint="740" ColumnSpacing="12" RowSpacing="8">
-        <StackPanel Spacing="4">
-          <TextBlock Text="{Binding Coverage}" FontWeight="SemiBold" />
-          <TextBlock Classes="caption" Text="搜索已建立索引的本地页图" />
+        <StackPanel Spacing="4" VerticalAlignment="Center">
+          <SelectableTextBlock Text="{Binding Coverage}" FontWeight="SemiBold" />
+          <SelectableTextBlock Classes="caption" Text="搜索已建立索引的本地页图" />
         </StackPanel>
-        <WrapPanel Grid.Column="1" Orientation="Horizontal">
+        <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
           <Button Content="索引设置" Command="{Binding OpenSettingsCommand}" Margin="0,0,8,0" AutomationProperties.AutomationId="ImageSearch.Settings" />
-          <Button Content="建立 / 更新索引" Command="{Binding BuildIndexCommand}" IsEnabled="{Binding CanBuild}" AutomationProperties.AutomationId="ImageSearch.Build" Margin="0,0,8,6" />
-          <Button Content="重新提取重建" Command="{Binding RebuildIndexCommand}" IsEnabled="{Binding CanBuild}" Margin="0,0,8,6" />
-          <Button Content="清理旧索引" Command="{Binding CleanupIndexCommand}" IsEnabled="{Binding CanBuild}" Margin="0,0,0,6" />
+          <Button Content="{Binding IndexActionLabel}" Command="{Binding BuildIndexCommand}" IsEnabled="{Binding CanBuild}" AutomationProperties.AutomationId="ImageSearch.Build" Margin="0,0,8,0" />
+          <Button Content="重新提取重建" Command="{Binding RebuildIndexCommand}" IsEnabled="{Binding CanBuild}" Margin="0,0,8,0" />
+          <Button Content="清理旧索引" Command="{Binding CleanupIndexCommand}" IsEnabled="{Binding CanBuild}" />
+          <Button Content="取消建库" Command="{Binding CancelCommand}" IsVisible="{Binding IsBuilding}" Margin="8,0,0,0" />
         </WrapPanel>
       </controls:AdaptiveGrid>
     </Border>
@@ -77,7 +78,7 @@
     <Border Grid.Row="2" Classes="statusbar">
       <StackPanel Spacing="6">
         <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" />
-        <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Classes="caption" AutomationProperties.AutomationId="ImageSearch.Status" />
+        <SelectableTextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Classes="caption" AutomationProperties.AutomationId="ImageSearch.Status" />
       </StackPanel>
     </Border>
   </Grid>

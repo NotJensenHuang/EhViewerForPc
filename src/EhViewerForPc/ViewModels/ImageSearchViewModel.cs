@@ -48,6 +48,7 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int _indexedPages;
     [ObservableProperty] private int _processedPages;
     [ObservableProperty] private int _totalPages;
+    [ObservableProperty] private bool _hasPendingBuild;
     [ObservableProperty] private Bitmap? _queryPreview;
     [ObservableProperty] private string _inputName = "选择、拖入或粘贴图片";
     [ObservableProperty] private int _cropX;
@@ -58,7 +59,36 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     private int _imageWidth, _imageHeight;
 
     /// <summary>Initializes a page using a UI-thread snapshot provider.</summary>
-    public ImageSearchViewModel(AppServices services, Func<GalleryInfo[]> snapshot) { _services = services; _snapshot = snapshot; }
+    public ImageSearchViewModel(AppServices services, Func<GalleryInfo[]> snapshot)
+    {
+        _services = services;
+        _snapshot = snapshot;
+        services.ImageSearch.BuildStateChanged += OnBuildStateChanged;
+        ApplyBuildState();
+    }
+
+    private void OnBuildStateChanged(object? sender, EventArgs e)
+    {
+        bool wasBuilding = IsBuilding;
+        ApplyBuildState();
+        if (!_disposed && wasBuilding && !IsBuilding) _ = RefreshAsync();
+    }
+
+    private void ApplyBuildState()
+    {
+        if (_disposed) return;
+        bool wasBuilding = IsBuilding;
+        IsBuilding = _services.ImageSearch.IsBuilding;
+        if (IsBuilding || wasBuilding) IsBusy = IsBuilding;
+        if (_services.ImageSearch.BuildStatus is { } status)
+        {
+            StatusText = status.Message;
+            ProcessedPages = status.Processed;
+            TotalPages = status.Total;
+            if (!IsBuilding) HasPendingBuild = status.CanResume;
+        }
+        NotifyAvailability();
+    }
     /// <summary>Raised to open the existing settings section.</summary>
     public event EventHandler? SettingsRequested;
     /// <summary>Raised to read a particular source copy and original page number.</summary>
@@ -83,6 +113,8 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     public int ImageHeight => _imageHeight;
     /// <summary>Gets the short index coverage label.</summary>
     public string Coverage => HasIndex ? $"已索引 {IndexedPages:N0} 页" : "尚未建立图片索引";
+    public string IndexActionLabel => HasPendingBuild ? "继续建立索引" : "建立 / 更新索引";
+    partial void OnHasPendingBuildChanged(bool value) => OnPropertyChanged(nameof(IndexActionLabel));
 
     partial void OnIsBusyChanged(bool value) => NotifyAvailability();
     partial void OnHasIndexChanged(bool value) => NotifyAvailability();
@@ -96,12 +128,18 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     /// <summary>Refreshes settings and index state when a retained Frame page is reactivated.</summary>
     public async Task RefreshAsync()
     {
-        if (_disposed || IsBusy) return;
+        if (_disposed) return;
+        if (_services.ImageSearch.IsBuilding) { ApplyBuildState(); return; }
+        if (IsBuilding) ApplyBuildState();
+        if (IsBusy) return;
         try
         {
             var status = await _services.ImageSearch.GetStatusAsync(_lifetime.Token);
             if (_disposed) return;
-            StatusText = status.Message; IndexedPages = status.Indexed; HasIndex = status.Indexed > 0; NotifyAvailability();
+            if (_services.ImageSearch.IsBuilding) { ApplyBuildState(); return; }
+            StatusText = Enabled ? _services.ImageSearch.BuildStatus?.Message ?? status.Message : status.Message;
+            IndexedPages = status.Indexed; HasIndex = status.Indexed > 0; NotifyAvailability();
+            HasPendingBuild = status.CanResume;
         }
         catch (OperationCanceledException) { }
         catch (Exception error) { SetError(error); }
@@ -161,18 +199,22 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
         try
         {
             var galleries = _snapshot().Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
-            var progress = new Progress<LocalImageSearchStatus>(p =>
-            {
-                if (_disposed || !IsBuilding) return;
-                StatusText = p.Message; ProcessedPages = p.Processed; TotalPages = p.Total;
-            });
-            var status = await _services.ImageSearch.BuildAsync(galleries, progress, _lifetime.Token, rebuild);
+            // 建库归应用服务持有；离开或释放页面只取消查询，不取消索引任务。
+            var status = await _services.ImageSearch.BuildAsync(galleries, null, CancellationToken.None, rebuild);
             if (_disposed) return;
             StatusText = status.Message; IndexedPages = status.Indexed; HasIndex = status.Indexed > 0;
         }
         catch (OperationCanceledException) { if (!_disposed) StatusText = "已取消建库，原有索引已保留"; }
         catch (Exception error) { SetError(error); }
-        finally { IsBuilding = IsBusy = false; }
+        finally
+        {
+            if (!_disposed)
+            {
+                IsBuilding = IsBusy = false;
+                HasPendingBuild = _services.ImageSearch.BuildStatus?.CanResume ?? false;
+                NotifyAvailability();
+            }
+        }
     }
 
     [RelayCommand]
@@ -180,7 +222,7 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     {
         if (!CanBuild) return;
         IsBusy = true;
-        try { int removed = await _services.ImageSearch.CleanupAsync(_lifetime.Token); if (!_disposed) StatusText = $"已清理 {removed} 个旧索引，当前与上一个索引已保留"; }
+        try { int removed = await _services.ImageSearch.CleanupAsync(_lifetime.Token); if (!_disposed) StatusText = $"已清理 {removed} 个旧索引，保留当前索引、未完成任务和在用数据"; }
         catch (OperationCanceledException) { }
         catch (Exception error) { SetError(error); }
         finally { IsBusy = false; }
@@ -227,5 +269,14 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     }
     private void SetError(Exception error) { if (!_disposed) { StatusText = error is ArgumentOutOfRangeException ? "裁剪区域无效，请重新选择" : error.Message; _services.Log.Warn("Image search: " + error.GetType().Name); } }
     /// <summary>Cancels late queries and releases the owned preview when this Frame document is removed.</summary>
-    public void Dispose() { if (_disposed) return; _disposed = true; _lifetime.Cancel(); CancelQuery(); QueryPreview?.Dispose(); QueryPreview = null; }
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _services.ImageSearch.BuildStateChanged -= OnBuildStateChanged;
+        _lifetime.Cancel();
+        CancelQuery();
+        QueryPreview?.Dispose();
+        QueryPreview = null;
+    }
 }

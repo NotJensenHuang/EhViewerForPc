@@ -12,11 +12,13 @@ public sealed class DiskInvertedIndex
     private readonly record struct Bucket(long Offset, long Count, long Length);
     private readonly Bucket[] _buckets;
     private readonly string _path;
+    private readonly bool _allowLinkedPublication;
 
-    private DiskInvertedIndex(string path, string profileId, string quantizerHash)
+    private DiskInvertedIndex(string path, string profileId, string quantizerHash, bool allowLinkedPublication)
     {
         _path = path;
-        using var reader = CheckedFile.Open(path);
+        _allowLinkedPublication = allowLinkedPublication;
+        using var reader = CheckedFile.Open(path, allowLinkedPublication);
         if (reader.ReadUInt64() != 0x3146564943524d49UL || CheckedFile.ReadShortString(reader) != profileId || CheckedFile.ReadShortString(reader) != quantizerHash)
             throw new InvalidDataException("IVF format, profile or quantizer mismatch; rebuild required.");
         int count = reader.ReadInt32();
@@ -43,7 +45,7 @@ public sealed class DiskInvertedIndex
     public long VectorCount { get; }
 
     /// <summary>Validates and opens a read-only index.</summary>
-    public static DiskInvertedIndex Open(string path, string profileId, string quantizerHash) => new(path, profileId, quantizerHash);
+    public static DiskInvertedIndex Open(string path, string profileId, string quantizerHash, bool allowLinkedPublication = false) => new(path, profileId, quantizerHash, allowLinkedPublication);
 
     /// <summary>Computes a quantizer file's identity.</summary>
     public static string HashQuantizer(string path) { using var file = File.OpenRead(path); return Convert.ToHexStringLower(SHA256.HashData(file)); }
@@ -95,7 +97,7 @@ public sealed class DiskInvertedIndex
     public IEnumerable<IndexVector> ReadBucket(int bucket)
     {
         var info = _buckets[bucket]; if (info.Count == 0) yield break;
-        using var file = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.RandomAccess);
+        using var file = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read | (_allowLinkedPublication ? FileShare.Delete : 0), 4096, FileOptions.RandomAccess);
         file.Position = info.Offset;
         using var limited = new LimitedStream(file, info.Length);
         using var deflate = new DeflateStream(limited, CompressionMode.Decompress);

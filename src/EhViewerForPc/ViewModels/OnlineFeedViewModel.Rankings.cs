@@ -9,8 +9,8 @@ public sealed partial class OnlineFeedViewModel
     private IReadOnlyList<EhRankingKind> _rankingKinds = [];
     private FeedOption? _selectedRankingKind;
     private bool _showRankingOverview = true;
-    /// <summary>Gets whether this is the dedicated ranking navigation section.</summary>
-    public bool IsRankings => _mode == OnlineFeedMode.Toplist;
+    /// <summary>Gets whether the online browse page has selected its ranking tab.</summary>
+    public bool IsRankings => IsFront && _selectedTab?.Key == "toplist";
     /// <summary>Gets whether the upstream ranking overview is displayed.</summary>
     public bool ShowRankingOverview => IsRankings && _showRankingOverview && !_searchMode;
     /// <summary>Gets the seven leaderboard kinds supported by the upstream overview.</summary>
@@ -26,7 +26,7 @@ public sealed partial class OnlineFeedViewModel
     [RelayCommand] private async Task ShowRankingHomeAsync()
     {
         _showRankingOverview = true; SetSearchMode(false);
-        _visitedUrls.Clear(); _urlIndex = 0; _nextUrl = string.Empty; HasMore = false;
+        ResetList();
         OnPropertyChanged(nameof(ShowRankingOverview)); OnPropertyChanged(nameof(ShowToplistSelector));
         await LoadAsync(reset: true);
     }

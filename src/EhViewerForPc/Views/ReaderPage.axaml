@@ -23,6 +23,10 @@
                            MaxMegapixels="{Binding MaxMegapixels}"
                            MaxDimension="{Binding MaxDimension}"
                            PageTurnRequested="OnPageTurnRequested" />
+      <SelectableTextBlock Text="{Binding MissingPageText}" IsVisible="{Binding ShowSingleMissingPage}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"
+                           Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
+                           AutomationProperties.AutomationId="Reader.MissingPage" />
 
       <ScrollViewer x:Name="ContinuousScroll"
                     IsVisible="{Binding IsContinuousMode}"
@@ -38,7 +42,12 @@
             <DataTemplate x:DataType="vm:ContinuousPageItem">
               <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
                       HorizontalAlignment="Center" Background="{DynamicResource AppBgAltBrush}">
-                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" />
+                <Grid>
+                  <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
+                  <SelectableTextBlock Text="{Binding MissingPageText}" IsVisible="{Binding IsMissing}"
+                                       Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
               </Border>
             </DataTemplate>
           </ir:ItemsRepeater.ItemTemplate>
@@ -60,7 +69,12 @@
             <DataTemplate x:DataType="vm:ContinuousPageItem">
               <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
                       Background="{DynamicResource AppBgAltBrush}">
-                <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" />
+                <Grid>
+                  <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
+                  <SelectableTextBlock Text="{Binding MissingPageText}" IsVisible="{Binding IsMissing}"
+                                       Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                </Grid>
               </Border>
             </DataTemplate>
           </ir:ItemsRepeater.ItemTemplate>

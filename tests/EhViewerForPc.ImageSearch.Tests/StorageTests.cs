@@ -3,6 +3,61 @@ namespace EhViewerForPc.ImageSearch.Tests;
 public sealed class StorageTests
 {
     [Fact]
+    public void LinkedSnapshotPublishesIndependentlyWhileOriginalBucketIsBeingRead()
+    {
+        using var scope = new TestDirectory();
+        string original = scope.File("old"), next = scope.File("next");
+        using (var database = new ImageDatabase(original, writable: true))
+        {
+            database.Add("old.png", Blake3.Hash([1]), AlgorithmTests.Descriptors(90, 1));
+            ImageSearchEngine.Train(database, 1, 1);
+            ImageSearchEngine.Build(database);
+        }
+        using (var source = new ImageDatabase(original)) source.CopySnapshotTo(next, shareImmutableFiles: true);
+        var index = DiskInvertedIndex.Open(Path.Combine(original, "invlists.bin"), new FeatureProfile().Id,
+            DiskInvertedIndex.HashQuantizer(Path.Combine(original, "quantizer.bin")), allowLinkedPublication: true);
+        using var reading = index.ReadBucket(0).GetEnumerator();
+        Assert.True(reading.MoveNext());
+        using (var database = new ImageDatabase(next, writable: true))
+        {
+            database.Add("new.png", Blake3.Hash([2]), AlgorithmTests.Descriptors(90, 2));
+            Assert.Equal(2, ImageSearchEngine.Build(database).IndexedImages);
+        }
+        int oldRecords = 1;
+        while (reading.MoveNext()) oldRecords++;
+        Assert.Equal(90, oldRecords);
+        using var unchanged = new ImageDatabase(original);
+        Assert.Equal(1, new ImageSearchEngine(unchanged).IndexedImages);
+    }
+
+    [Fact]
+    public void RemovedContentKeepsStableIdsAndCanBeReintroducedAfterSharedCachePruning()
+    {
+        using var scope = new TestDirectory();
+        string shared = scope.File("shared.db");
+        using var database = new ImageDatabase(scope.File("backend"), writable: true);
+        database.UseSharedFeatureCache(shared);
+        var original = AlgorithmTests.Descriptors(90, 1);
+        var removed = AlgorithmTests.Descriptors(90, 2);
+        database.Add("first.png", Blake3.Hash([1]), original);
+        database.Add("removed.png", Blake3.Hash([2]), removed);
+        ImageSearchEngine.Train(database, 2, 2);
+        ImageSearchEngine.Build(database);
+        long removedId = database.ReadCached().Last().ImageId;
+        Assert.Equal(1, database.RetainAliases(new HashSet<string> { "first.png" }));
+        Assert.Equal(1, ImageSearchEngine.Build(database, allowedImageIds: database.AliasedImageIds()).IndexedImages);
+        using (var cache = new SharedFeatureCache(shared))
+            Assert.Equal(1, cache.Prune(database.ReferencedFeatureHashes().Select(hash => (database.Profile.Id, hash))));
+        database.Add("new.png", Blake3.Hash([3]), AlgorithmTests.Descriptors(90, 3));
+        Assert.True(database.ReadCached().Last().ImageId > removedId);
+        database.Add("restored.png", Blake3.Hash([2]), removed);
+        Assert.True(database.HasPendingImages);
+        Assert.Equal(3, ImageSearchEngine.Build(database, allowedImageIds: database.AliasedImageIds()).IndexedImages);
+        Assert.Equal("restored.png", new ImageSearchEngine(database).SearchDescriptors(removed, new() { NProbe = 2 })[0].Aliases[0]);
+        Assert.False(database.HasPendingImages);
+    }
+
+    [Fact]
     public void IncrementalSnapshotPreservesOriginalAndAddsOnlyNewVectors()
     {
         using var scope = new TestDirectory(); string original = scope.File("old"), next = scope.File("next");

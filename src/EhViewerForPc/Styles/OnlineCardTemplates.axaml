@@ -15,7 +15,7 @@
           <MenuItem Header="搜索该 GID" Command="{Binding SearchGidCommand}" />
         </ContextMenu>
       </Button.ContextMenu>
-      <Grid RowDefinitions="266,Auto,*" Height="352">
+      <Grid RowDefinitions="258,Auto,24,*" Height="352">
         <Border CornerRadius="8" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}">
           <Grid>
             <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="UniformToFill" />
@@ -32,11 +32,6 @@
               <TextBlock Text="♥" FontSize="11" Foreground="#FF8092" />
             </Border>
 
-            <Border HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8"
-                    Background="#B3000000" CornerRadius="6" Padding="7,2"
-                    IsVisible="{Binding HasRating}">
-              <TextBlock Text="{Binding RatingText}" FontSize="10" Foreground="#F2C46D" />
-            </Border>
 
             <Border Classes="language-badge" IsVisible="{Binding HasLanguage}">
               <TextBlock Classes="language-badge-text" Text="{Binding LanguageText}" />
@@ -45,9 +40,18 @@
         </Border>
 
         <TextBlock Grid.Row="1" Classes="title" Text="{Binding Title}" TextWrapping="Wrap"
-                   MaxLines="2" Height="40" Margin="0,9,0,0" />
+                   MaxLines="2" Height="40" Margin="0,8,0,0" />
 
-        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Bottom">
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="6" VerticalAlignment="Center">
+          <TextBlock Text="{Binding RatingLabel}" FontSize="12" Foreground="{DynamicResource AppTextBrush}"
+                     VerticalAlignment="Center" AutomationProperties.AutomationId="Online.Rating" />
+          <Border Grid.Column="1" Background="{DynamicResource AppLocalBadgeBgBrush}" CornerRadius="4" Padding="6,2"
+                  IsVisible="{Binding IsInLocalLibrary}" AutomationProperties.AutomationId="Online.LocalBadge">
+            <TextBlock Text="{Binding LocalLibraryLabel}" FontSize="12" FontWeight="SemiBold"
+                       Foreground="{DynamicResource AppLocalBadgeTextBrush}" />
+          </Border>
+        </Grid>
+        <Grid Grid.Row="3" ColumnDefinitions="*,Auto" VerticalAlignment="Bottom">
           <TextBlock Classes="caption" Text="{Binding MetaText}" TextTrimming="CharacterEllipsis" />
           <TextBlock Grid.Column="1" Classes="caption" Text="{Binding ProgressText}"
                      Foreground="{DynamicResource AppAccentBrush}" IsVisible="{Binding HasProgress}" />

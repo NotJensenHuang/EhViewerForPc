@@ -49,8 +49,25 @@ public sealed class LocalReaderSource : IReaderSource
         services.Works.Upsert(new WorkRecord { WorkId = gallery.WorkId, Gid = gallery.Gid, Token = gallery.Token,
             Title = gallery.DisplayTitle, PageCount = gallery.ExpectedPages ?? gallery.PageCount });
 
-        IReadOnlyList<GalleryPage> pages = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError).Pages;
+        PageScanResult scan = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError);
+        // 文件扫描只返回实际文件；阅读序列按原始页号补齐，避免缺页改变进度与总页数。
+        int count = Math.Max(gallery.ExpectedPages ?? 0, Math.Max(gallery.MaxPageNumber, scan.MaxPageNumber));
+        var pages = new GalleryPage[count];
+        int present = 0;
+        for (int i = 0; i < count; i++)
+        {
+            GalleryPage? page = present < scan.Pages.Count && scan.Pages[present].Number == i + 1
+                ? scan.Pages[present++] : null;
+            pages[i] = new GalleryPage
+            {
+                Number = i + 1,
+                DisplayIndex = i,
+                Candidates = page?.Candidates ?? [],
+                State = page?.State ?? PageState.Empty,
+            };
+        }
         Pages = pages;
+        IsComplete = !gallery.IsIncomplete && !scan.IsIncomplete && present == count;
         if (scanError is not null)
         {
             services.Log.Warn("Reader page scan failed: " + gallery.FolderPath + " | " + scanError);
@@ -65,14 +82,15 @@ public sealed class LocalReaderSource : IReaderSource
     public string DebugInfo => $"{_gallery.StableId} · {Pages.Count} 页 · {_gallery.ExtensionSummary}";
     public IReadOnlyList<GalleryPage> Pages { get; }
     public int ExpectedPageCount => Math.Max(_gallery.ExpectedPages ?? 0, Pages.Count);
-    public bool IsComplete => !_gallery.IsIncomplete;
+    public bool IsComplete { get; }
 
     public string MissingSummary => _gallery.MissingRanges.Count == 0
         ? string.Empty
         : "缺页 " + string.Join(", ", _gallery.MissingRanges.Select(r => r.ToString()));
 
     public IImageRequest CreateRequest(int index, bool refresh = false) =>
-        new PageImageRequest(Pages[index].Candidates, _services.Images);
+        Pages[index].Candidates.Count == 0 ? NullImageRequest.Instance
+            : new PageImageRequest(Pages[index].Candidates, _services.Images);
 
     public Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(
         int focusPageNumber,

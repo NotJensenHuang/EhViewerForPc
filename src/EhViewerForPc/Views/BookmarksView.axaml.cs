@@ -7,10 +7,10 @@ using EhViewerForPc.ViewModels;
 namespace EhViewerForPc.Views;
 
 /// <summary>Provides the formal bookmark manager and system file transfer pickers.</summary>
-public partial class BookmarksPage : UserControl
+public partial class BookmarksView : UserControl
 {
     /// <summary>Initializes the bookmark management surface.</summary>
-    public BookmarksPage() => InitializeComponent();
+    public BookmarksView() => InitializeComponent();
     private BookmarksViewModel? ViewModel => DataContext as BookmarksViewModel;
     private async void OnImport(object? sender, RoutedEventArgs e)
     {

@@ -18,6 +18,7 @@ public sealed class ImageDatabase : IDisposable
 {
     private readonly string _connectionString;
     private readonly FileStream? _writerLease;
+    private SharedFeatureCache? _sharedFeatures;
     private bool _disposed;
     private BinaryHnsw? _dHashGraph;
     private readonly List<long> _dHashIds = [];
@@ -85,6 +86,16 @@ public sealed class ImageDatabase : IDisposable
     /// <summary>Gets the number of images in the published index.</summary>
     public long IndexedCount { get { using var c = Open(); return (long)Scalar(c, "SELECT count(*) FROM vector_stats WHERE indexed=1")!; } }
 
+    /// <summary>Gets whether a currently referenced image still needs index publication.</summary>
+    public bool HasPendingImages
+    {
+        get
+        {
+            using var connection = Open();
+            return (long)Scalar(connection, "SELECT EXISTS(SELECT 1 FROM vector_stats s WHERE s.indexed=0 AND EXISTS(SELECT 1 FROM alias a WHERE a.image_id=s.image_id))")! != 0;
+        }
+    }
+
     internal SqliteConnection Open()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -131,6 +142,7 @@ public sealed class ImageDatabase : IDisposable
         }
         if (found is long existing)
         {
+            bool wasUnreferenced = (long)Scalar(c, "SELECT count(*) FROM alias WHERE image_id=$id", ("$id", existing))! == 0;
             long? aliasOwner = Scalar(c, "SELECT image_id FROM alias WHERE path=$path", ("$path", alias)) as long?;
             if (aliasOwner is not null && aliasOwner != existing) throw new InvalidDataException("Alias already belongs to different content.");
             if (overwrite) Execute(c, "DELETE FROM alias WHERE image_id=$id", tx, ("$id", existing));
@@ -139,8 +151,14 @@ public sealed class ImageDatabase : IDisposable
             if (exactDuplicate && count > minFeatures && Scalar(c, "SELECT image_id FROM vector WHERE image_id=$id", ("$id", existing)) is null)
             {
                 if (descriptors.Length != count) throw new InvalidDataException("Descriptor replay count differs from stored profile.");
-                Execute(c, "INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", tx, ("$id", existing), ("$bytes", EncodeDescriptors(descriptors)));
+                byte[] encoded = EncodeDescriptors(descriptors);
+                if (_sharedFeatures is null)
+                    Execute(c, "INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", tx, ("$id", existing), ("$bytes", encoded));
+                else
+                    _sharedFeatures.Store(Profile.Id, hash, encoded);
             }
+            if (wasUnreferenced && exactDuplicate && count > minFeatures)
+                Execute(c, "UPDATE vector_stats SET indexed=0,segment=NULL WHERE image_id=$id", tx, ("$id", existing));
             tx.Commit();
             return new(alias, count <= minFeatures ? "skipped_low_features" : "already_present", count);
         }
@@ -153,7 +171,11 @@ public sealed class ImageDatabase : IDisposable
         if (!skipped)
         {
             long first = long.Parse((string)Scalar(c, "SELECT value FROM meta WHERE key='nextVectorId'")!, System.Globalization.CultureInfo.InvariantCulture);
-            Execute(c, "INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", tx, ("$id", id), ("$bytes", EncodeDescriptors(descriptors)));
+            byte[] encoded = EncodeDescriptors(descriptors);
+            if (_sharedFeatures is null)
+                Execute(c, "INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", tx, ("$id", id), ("$bytes", encoded));
+            else
+                _sharedFeatures.Store(Profile.Id, hash, encoded);
             Execute(c, "INSERT INTO vector_stats(image_id,first_id,vector_count) VALUES($id,$first,$count)", tx,
                 ("$id", id), ("$first", first), ("$count", descriptors.Length));
             Execute(c, "UPDATE meta SET value=$next WHERE key='nextVectorId'", tx, ("$next", checked(first + descriptors.Length).ToString(System.Globalization.CultureInfo.InvariantCulture)));
@@ -170,12 +192,16 @@ public sealed class ImageDatabase : IDisposable
     public IEnumerable<CachedImage> ReadCached(bool unsegmentedOnly = false, int limit = int.MaxValue)
     {
         using var c = Open(); using var command = c.CreateCommand();
-        command.CommandText = "SELECT s.image_id,s.first_id,v.descriptors FROM vector_stats s JOIN vector v ON v.image_id=s.image_id "
-            + (unsegmentedOnly ? "WHERE s.segment IS NULL " : "") + "ORDER BY s.image_id LIMIT $limit";
+        command.CommandText = "SELECT s.image_id,s.first_id,v.descriptors,i.hash FROM vector_stats s JOIN image i ON i.id=s.image_id "
+            + (_sharedFeatures is null ? "JOIN" : "LEFT JOIN") + " vector v ON v.image_id=s.image_id "
+            + "WHERE EXISTS(SELECT 1 FROM alias a WHERE a.image_id=s.image_id) "
+            + (unsegmentedOnly ? "AND s.segment IS NULL " : "") + "ORDER BY s.image_id LIMIT $limit";
         command.Parameters.AddWithValue("$limit", limit); using var reader = command.ExecuteReader();
         while (reader.Read())
         {
-            byte[] bytes = (byte[])reader[2];
+            byte[] bytes = reader.IsDBNull(2)
+                ? _sharedFeatures?.Read(Profile.Id, (byte[])reader[3]) ?? throw new InvalidDataException("Missing shared descriptor cache.")
+                : (byte[])reader[2];
             if (bytes.Length % 32 != 0 || bytes.Length > 10064 * 32) throw new InvalidDataException("Invalid cached descriptors.");
             var descriptors = new BinaryDescriptor[bytes.Length / 32];
             for (int i = 0; i < descriptors.Length; i++) descriptors[i] = BinaryDescriptor.Read(bytes.AsSpan(i * 32, 32));
@@ -183,11 +209,87 @@ public sealed class ImageDatabase : IDisposable
         }
     }
 
+    /// <summary>显式启用单份内容缓存，迁移已提交的描述子后再删除本地副本。</summary>
+    public void UseSharedFeatureCache(string path, bool migrateExisting = false, CancellationToken cancellationToken = default)
+    {
+        RequireWriter();
+        _sharedFeatures?.Dispose();
+        _sharedFeatures = new SharedFeatureCache(path);
+        if (!migrateExisting) return;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var batch = new List<(long Id, byte[] Hash, byte[] Bytes)>();
+            using (var c = Open())
+            using (var command = c.CreateCommand())
+            {
+                command.CommandText = "SELECT v.image_id,i.hash,v.descriptors FROM vector v JOIN image i ON i.id=v.image_id LIMIT 32";
+                using var reader = command.ExecuteReader();
+                while (reader.Read()) batch.Add((reader.GetInt64(0), (byte[])reader[1], (byte[])reader[2]));
+            }
+            if (batch.Count == 0) break;
+            _sharedFeatures.StoreBatch(Profile.Id, batch.Select(item => (item.Hash, item.Bytes)));
+            using var connection = Open();
+            using var transaction = connection.BeginTransaction();
+            foreach (var item in batch) Execute(connection, "DELETE FROM vector WHERE image_id=$id", transaction, ("$id", item.Id));
+            transaction.Commit();
+        }
+        using var compact = Open();
+        if ((long)Scalar(compact, "PRAGMA freelist_count")! > 0) Execute(compact, "VACUUM");
+    }
+
+    /// <summary>复用相同提取配置的内容特征，不共享可变图片缓冲。</summary>
+    public BinaryDescriptor[]? ReadSharedFeatures(byte[] hash)
+    {
+        byte[]? bytes = _sharedFeatures?.Read(Profile.Id, hash);
+        if (bytes is null) return null;
+        if (bytes.Length % 32 != 0 || bytes.Length > 10064 * 32) throw new InvalidDataException("Invalid shared descriptors.");
+        var descriptors = new BinaryDescriptor[bytes.Length / 32];
+        for (int i = 0; i < descriptors.Length; i++) descriptors[i] = BinaryDescriptor.Read(bytes.AsSpan(i * 32, 32));
+        return descriptors;
+    }
+
+    /// <summary>回收未引用的别名和本地缓存，保留图像 / 向量 ID 墓碑，避免旧索引身份被复用。</summary>
+    public int RetainAliases(IReadOnlySet<string> live)
+    {
+        RequireWriter();
+        var removed = new List<string>();
+        using var connection = Open();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT path FROM alias";
+            using var reader = command.ExecuteReader();
+            while (reader.Read()) if (!live.Contains(reader.GetString(0))) removed.Add(reader.GetString(0));
+        }
+        using var transaction = connection.BeginTransaction();
+        foreach (string alias in removed) Execute(connection, "DELETE FROM alias WHERE path=$path", transaction, ("$path", alias));
+        Execute(connection, "DELETE FROM vector WHERE image_id NOT IN (SELECT image_id FROM alias)", transaction);
+        transaction.Commit();
+        return removed.Count;
+    }
+
+    public HashSet<long> AliasedImageIds()
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT image_id FROM alias";
+        using var reader = command.ExecuteReader(); var ids = new HashSet<long>();
+        while (reader.Read()) ids.Add(reader.GetInt64(0));
+        return ids;
+    }
+
+    public IEnumerable<byte[]> ReferencedFeatureHashes()
+    {
+        using var connection = Open(); using var command = connection.CreateCommand();
+        command.CommandText = "SELECT DISTINCT i.hash FROM image i JOIN alias a ON a.image_id=i.id";
+        using var reader = command.ExecuteReader();
+        while (reader.Read()) yield return (byte[])reader[0];
+    }
+
     /// <summary>Checks SQLite integrity without modifying the database.</summary>
     public void CheckIntegrity() { using var c = Open(); if ((string?)Scalar(c, "PRAGMA integrity_check") != "ok") throw new InvalidDataException("Database integrity check failed."); }
 
     /// <summary>Creates an independent SQLite snapshot and copies its immutable search files for a new generation.</summary>
-    public void CopySnapshotTo(string destination, CancellationToken cancellationToken = default)
+    public void CopySnapshotTo(string destination, CancellationToken cancellationToken = default, bool shareImmutableFiles = false)
     {
         destination = Path.GetFullPath(destination);
         if (Directory.Exists(destination) && Directory.EnumerateFileSystemEntries(destination).Any()) throw new InvalidOperationException("Snapshot destination must be empty.");
@@ -199,6 +301,7 @@ public sealed class ImageDatabase : IDisposable
         foreach (string name in new[] { "quantizer.bin", "invlists.bin" })
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (shareImmutableFiles && ImmutableFileLinks.TryCreate(Path.Combine(DirectoryPath, name), Path.Combine(destination, name))) continue;
             using var input = File.OpenRead(Path.Combine(DirectoryPath, name));
             using var output = new FileStream(Path.Combine(destination, name), FileMode.CreateNew, FileAccess.Write, FileShare.None);
             byte[] buffer = new byte[1024 * 1024]; int count;
@@ -216,5 +319,11 @@ public sealed class ImageDatabase : IDisposable
     }
 
     /// <summary>Releases only this database's writer lease.</summary>
-    public void Dispose() { if (_disposed) return; _disposed = true; _writerLease?.Dispose(); }
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { _sharedFeatures?.Dispose(); }
+        finally { _writerLease?.Dispose(); }
+    }
 }

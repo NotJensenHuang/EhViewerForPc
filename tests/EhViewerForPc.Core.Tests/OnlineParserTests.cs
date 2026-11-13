@@ -10,6 +10,20 @@ namespace EhViewerForPc.Core.Tests;
 /// </summary>
 public sealed class OnlineParserTests
 {
+    // 2026-11-13 匿名首页抓取：评分使用 ir 元素的 sprite 位移，首两种为真实片段。
+    [Theory]
+    [InlineData("background-position:-32px -21px;opacity:1", 2.5)]
+    [InlineData("background-position:-48px -1px;opacity:1", 2)]
+    [InlineData("background-position:0px -1px", 5)]
+    [InlineData("background-position: -16px -21px", 3.5)]
+    [InlineData("background-position:-80px -1px", 0)]
+    [InlineData("background-position:invalid", 0)]
+    public void ListRatingsComeFromTheSiteSprite(string style, double expected)
+    {
+        string html = ListRow.Replace("<td class=\"gl4c glfav\">", $"<td class=\"gl4c glfav\"><div class=\"ir\" style=\"{style}\"></div>");
+        Assert.Equal(expected, Assert.Single(EhParser.ParseGalleryList(html, EhSite.EHentai, 0).Items).Rating);
+    }
+
     private const string ListRow = """
         <table class="itg gld"><tr>
         <td class="gl1c glcat"><div class="glink">Doujinshi</div></td>

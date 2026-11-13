@@ -50,6 +50,7 @@ Online browsing is available on first launch. To use the local library, point "L
 - 📖 **Reader (shared by local and online content)**
   - Single page (fit page / width / height / original, 1x–8x zoom, dragging, wheel / click / keyboard paging), vertical continuous and horizontal continuous modes (the whole strip is reversed for RTL); double-page spreads keep their original aspect ratio
   - Progress is stored as "original page number + in-page offset"; online reading and local copies share one progress key, so reading continues after a download
+  - Local and downloaded copies retain missing-page slots and the original total; missing pages show a placeholder while later page numbers and progress stay aligned
   - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
   - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
   - The reader opens inside the main window only; immersive mode hides the sidebar and title, and Esc exits it
@@ -64,10 +65,11 @@ Online browsing is available on first launch. To use the local library, point "L
   - Changing the download root offers "use the new location for future downloads only" and "move existing downloads and update paths". A move pauses writes, verifies files and synchronises tasks, archives and library paths, with cancellation and interrupted-move recovery
 
 - 🌐 **Online Browsing (optional)**
-  - Front page, popular, subscriptions and rankings with pagination; search and browsing share one page, and `Ctrl+F` focuses the search box
+  - Front, popular, subscriptions and rankings are tabs in Online Browsing; gallery lists, searches and favourites append results near the bottom, retaining loaded items on failure with retry; search and browsing share one page, and `Ctrl+F` focuses the search box
   - Keyword and tag syntax, categories, title / tag / description / torrent-filename scopes, minimum rating, page ranges and language / uploader / tag exclusions; the 15 most recent searches are kept
   - Online image search supports similarity scanning, cover-only results and inclusion of removed galleries; the image is submitted only when "Upload and search" is clicked. Tag lookup queries the local tag database in Chinese or English and inserts canonical namespaced tags
-  - Bookmarks store complete search queries with editing, reordering and deletion; the app can import the original app's exported `.db` (read-only `QUICK_SEARCH` access) and JSON bookmarks, and export a `.db` the original app can read
+  - Bookmarks open in a dialog without navigating away or expanding advanced search; they store complete search queries with editing, reordering and deletion; the app can import the original app's exported `.db` (read-only `QUICK_SEARCH` access) and JSON bookmarks, and export a `.db` the original app can read
+  - Online cards show a separate rating row and an opaque local / incomplete-copy badge below the title, refreshing after library scans; local read buttons have an opaque backing
   - The detail page shows cover, title, category, page count, rating, size, language, uploader, tags and reading progress; clicking a tag searches for it, and the primary button switches to "Read locally" when a local copy exists
   - Detail actions: five-star rating, reading and posting comments, torrent list (save `.torrent` / copy link) and archive download (Original / Resampled); favouriting uses a confirmation dialog, and cancelling sends no request
   - List filters hide or exclusively show items by tag, title or uploader and apply to the front page, search results and favourites; tag translation data can be updated manually
@@ -75,6 +77,8 @@ Online browsing is available on first launch. To use the local library, point "L
 
 - 🔍 **Local Image Search (optional, off by default)**
   - Enable it under "Settings → Local Library" and save, then open it from the library toolbar and build the index manually; no index is created and no extra page scans run by default
+  - Index builds and updates continue in the application background after leaving or closing the search page; reopening shows progress and allows explicit cancellation. After application exit or interruption, the next launch resumes completed pages; explicit cancellation preserves progress until manually continued
+  - Features are stored once per content hash and extraction profile in `features.db`; incremental updates share immutable index files and reclaim unused snapshots after publication. Legacy `generations` are migrated without retaining duplicate feature databases
   - Accepts a file picker, drag and drop, clipboard images and rectangle cropping; results show the matched page, source copy and original page number, and "Read from this page" overrides history restoration while the query survives navigation back
   - The backend is pure C#, reusing SkiaSharp and SQLite with no additional runtime; a separate windowless host exists for build and verification. Source galleries are never written to
   - Synthetic sets, windowless flows and page-number navigation have automated coverage; recall on a real library and full-library search performance are not yet verified
@@ -241,11 +245,14 @@ dimensions/              Page dimension cache for continuous mode
 covers/                  Local cover cache
 thumbnails/              Online cover cache
 online-cache/            Online reader page cache
+image-search/            Local image index (configurable location, off by default)
 exports/                 Export directory
 logs/                    Runtime logs (no tokens or page content)
 ```
 
 The **download root** defaults to `Documents\EhViewerDownloads` (configurable) and is separate from the data directory. Imported libraries are opened with `FileAccess.Read` only and no write APIs are used; `--self-test` compares path, size and modification-time snapshots before and after.
+
+Inside the image-index directory, `features.db` stores deduplicated features and `build-job.json` stores a pending job. `generations/` contains published snapshots and work in progress; `current.json` and `current.previous.json` are primary / backup pointers to the same current snapshot after publication cleanup. Once publication completes and old queries finish, only the current snapshot remains; builds and merges still require temporary space. Recovery, updates or cleanup migrate legacy features before reclaiming unused directories. Do not manually delete an unfinished job directory.
 
 ## 🧪 Tests and Verification
 

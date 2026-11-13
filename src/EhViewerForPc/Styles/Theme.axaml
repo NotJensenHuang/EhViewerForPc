@@ -18,6 +18,8 @@
           <SolidColorBrush x:Key="AppAccentTextBrush" Color="#14090C" />
           <SolidColorBrush x:Key="AppAccentSoftBrush" Color="#2A1A20" />
           <SolidColorBrush x:Key="AppSuccessBrush" Color="#5AD1A0" />
+          <SolidColorBrush x:Key="AppLocalBadgeBgBrush" Color="#214F3C" />
+          <SolidColorBrush x:Key="AppLocalBadgeTextBrush" Color="#D7F5E5" />
           <SolidColorBrush x:Key="AppWarningBrush" Color="#F2C46D" />
           <SolidColorBrush x:Key="AppOverlayBrush" Color="#CC0B0D10" />
         </ResourceDictionary>
@@ -36,6 +38,8 @@
           <SolidColorBrush x:Key="AppAccentTextBrush" Color="#FFFFFF" />
           <SolidColorBrush x:Key="AppAccentSoftBrush" Color="#FDEDF0" />
           <SolidColorBrush x:Key="AppSuccessBrush" Color="#1F9D74" />
+          <SolidColorBrush x:Key="AppLocalBadgeBgBrush" Color="#E0F2E8" />
+          <SolidColorBrush x:Key="AppLocalBadgeTextBrush" Color="#174D37" />
           <SolidColorBrush x:Key="AppWarningBrush" Color="#B77A12" />
           <SolidColorBrush x:Key="AppOverlayBrush" Color="#CCFFFFFF" />
         </ResourceDictionary>

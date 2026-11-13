@@ -11,7 +11,6 @@ public sealed partial class OnlineFeedViewModel
 {
     private FeedOption? _selectedSearchMode;
     private bool _imageResults;
-    private EhGalleryListPage? _imageFirstPage;
     private bool _disposed;
     private byte[]? _imageJpeg;
     private SavedSearchEntry? _editingBookmark;
@@ -21,7 +20,7 @@ public sealed partial class OnlineFeedViewModel
     public bool IsEditingBookmark => _editingBookmark is not null;
     /// <summary>Loads a bookmark into the editor without issuing a network request.</summary>
     public void EditBookmark(SavedSearchEntry entry)
-    { _editingBookmark = entry; ApplyRequest(entry.ToRequest()); OnPropertyChanged(nameof(IsEditingBookmark)); }
+    { _editingBookmark = entry; RestoreFeedTab(entry.ToRequest().Mode); ApplyRequest(entry.ToRequest()); ShowAdvanced = true; OnPropertyChanged(nameof(IsEditingBookmark)); }
     [RelayCommand] private void SaveEditedBookmark()
     {
         if (_editingBookmark is not { } entry) return;
@@ -51,7 +50,7 @@ public sealed partial class OnlineFeedViewModel
 
     /// <summary>Raised when bookmark storage changes.</summary>
     public event EventHandler? BookmarksChanged;
-    /// <summary>Raised to open the bookmark navigation section.</summary>
+    /// <summary>Raised to open the bookmark dialog without navigating away.</summary>
     public event EventHandler? BookmarksRequested;
 
     /// <summary>Gets the four upstream normal-search modes.</summary>
@@ -67,18 +66,24 @@ public sealed partial class OnlineFeedViewModel
     public ObservableCollection<TagLookupItem> TagMatches { get; } = [];
     /// <summary>Gets whether the current list can be represented by an Android search bookmark.</summary>
     public bool CanBookmarkCurrent => !IsFavorites && !_imageResults;
-    /// <summary>Reloads bookmark chips after edits on the manager page.</summary>
+    /// <summary>Reloads bookmark chips after edits in the manager dialog.</summary>
     public void RefreshBookmarks() => ReloadSearchHistory();
     /// <summary>Gets whether ordinary query controls apply to this mode.</summary>
     public bool UsesNormalOptions => SelectedSearchMode?.Key is "Normal" or "Subscription" or "Filter";
     /// <summary>Gets whether the form is choosing a saved ranking period.</summary>
     public bool ShowSearchToplistSelector => SelectedSearchMode?.Key == "Toplist";
     /// <summary>Gets the actual list state saved when adding a bookmark.</summary>
-    public EhSearchRequest CurrentRequest => _searchMode ? _searchRequest.Clone() : _mode switch
+    public EhSearchRequest CurrentRequest => _searchMode ? _searchRequest.Clone() : new()
     {
-        OnlineFeedMode.Subscription => new() { Mode = EhSearchMode.Subscription, AdvancedEnabled = false },
-        OnlineFeedMode.Toplist => new() { Mode = EhSearchMode.Toplist, ToplistIndex = _toplistIndex, AdvancedEnabled = false },
-        _ => new() { Mode = _selectedTab?.Key == "popular" ? EhSearchMode.Popular : EhSearchMode.Normal, AdvancedEnabled = false },
+        Mode = _selectedTab?.Key switch
+        {
+            "watched" => EhSearchMode.Subscription,
+            "toplist" => EhSearchMode.Toplist,
+            "popular" => EhSearchMode.Popular,
+            _ => EhSearchMode.Normal,
+        },
+        ToplistIndex = _toplistIndex,
+        AdvancedEnabled = false,
     };
 
     /// <summary>Restores every field without executing a request.</summary>
@@ -97,13 +102,13 @@ public sealed partial class OnlineFeedViewModel
         SelectedSearchMode = SearchModes.FirstOrDefault(m => m.Key == request.Mode.ToString()) ?? SearchModes[0];
         _toplistIndex = request.ToplistIndex; OnPropertyChanged(nameof(SelectedToplistOption));
         foreach (var category in Categories) category.IsEnabled = (request.CategoryMask & (1 << (int)category.Category)) != 0;
-        ShowAdvanced = true;
     }
 
     /// <summary>Opens a saved list state directly, including popular, subscription and ranking modes.</summary>
     public Task OpenBookmarkAsync(SavedSearchEntry entry)
     {
-        _imageResults = false; _searchRequest = entry.ToRequest(); ApplyRequest(_searchRequest);
+        _imageResults = false; _searchRequest = entry.ToRequest(); RestoreFeedTab(_searchRequest.Mode); ApplyRequest(_searchRequest);
+        ShowAdvanced = false;
         SetSearchMode(true); OnPropertyChanged(nameof(SearchResultText));
         return LoadAsync(reset: true);
     }
@@ -172,7 +177,7 @@ public sealed partial class OnlineFeedViewModel
         {
             var page = await _services.Online.SearchImageAsync(_imageJpeg, ImageSimilar, ImageCoversOnly, ImageIncludeExpunged, token);
             token.ThrowIfCancellationRequested(); if (generation != _requestGeneration) return;
-            _imageResults = true; _imageFirstPage = page; SetSearchMode(true); ApplyPage(page, page.SourceUrl, reset: true);
+            _imageResults = true; SetSearchMode(true); ApplyPage(page, page.SourceUrl, reset: true);
             OnPropertyChanged(nameof(SearchResultText));
         }
         catch (OperationCanceledException) { if (generation == _requestGeneration) StatusText = "图片搜索已取消或超时。"; }
@@ -183,7 +188,7 @@ public sealed partial class OnlineFeedViewModel
     [RelayCommand] private void CancelSearch() => _cancellation?.Cancel();
 
     /// <summary>Cancels pending network operations and releases query image bytes.</summary>
-    public void Dispose() { _disposed = true; _requestGeneration++; _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = null; _imageJpeg = null; _imageFirstPage = null; }
+    public void Dispose() { _disposed = true; _requestGeneration++; _cancellation?.Cancel(); _cancellation?.Dispose(); _cancellation = null; _imageJpeg = null; }
 }
 
 /// <summary>Displays a translated tag while retaining its canonical search term.</summary>

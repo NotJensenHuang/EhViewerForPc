@@ -121,6 +121,10 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     public bool HasSourceText => !string.IsNullOrEmpty(_source.SourceLabel);
     public int PageCount => _pages.Count;
     public bool HasPages => _pages.Count > 0;
+    public bool IsCurrentPageMissing => _pages.Count > 0 &&
+        _pages[_index] is { State: PageState.Empty, Candidates.Count: 0 };
+    public bool ShowSingleMissingPage => IsSingleMode && IsCurrentPageMissing;
+    public string MissingPageText => $"第 {CurrentPageNumber} 页缺失";
     public ReadingMode Mode => _mode;
     public bool IsSingleMode => _mode == ReadingMode.Single;
     public bool IsContinuousMode => _mode == ReadingMode.Continuous;
@@ -338,6 +342,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     private void UpdateLabels()
     {
+        OnPropertyChanged(nameof(IsCurrentPageMissing));
+        OnPropertyChanged(nameof(ShowSingleMissingPage));
+        OnPropertyChanged(nameof(MissingPageText));
         if (_pages.Count == 0)
         {
             PageLabel = "无页面";
@@ -453,6 +460,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         _mode = mode;
         OnPropertyChanged(nameof(Mode));
         OnPropertyChanged(nameof(IsSingleMode));
+        OnPropertyChanged(nameof(ShowSingleMissingPage));
         OnPropertyChanged(nameof(IsContinuousMode));
         OnPropertyChanged(nameof(IsHorizontalMode));
         OnPropertyChanged(nameof(ContinuousItems));
