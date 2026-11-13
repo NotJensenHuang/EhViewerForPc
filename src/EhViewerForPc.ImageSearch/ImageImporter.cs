@@ -1,15 +1,18 @@
 using System.Formats.Tar;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading.Channels;
+using System.Runtime.CompilerServices;
 
 namespace EhViewerForPc.ImageSearch;
 
 /// <summary>Defines bounded import and deduplication behavior.</summary>
 public sealed record ImportOptions
 {
-    /// <summary>Gets the number of extraction workers, limited to two.</summary>
+    /// <summary>Gets the number of extraction workers, limited to six.</summary>
     public int Workers { get; init; } = 2;
+    public int BatchSize { get; init; } = 10;
+    public long WorkingSetBytes { get; init; } = 128L * 1024 * 1024;
+    public bool UseSimd { get; init; } = true;
     /// <summary>Gets the low-feature skip threshold (inclusive).</summary>
     public int MinFeatures { get; init; } = 30;
     /// <summary>Gets the accepted input extensions.</summary>
@@ -42,12 +45,14 @@ public static class ImageImporter
     {
         string input = Path.GetFullPath(inputPath), backend = Path.GetFullPath(backendDirectory), report = Path.GetFullPath(reportPath);
         if (!Directory.Exists(input) && !File.Exists(input)) throw new FileNotFoundException("Import input is unavailable.");
-        if (Directory.Exists(input) && (IsWithin(backend, input) || IsWithin(input, backend) || IsWithin(report, input)))
+        if (IsWithin(backend, input) || IsWithin(input, backend) || IsWithin(report, input))
             throw new InvalidOperationException("Writable backend and report paths must be separate from the read-only source directory.");
-        if (Directory.Exists(input))
-            for (DirectoryInfo? info = new(input); info is not null; info = info.Parent)
-                if (info.Exists && (info.Attributes & FileAttributes.ReparsePoint) != 0)
-                    throw new InvalidOperationException("Use the physical source path instead of a junction or symbolic link.");
+        if ((File.GetAttributes(input) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidOperationException("Use the physical source path instead of a junction or symbolic link.");
+        string sourceDirectory = Directory.Exists(input) ? input : Path.GetDirectoryName(input)!;
+        for (DirectoryInfo? info = new(sourceDirectory); info is not null; info = info.Parent)
+            if (info.Exists && (info.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new InvalidOperationException("Use the physical source path instead of a junction or symbolic link.");
         foreach (string path in new[] { backend, Path.GetDirectoryName(report)! })
         {
             for (DirectoryInfo? info = new(path); info is not null; info = info.Parent)
@@ -61,133 +66,126 @@ public static class ImageImporter
         ImportOptions? options = null, CancellationToken cancellationToken = default)
     {
         database.RequireWriter(); options ??= new();
-        if (options.Workers is < 1 or > 2 || options.MinFeatures < 0 || options.DuplicateDistance is < 0 or > 64)
-            throw new ArgumentOutOfRangeException(nameof(options));
+        new IndexBuildOptions { Workers = options.Workers, BatchSize = options.BatchSize, WorkingSetBytes = options.WorkingSetBytes }.Validate();
+        if (options.MinFeatures < 0 || options.DuplicateDistance is < 0 or > 64) throw new ArgumentOutOfRangeException(nameof(options));
         string input = Path.GetFullPath(inputPath), report = Path.GetFullPath(reportPath);
         ValidateImportPaths(database.DirectoryPath, input, report);
         Directory.CreateDirectory(Path.GetDirectoryName(report)!);
         string temporary = report + "." + Guid.NewGuid().ToString("N") + ".part";
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        CancellationToken ct = cancellation.Token;
-        var inputs = Channel.CreateBounded<Input>(new BoundedChannelOptions(2) { SingleWriter = true });
-        var outputs = Channel.CreateBounded<Extracted>(new BoundedChannelOptions(2) { SingleReader = true });
-        // Only one pixel-owning extraction is allowed at a time; workers still overlap IO, writes and scheduling.
-        using var canvas = new SemaphoreSlim(1, 1);
         using var tarPayload = new SemaphoreSlim(1, 1);
-        Task producer = Task.Run(async () =>
-        {
-            try
-            {
-                var accepted = new HashSet<string>(options.Suffixes.Select(s => s.TrimStart('.')), StringComparer.OrdinalIgnoreCase);
-                Regex? filter = options.Filter is null ? null : new Regex(options.Filter, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-                Regex? rewrite = options.ReplacePattern is null ? null : new Regex(options.ReplacePattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-                string replacement = Regex.Replace(options.Replacement, @"\$([A-Za-z_][A-Za-z0-9_]*)", match => "${" + match.Groups[1].Value + "}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
-                bool Accept(string alias) => accepted.Contains(Path.GetExtension(alias).TrimStart('.')) && (filter is null || filter.IsMatch(alias));
-                var seen = new HashSet<string>(StringComparer.Ordinal);
-                string MapAlias(string value)
-                {
-                    string mapped = rewrite?.Replace(value, replacement) ?? value;
-                    ImageDatabase.ValidateAlias(mapped);
-                    if (!seen.Add(mapped)) throw new InvalidDataException("Duplicate input alias.");
-                    return mapped;
-                }
-                if (Directory.Exists(input))
-                {
-                    if ((File.GetAttributes(input) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("Source junctions are not traversed.");
-                    var enumeration = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
-                    foreach (string file in Directory.EnumerateFiles(input, "*", enumeration))
-                    {
-                        ct.ThrowIfCancellationRequested();
-                        string alias = Path.GetRelativePath(input, file).Replace('\\', '/');
-                        if (!Accept(alias)) continue;
-                        alias = MapAlias(alias);
-                        await inputs.Writer.WriteAsync(new(alias, file, null), ct);
-                    }
-                }
-                else
-                {
-                    using var source = new FileStream(input, FileMode.Open, FileAccess.Read, FileShare.Read);
-                    using var tar = new TarReader(source);
-                    TarEntry? entry;
-                    while ((entry = await tar.GetNextEntryAsync(cancellationToken: ct)) is not null)
-                    {
-                        if (entry.EntryType == TarEntryType.Directory) { ImageDatabase.ValidateAlias(entry.Name.TrimEnd('/')); continue; }
-                        ImageDatabase.ValidateAlias(entry.Name);
-                        if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile)) throw new InvalidDataException("Tar links and special entries are not accepted.");
-                        if (!Accept(entry.Name)) continue;
-                        string alias = MapAlias(entry.Name);
-                        if (entry.Length is < 1 or > 50 * 1024 * 1024)
-                        { await inputs.Writer.WriteAsync(new(alias, null, null, "InputTooLarge"), ct); continue; }
-                        await tarPayload.WaitAsync(ct);
-                        byte[] bytes = new byte[checked((int)entry.Length)];
-                        if (entry.DataStream is null) throw new InvalidDataException("Missing tar payload.");
-                        await entry.DataStream.ReadExactlyAsync(bytes, ct);
-                        await inputs.Writer.WriteAsync(new(alias, null, bytes), ct);
-                    }
-                }
-                inputs.Writer.TryComplete();
-            }
-            catch (Exception error) { inputs.Writer.TryComplete(error); cancellation.Cancel(); throw; }
-        }, ct);
-        Task[] workers = Enumerable.Range(0, options.Workers).Select(_ => Task.Run(async () =>
-        {
-            try
-            {
-                var extractor = new OrbExtractor(database.Profile);
-                await foreach (var item in inputs.Reader.ReadAllAsync(ct))
-                {
-                    if (item.Error is not null) { await outputs.Writer.WriteAsync(new(item.Alias, null, null, item.Error), ct); continue; }
-                    Extracted extracted;
-                    await canvas.WaitAsync(ct);
-                    try
-                    {
-                        byte[] bytes = item.Bytes ?? ReadSource(item.File!);
-                        GrayImage image = GrayImage.Decode(bytes);
-                        byte[] hash = database.HashMode == ImageHashMode.Blake3 ? Blake3.Hash(bytes) : image.DifferenceHash();
-                        var descriptors = extractor.Extract(image, ct).Select(f => f.Descriptor).ToArray();
-                        extracted = new(item.Alias, hash, descriptors, null);
-                    }
-                    catch (Exception error) when (error is InvalidDataException or IOException or ArgumentException)
-                    { extracted = new(item.Alias, null, null, error.Message.StartsWith("InputTooLarge", StringComparison.Ordinal) ? "InputTooLarge" : error.Message.StartsWith("SourceChanging", StringComparison.Ordinal) ? "SourceChanging" : "InvalidInput"); }
-                    finally { canvas.Release(); if (item.Bytes is not null) tarPayload.Release(); }
-                    await outputs.Writer.WriteAsync(extracted, ct);
-                }
-            }
-            catch { cancellation.Cancel(); throw; }
-        }, ct)).ToArray();
-        Task completion = Task.Run(async () =>
-        {
-            try { await Task.WhenAll(workers); outputs.Writer.TryComplete(); }
-            catch (Exception error) { outputs.Writer.TryComplete(error); throw; }
-        }, CancellationToken.None);
+        var budget = new ImageWorkBudget(options.WorkingSetBytes);
+        int total = 0, added = 0, present = 0, skipped = 0, failed = 0, buffered = 0;
         try
         {
-            int total = 0, added = 0, present = 0, skipped = 0, failed = 0;
+            using var store = database.CreateImportWriter();
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             await using (var writer = new StreamWriter(stream))
             {
-                await foreach (var item in outputs.Reader.ReadAllAsync(ct))
+                try
                 {
-                    ImportEntry entry;
-                    if (item.Error is not null) entry = new(item.Alias, "failed", 0, item.Error);
-                    else entry = database.Add(item.Alias, item.Hash!, item.Descriptors!, options.MinFeatures, options.Append, options.DuplicateDistance, options.Overwrite);
-                    total++;
-                    switch (entry.Status) { case "added": added++; break; case "already_present": present++; break; case "skipped_low_features": skipped++; break; default: failed++; break; }
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(entry, SearchJsonContext.Default.ImportEntry));
+                    await OrderedImagePipeline.RunAsync(EnumerateInputs(input, options, tarPayload, cancellationToken),
+                        () => new ImportWorker(database.Profile, options.UseSimd),
+                        (worker, item, ct) => ExtractAsync(worker, item, database.HashMode, options, budget, tarPayload, ct),
+                        item =>
+                        {
+                            ImportEntry entry = item.Error is not null ? new(item.Alias, "failed", 0, item.Error)
+                                : store.Add(item.Alias, item.Hash!, item.Descriptors!, options.MinFeatures, options.Append, options.DuplicateDistance, options.Overwrite);
+                            total++; buffered++;
+                            switch (entry.Status) { case "added": added++; break; case "already_present": present++; break; case "skipped_low_features": skipped++; break; default: failed++; break; }
+                            writer.WriteLine(JsonSerializer.Serialize(entry, SearchJsonContext.Default.ImportEntry));
+                            if (buffered >= options.BatchSize) { store.Commit(); buffered = 0; }
+                        }, options.Workers, options.Workers * 2, cancellationToken).ConfigureAwait(false);
+                    store.Commit();
+                    writer.WriteLine(JsonSerializer.Serialize(new ImportSummary(total, added, present, skipped, failed, true), SearchJsonContext.Default.ImportSummary));
+                    await writer.FlushAsync(cancellationToken).ConfigureAwait(false); stream.Flush(true);
                 }
-                await producer; await completion;
-                var summary = new ImportSummary(total, added, present, skipped, failed, true);
-                await writer.WriteLineAsync(JsonSerializer.Serialize(summary, SearchJsonContext.Default.ImportSummary));
-                await writer.FlushAsync(ct); stream.Flush(true);
+                finally { if (!store.IsFaulted) store.Commit(); }
             }
             File.Move(temporary, report, overwrite: true);
             return new(total, added, present, skipped, failed, true);
         }
-        finally
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private sealed class ImportWorker(FeatureProfile profile, bool useSimd) : IDisposable
+    {
+        internal readonly FeatureProfile Profile = profile;
+        internal readonly OrbExtractor Extractor = new(profile, useSimd);
+        public void Dispose() { }
+    }
+
+    private static async ValueTask<Extracted> ExtractAsync(ImportWorker worker, Input item, ImageHashMode mode, ImportOptions options,
+        ImageWorkBudget budget, SemaphoreSlim tarPayload, CancellationToken token)
+    {
+        if (item.Error is not null) return new(item.Alias, null, null, item.Error);
+        try
         {
-            cancellation.Cancel(); inputs.Writer.TryComplete(); outputs.Writer.TryComplete();
-            try { await Task.WhenAll(producer, completion); } catch { /* All tasks are observed; preserve the primary error. */ }
-            if (File.Exists(temporary)) File.Delete(temporary);
+            long estimate;
+            if (item.File is not null)
+            {
+                long length = new FileInfo(item.File).Length;
+                using (await budget.ReserveAsync(Math.Min(52L * 1024 * 1024, length + 2L * 1024 * 1024), token).ConfigureAwait(false))
+                    estimate = GrayImage.EstimateWorkingSet(item.File, worker.Profile);
+            }
+            else estimate = options.WorkingSetBytes; // Tar 同时只持有一个编码 payload，保留保守的整份画布配额。
+            using var memory = await budget.ReserveAsync(estimate, token).ConfigureAwait(false);
+            byte[] bytes = item.Bytes ?? ReadSource(item.File!);
+            GrayImage image = GrayImage.Decode(bytes, useSimd: options.UseSimd);
+            byte[] hash = mode == ImageHashMode.Blake3 ? Blake3.Hash(bytes) : image.DifferenceHash();
+            var features = worker.Extractor.Extract(image, token);
+            var descriptors = new BinaryDescriptor[features.Length];
+            for (int i = 0; i < features.Length; i++) descriptors[i] = features[i].Descriptor;
+            return new(item.Alias, hash, descriptors, null);
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or ArgumentException or UnauthorizedAccessException)
+        { return new(item.Alias, null, null, error.Message.StartsWith("InputTooLarge", StringComparison.Ordinal) ? "InputTooLarge" : error.Message.StartsWith("SourceChanging", StringComparison.Ordinal) ? "SourceChanging" : "InvalidInput"); }
+        finally { if (item.Bytes is not null) tarPayload.Release(); }
+    }
+
+    private static async IAsyncEnumerable<Input> EnumerateInputs(string input, ImportOptions options, SemaphoreSlim tarPayload,
+        [EnumeratorCancellation] CancellationToken token)
+    {
+        var accepted = new HashSet<string>(options.Suffixes.Select(s => s.TrimStart('.')), StringComparer.OrdinalIgnoreCase);
+        Regex? filter = options.Filter is null ? null : new Regex(options.Filter, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        Regex? rewrite = options.ReplacePattern is null ? null : new Regex(options.ReplacePattern, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        string replacement = Regex.Replace(options.Replacement, @"\$([A-Za-z_][A-Za-z0-9_]*)", match => "${" + match.Groups[1].Value + "}", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+        bool Accept(string alias) => accepted.Contains(Path.GetExtension(alias).TrimStart('.')) && (filter is null || filter.IsMatch(alias));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        string MapAlias(string value)
+        {
+            string mapped = rewrite?.Replace(value, replacement) ?? value;
+            ImageDatabase.ValidateAlias(mapped);
+            if (!seen.Add(mapped)) throw new InvalidDataException("Duplicate input alias.");
+            return mapped;
+        }
+        if (Directory.Exists(input))
+        {
+            if ((File.GetAttributes(input) & FileAttributes.ReparsePoint) != 0) throw new InvalidDataException("Source junctions are not traversed.");
+            var enumeration = new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false };
+            foreach (string file in Directory.EnumerateFiles(input, "*", enumeration))
+            {
+                token.ThrowIfCancellationRequested();
+                string alias = Path.GetRelativePath(input, file).Replace('\\', '/');
+                if (Accept(alias)) yield return new(MapAlias(alias), file, null);
+            }
+            yield break;
+        }
+        using var source = new FileStream(input, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var tar = new TarReader(source);
+        TarEntry? entry;
+        while ((entry = await tar.GetNextEntryAsync(cancellationToken: token).ConfigureAwait(false)) is not null)
+        {
+            if (entry.EntryType == TarEntryType.Directory) { ImageDatabase.ValidateAlias(entry.Name.TrimEnd('/')); continue; }
+            ImageDatabase.ValidateAlias(entry.Name);
+            if (entry.EntryType is not (TarEntryType.RegularFile or TarEntryType.V7RegularFile)) throw new InvalidDataException("Tar links and special entries are not accepted.");
+            if (!Accept(entry.Name)) continue;
+            string alias = MapAlias(entry.Name);
+            if (entry.Length is < 1 or > 50 * 1024 * 1024) { yield return new(alias, null, null, "InputTooLarge"); continue; }
+            await tarPayload.WaitAsync(token).ConfigureAwait(false);
+            byte[] bytes = new byte[checked((int)entry.Length)];
+            if (entry.DataStream is null) throw new InvalidDataException("Missing tar payload.");
+            await entry.DataStream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+            yield return new(alias, null, bytes);
         }
     }
 

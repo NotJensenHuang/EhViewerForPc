@@ -25,6 +25,67 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 public sealed class ImageSearchIntegrationTests
 {
     [AvaloniaFact]
+    public async Task ParallelBuildReportsCorruptPageAndCanContinueWithRemainingPages()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        File.WriteAllBytes(Path.Combine(copies[0].FolderPath, "00000003.png"), [1, 2, 3]);
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        var result = await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None,
+            options: new IndexBuildOptions { Workers = 4 });
+        Assert.Equal(1, result.Failed); Assert.Equal(5, result.Indexed);
+        File.WriteAllBytes(Path.Combine(copies[0].FolderPath, "00000003.png"), SyntheticImages.Create(45, 200, 280).EncodePng());
+        var retry = await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None,
+            options: new IndexBuildOptions { Workers = 2 });
+        Assert.Equal(0, retry.Failed); Assert.Equal(6, retry.Indexed);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(4)]
+    public async Task ParallelBatchesRemainSearchableAndUnchangedUpdatesKeepPublishedSnapshot(int workers)
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        long before = ImageMemoryBudget.UsedBytes;
+        var built = await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None,
+            options: new IndexBuildOptions { Workers = workers, BatchSize = 5, WorkingSetBytes = 64L * 1024 * 1024 });
+        Assert.Equal(6, built.Indexed);
+        var statistics = scope.Services.ImageSearch.BuildStatistics!;
+        Assert.Equal(workers, statistics.Workers);
+        Assert.InRange(statistics.PeakWorkspaceBytes, 1, statistics.WorkingSetLimit);
+        Assert.Equal(2, statistics.CommittedBatches);
+        Assert.Equal(before, ImageMemoryBudget.UsedBytes);
+        string pointer = Path.Combine(scope.Services.ImageSearch.DirectoryPath, "current.json");
+        byte[] published = File.ReadAllBytes(pointer);
+        var updated = await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None);
+        Assert.Equal(6, updated.Reused);
+        Assert.Equal(published, File.ReadAllBytes(pointer));
+        Assert.True(scope.Services.ImageSearch.BuildStatistics!.Unchanged);
+        var hits = await scope.Services.ImageSearch.SearchAsync(File.ReadAllBytes(Path.Combine(copies[0].FolderPath, "00000001.png")), null, copies, CancellationToken.None);
+        Assert.Contains(hits, h => h.Gallery.SourceId == copies[1].SourceId && h.PageNumber == 1);
+    }
+
+    [AvaloniaFact]
+    public async Task ShutdownCancelsAnIndexWaitingForSharedImageMemory()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        long before = ImageMemoryBudget.UsedBytes;
+        using var occupied = ImageMemoryBudget.Reserve(ImageMemoryBudget.LimitBytes - before);
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        Task build = scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None);
+        while (scope.Services.ImageSearch.BuildStatus?.Message != "正在等待可用图像内存…") await Task.Delay(10);
+        scope.Services.ImageSearch.Dispose();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => build);
+        Assert.Equal(ImageMemoryBudget.LimitBytes, ImageMemoryBudget.UsedBytes);
+        occupied.Dispose();
+        Assert.Equal(before, ImageMemoryBudget.UsedBytes);
+    }
+
+    [AvaloniaFact]
     public async Task ServiceDisposalDrainsStatusAndSearchFileHandlesBeforeReturning()
     {
         using var scope = new Fixture(); var copies = scope.CreateCopies();
@@ -498,6 +559,14 @@ public sealed class ImageSearchIntegrationTests
             var dialog = window.BookmarksDialog!;
             Assert.True(dialog.Bounds.Width <= width);
             Assert.True(dialog.Bounds.Height <= height);
+            shell.Bookmarks.Selected = null;
+            window.UpdateLayout();
+            var editor = dialog.GetVisualDescendants().OfType<ScrollViewer>().Single(c => AutomationProperties.GetAutomationId(c) == "Bookmarks.Editor");
+            var nameInput = editor.GetVisualDescendants().OfType<TextBox>().First();
+            Assert.True(editor.IsEffectivelyVisible);
+            Assert.False(nameInput.IsEffectivelyEnabled);
+            shell.Bookmarks.Selected = shell.Bookmarks.Items[0];
+            Assert.True(nameInput.IsEffectivelyEnabled);
             using (var frame = window.CaptureRenderedFrame()) frame!.Save(Path.Combine(output, $"bookmarks-{width}-{(light ? "light" : "dark")}.png"), PngBitmapEncoderOptions.Default);
             dialog.Hide();
         }

@@ -9,13 +9,14 @@ public readonly record struct OrbFeature(float X, float Y, int Level, float Angl
 public sealed class OrbExtractor
 {
     private readonly FeatureProfile _profile;
+    private readonly bool _useSimd;
     private static readonly (int X, int Y)[] Circle = [(0,-3),(1,-3),(2,-2),(3,-1),(3,0),(3,1),(2,2),(1,3),(0,3),(-1,3),(-2,2),(-3,1),(-3,0),(-3,-1),(-2,-2),(-1,-3)];
     private readonly record struct Corner(int X, int Y, int Score);
     private sealed record Region(int X0, int Y0, int X1, int Y1, List<Corner> Points);
     private static readonly int[] UMax = MakeUMax();
 
     /// <summary>Initializes an extractor using a validated, immutable profile.</summary>
-    public OrbExtractor(FeatureProfile? profile = null) { _profile = profile ?? new(); _profile.Validate(); }
+    public OrbExtractor(FeatureProfile? profile = null, bool useSimd = true) { _profile = profile ?? new(); _profile.Validate(); _useSimd = useSimd; }
 
     /// <summary>Extracts features without retaining image or pyramid buffers.</summary>
     public OrbFeature[] Extract(GrayImage input, CancellationToken cancellationToken = default)
@@ -44,7 +45,7 @@ public sealed class OrbExtractor
             if (pyramid.Width < 40 || pyramid.Height < 40 || n == 0) continue;
             var corners = DetectCells(pyramid, cancellationToken);
             var selected = Distribute(corners, pyramid.Width, pyramid.Height, n);
-            GrayImage blurred = Blur(pyramid);
+            GrayImage blurred = ImageKernels.GaussianBlur(pyramid, _useSimd);
             foreach (var point in selected)
             {
                 float angle = _profile.Oriented ? Orientation(pyramid, point.X, point.Y) : 0;
@@ -200,25 +201,4 @@ public sealed class OrbExtractor
         return BinaryDescriptor.Read(bytes);
     }
 
-    private static GrayImage Blur(GrayImage image)
-    {
-        double[] kernel = Enumerable.Range(-3, 7).Select(x => Math.Exp(-x * x / 8.0)).ToArray();
-        double sum = kernel.Sum(); for (int i = 0; i < 7; i++) kernel[i] /= sum;
-        var horizontal = new float[image.Pixels.Length];
-        byte[] output = new byte[image.Pixels.Length];
-        static int Reflect(int x, int size) => x < 0 ? -x : x >= size ? 2 * size - x - 2 : x;
-        for (int y = 0; y < image.Height; y++) for (int x = 0; x < image.Width; x++)
-        {
-            double value = 0;
-            for (int k = -3; k <= 3; k++) value += kernel[k + 3] * image.Pixels[y * image.Width + Reflect(x + k, image.Width)];
-            horizontal[y * image.Width + x] = (float)value;
-        }
-        for (int y = 0; y < image.Height; y++) for (int x = 0; x < image.Width; x++)
-        {
-            double value = 0;
-            for (int k = -3; k <= 3; k++) value += kernel[k + 3] * horizontal[Reflect(y + k, image.Height) * image.Width + x];
-            output[y * image.Width + x] = (byte)Math.Clamp((int)Math.Round(value), 0, 255);
-        }
-        return new(image.Width, image.Height, output);
-    }
 }

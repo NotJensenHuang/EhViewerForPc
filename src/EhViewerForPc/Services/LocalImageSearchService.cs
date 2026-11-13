@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Avalonia.Threading;
@@ -112,34 +111,39 @@ public sealed partial class LocalImageSearchService : IDisposable
     }
 
     /// <summary>Builds a fresh generation, keeping the last published index available until atomic publication.</summary>
-    public async Task<LocalImageSearchStatus> BuildAsync(IReadOnlyList<ImageSearchGallery> galleries, IProgress<LocalImageSearchStatus>? progress, CancellationToken token, bool rebuild = false)
-        => await BuildCoreAsync(galleries, progress, token, rebuild, resumeExisting: !rebuild).ConfigureAwait(false);
+    public async Task<LocalImageSearchStatus> BuildAsync(IReadOnlyList<ImageSearchGallery> galleries, IProgress<LocalImageSearchStatus>? progress, CancellationToken token, bool rebuild = false, IndexBuildOptions? options = null)
+        => await BuildCoreAsync(galleries, progress, token, rebuild, resumeExisting: !rebuild, options: options).ConfigureAwait(false);
 
     /// <summary>自动维护沿用建库管线，但不能恢复用户显式暂停的任务。</summary>
     public Task<LocalImageSearchStatus> UpdateAutomaticallyAsync(IReadOnlyList<ImageSearchGallery> galleries, CancellationToken token)
         => BuildCoreAsync(galleries, null, token, rebuild: false, resumeExisting: true, automatic: true);
 
     private async Task<LocalImageSearchStatus> BuildCoreAsync(IReadOnlyList<ImageSearchGallery> galleries, IProgress<LocalImageSearchStatus>? progress,
-        CancellationToken token, bool rebuild, bool resumeExisting, bool automatic = false)
+        CancellationToken token, bool rebuild, bool resumeExisting, bool automatic = false, IndexBuildOptions? options = null)
     {
+        options ??= new IndexBuildOptions();
+        options.Validate();
         if (!_services.Settings.ImageSearch.Enabled) throw new InvalidOperationException("请先在设置中启用以图搜图。");
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         if (!await _writer.WaitAsync(0, token).ConfigureAwait(false)) throw new InvalidOperationException("图片索引正在更新。");
-        using var job = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
-        lock (_jobGate)
-        {
-            _activeJob = job;
-            Volatile.Write(ref _resumeAfterInterruption, 1);
-        }
+        CancellationTokenSource? job = null;
         try
         {
+            job = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
+            lock (_jobGate)
+            {
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                _activeJob = job;
+                Volatile.Write(ref _resumeAfterInterruption, 1);
+            }
+            Volatile.Write(ref _statistics, null);
             string root = DirectoryPath;
             var sources = SelectedSources();
             var allSources = _services.Settings.Sources.Select(s => s.Clone()).ToArray();
             var snapshot = galleries.ToArray();
             PublishBuildStatus(new("正在准备图片索引…", Indexed: BuildStatus?.Indexed ?? 0));
             var status = await Task.Run(() => Build(root, snapshot, sources, allSources,
-                new BuildProgress(this, progress), job.Token, rebuild, resumeExisting, automatic)).ConfigureAwait(false);
+                new BuildProgress(this, progress), job.Token, rebuild, resumeExisting, automatic, options)).ConfigureAwait(false);
             PublishBuildStatus(status);
             return status;
         }
@@ -157,6 +161,7 @@ public sealed partial class LocalImageSearchService : IDisposable
         finally
         {
             lock (_jobGate) _activeJob = null;
+            job?.Dispose();
             _writer.Release();
             NotifyBuildState();
         }
@@ -187,7 +192,7 @@ public sealed partial class LocalImageSearchService : IDisposable
         }
     }
 
-    private LocalImageSearchStatus Build(string root, ImageSearchGallery[] galleries, LibrarySource[] sources, LibrarySource[] allSources, IProgress<LocalImageSearchStatus>? progress, CancellationToken token, bool rebuild, bool resumeExisting, bool automatic)
+    private async Task<LocalImageSearchStatus> Build(string root, ImageSearchGallery[] galleries, LibrarySource[] sources, LibrarySource[] allSources, IProgress<LocalImageSearchStatus>? progress, CancellationToken token, bool rebuild, bool resumeExisting, bool automatic, IndexBuildOptions options)
     {
         ValidateStorage(root, allSources);
         if (sources.Length == 0 || galleries.Length == 0) throw new InvalidOperationException("请先添加本地数据源并扫描图库。");
@@ -250,6 +255,18 @@ public sealed partial class LocalImageSearchService : IDisposable
             var previous = job.Rebuild ? null : current;
             string? previousDirectory = previous is null ? null : Path.Combine(root, "generations", previous.GenerationId);
             using var previousManifest = previousDirectory is null ? null : OpenManifest(previousDirectory, writable: false);
+            if (!resumed && previousDirectory is not null && TryReuseUnchangedIndex(previousDirectory, pages, selected, token) is { } unchanged)
+            {
+                token.ThrowIfCancellationRequested();
+                published = true;
+                CompleteBuildCheckpoint(root);
+                previousManifest?.Dispose();
+                try { PruneUnusedGenerations(root); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException)
+                { _services.Log.Warn("Image index cleanup: " + error.GetType().Name); }
+                Volatile.Write(ref _statistics, new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Unchanged: true));
+                return unchanged;
+            }
             if (previousDirectory is not null && job.Phase == ImageIndexBuildPhase.Preparing)
             {
                 progress?.Report(new("正在准备增量索引快照…"));
@@ -263,88 +280,13 @@ public sealed partial class LocalImageSearchService : IDisposable
             job.Phase = ImageIndexBuildPhase.Extracting;
             job.TotalPages = pages.Count;
             SaveBuildCheckpoint(root, job);
-            int processed = 0, indexed = 0, skipped = 0, failed = 0, reused = 0;
+            var extraction = await ExtractPagesAsync(root, generation, previousDirectory, backend, manifest, pages, selected,
+                job.Rebuild, options, progress, token).ConfigureAwait(false);
+            int processed = extraction.Processed, indexed = extraction.Indexed, skipped = extraction.Skipped,
+                failed = extraction.Failed, reused = extraction.Reused;
+            bool needsBuild = previous is null || extraction.NeedsBuild;
             var seenPages = new HashSet<(string Source, string Stable, int Page)>();
-            bool needsBuild = previous is null;
-            var assets = new Dictionary<string, (string State, int Count)>(StringComparer.Ordinal);
-            var extractor = new OrbExtractor(backend.Profile);
-            foreach (var (gallery, page) in pages)
-            {
-                token.ThrowIfCancellationRequested();
-                bool handled = false;
-                seenPages.Add((gallery.SourceId, gallery.StableId, page.Number));
-                foreach (var candidate in page.Candidates)
-                {
-                    if (candidate.Length <= 0 || !IsSafeSourcePath(candidate.FilePath, selected[gallery.SourceId].RootPath)) continue;
-                    try
-                    {
-                        string relativePath = Path.GetRelativePath(selected[gallery.SourceId].RootPath, candidate.FilePath);
-                        using (var saved = manifest.CreateCommand())
-                        {
-                            saved.CommandText = "SELECT state FROM member WHERE source_id=$source AND stable_id=$stable AND page=$page AND path=$path AND length=$length AND mtime=$mtime";
-                            saved.Parameters.AddWithValue("$source", gallery.SourceId);
-                            saved.Parameters.AddWithValue("$stable", gallery.StableId);
-                            saved.Parameters.AddWithValue("$page", page.Number);
-                            saved.Parameters.AddWithValue("$path", relativePath);
-                            saved.Parameters.AddWithValue("$length", candidate.Length);
-                            saved.Parameters.AddWithValue("$mtime", candidate.MtimeTicks);
-                            if (saved.ExecuteScalar() is string state)
-                            {
-                                if (state == "indexed") indexed++; else skipped++;
-                                reused++; handled = true; break;
-                            }
-                        }
-                        if (previousManifest is not null)
-                        {
-                            using var lookup = previousManifest.CreateCommand();
-                            lookup.CommandText = "SELECT alias,state FROM member WHERE source_id=$source AND stable_id=$stable AND page=$page AND path=$path AND length=$length AND mtime=$mtime";
-                            foreach (var (key, value) in new (string, object)[] { ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", page.Number), ("$path", relativePath), ("$length", candidate.Length), ("$mtime", candidate.MtimeTicks) }) lookup.Parameters.AddWithValue(key, value);
-                            using var cachedPage = lookup.ExecuteReader();
-                            if (cachedPage.Read())
-                            {
-                                string state = cachedPage.GetString(1);
-                                Execute(manifest, "INSERT OR REPLACE INTO member VALUES($alias,$source,$stable,$page,$path,$length,$mtime,$state)",
-                                    ("$alias", cachedPage.GetString(0)), ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", page.Number),
-                                    ("$path", relativePath), ("$length", candidate.Length), ("$mtime", candidate.MtimeTicks), ("$state", state));
-                                if (state == "indexed") indexed++; else skipped++;
-                                reused++; handled = true; break;
-                            }
-                        }
-                        GrayImage image = GrayImage.ReadFile(candidate.FilePath);
-                        byte[] canonical = image.EncodePng();
-                        string payload = Convert.ToHexStringLower(SHA256.HashData(canonical));
-                        string asset = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(FeatureProfile.NormalizerVersion + "\n" + payload)));
-                        string alias = "pages/" + asset + ".png";
-                        if (!assets.TryGetValue(alias, out var cached))
-                        {
-                            byte[] contentHash = Blake3.Hash(canonical);
-                            var shared = job.Rebuild ? null : backend.ReadSharedFeatures(contentHash);
-                            var features = shared ?? extractor.Extract(image, token).Select(f => f.Descriptor).ToArray();
-                            if (shared is not null) reused++;
-                            var imported = backend.Add(alias, contentHash, features);
-                            if (imported.Status == "added") needsBuild = true;
-                            cached = (features.Length <= 30 ? "skipped" : "indexed", features.Length);
-                            assets.Add(alias, cached);
-                        }
-                        var actual = new FileInfo(candidate.FilePath);
-                        if (!actual.Exists || actual.Length != candidate.Length || actual.LastWriteTimeUtc.Ticks != candidate.MtimeTicks) throw new IOException("SourceChanging");
-                        Execute(manifest, "INSERT OR REPLACE INTO member VALUES($alias,$source,$stable,$page,$path,$length,$mtime,$state)",
-                            ("$alias", alias), ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", page.Number),
-                            ("$path", Path.GetRelativePath(selected[gallery.SourceId].RootPath, candidate.FilePath)), ("$length", actual.Length), ("$mtime", actual.LastWriteTimeUtc.Ticks), ("$state", cached.State));
-                        if (cached.State == "indexed") indexed++; else skipped++;
-                        handled = true; break;
-                    }
-                    catch (Exception error) when (error is IOException or ArgumentException or UnauthorizedAccessException) { }
-                }
-                if (!handled)
-                {
-                    failed++;
-                    Execute(manifest, "DELETE FROM member WHERE source_id=$source AND stable_id=$stable AND page=$page",
-                        ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", page.Number));
-                }
-                processed++;
-                if (processed % 10 == 0 || processed == pages.Count) progress?.Report(new($"正在提取页图 {processed:N0} / {pages.Count:N0}", processed, pages.Count, indexed, skipped, failed));
-            }
+            foreach (var (gallery, page) in pages) seenPages.Add((gallery.SourceId, gallery.StableId, page.Number));
             RemoveUnscannedCheckpointPages(manifest, seenPages);
             var liveAliases = new HashSet<string>(StringComparer.Ordinal);
             using (var aliases = manifest.CreateCommand())
@@ -362,13 +304,19 @@ public sealed partial class LocalImageSearchService : IDisposable
                 if (trainingDescriptors < 30) throw new InvalidOperationException("有效特征不足，原有索引已保留。");
                 int centers = Math.Min(4096, Math.Max(1, Math.Min(trainingDescriptors / 30, (int)(4 * Math.Sqrt(trainingDescriptors)))));
                 progress?.Report(new("正在训练图片索引…", processed, pages.Count, indexed, skipped, failed));
+                long started = System.Diagnostics.Stopwatch.GetTimestamp();
                 ImageSearchEngine.Train(backend, centers, 3000, cancellationToken: token);
+                if (BuildStatistics is { } statistics)
+                    Volatile.Write(ref _statistics, statistics with { TrainingMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds });
             }
             job.Phase = ImageIndexBuildPhase.Building;
             SaveBuildCheckpoint(root, job);
             progress?.Report(new("正在构建图片索引…", processed, pages.Count, indexed, skipped, failed));
+            long buildStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             if (needsBuild || resumed || backend.HasPendingImages)
                 ImageSearchEngine.Build(backend, cancellationToken: token, allowedImageIds: backend.AliasedImageIds());
+            if (BuildStatistics is { } builtStatistics)
+                Volatile.Write(ref _statistics, builtStatistics with { IndexMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted).TotalMilliseconds });
             var validated = new ImageSearchEngine(backend, allowLinkedPublication: true);
             if (validated.IndexedImages == 0) throw new InvalidDataException("索引中没有可搜索图片。");
             manifest.Close();
@@ -386,7 +334,7 @@ public sealed partial class LocalImageSearchService : IDisposable
             previousManifest?.Dispose();
             CompleteBuildCheckpoint(root);
             try { PruneUnusedGenerations(root); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException) { _services.Log.Warn("Image index cleanup: " + error.GetType().Name); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException) { _services.Log.Warn("Image index cleanup: " + error.GetType().Name); }
             return new($"已索引 {indexed:N0} / {pages.Count:N0} 页 · 复用 {reused:N0} · 低特征 {skipped:N0} · 失败 {failed:N0}", processed, pages.Count, indexed, skipped, failed, reused);
         }
         finally
@@ -576,7 +524,8 @@ public sealed partial class LocalImageSearchService : IDisposable
     private static SqliteConnection OpenManifest(string generation, bool writable)
     {
         var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(generation, "manifest.db"), Mode = writable ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
-        connection.Open(); return connection;
+        try { connection.Open(); return connection; }
+        catch { connection.Dispose(); throw; }
     }
     private static void Execute(SqliteConnection connection, string sql, params (string, object)[] values)
     { using var command = connection.CreateCommand(); command.CommandText = sql; foreach (var (key, value) in values) command.Parameters.AddWithValue(key, value); command.ExecuteNonQuery(); }

@@ -5,6 +5,36 @@ namespace EhViewerForPc.ImageSearch.Tests;
 public sealed class ImportTests
 {
     [Fact]
+    public void TarReportCannotOverwriteInputAndBackendCannotContainInput()
+    {
+        using var scope = new TestDirectory();
+        string archive = scope.File("input.tar");
+        WriteTar(archive, [("page.png", SyntheticImages.Create(42, 160, 200).EncodePng())]);
+        byte[] before = File.ReadAllBytes(archive);
+        Assert.Throws<InvalidOperationException>(() => ImageImporter.ValidateImportPaths(scope.File("backend"), archive, archive));
+        Assert.Throws<InvalidOperationException>(() => ImageImporter.ValidateImportPaths(scope.Path, archive, scope.File("report.jsonl")));
+        Assert.Equal(before, File.ReadAllBytes(archive));
+    }
+
+    [Fact]
+    public async Task DirectoryImportUsesBoundedParallelBatchesAndKeepsInputOrder()
+    {
+        using var scope = new TestDirectory();
+        string input = scope.File("input"); Directory.CreateDirectory(input);
+        for (int i = 0; i < 12; i++)
+            File.WriteAllBytes(Path.Combine(input, $"{i:D2}.png"), i == 7 ? [1, 2, 3] : SyntheticImages.Create(42 + i, 160, 200).EncodePng());
+        string[] before = Directory.GetFiles(input).Select(p => p + "|" + new FileInfo(p).Length + "|" + File.GetLastWriteTimeUtc(p).Ticks).ToArray();
+        using var database = new ImageDatabase(scope.File("backend"), writable: true);
+        var summary = await ImageImporter.ImportAsync(database, input, scope.File("report.jsonl"), new() { Workers = 4, BatchSize = 5 }).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(11, summary.Added); Assert.Equal(1, summary.Failed);
+        string[] aliases = File.ReadAllLines(scope.File("report.jsonl")).Take(12)
+            .Select(line => { using var document = System.Text.Json.JsonDocument.Parse(line); return document.RootElement.GetProperty("alias").GetString(); }).ToArray()!;
+        Assert.Equal(Directory.GetFiles(input).Select(Path.GetFileName), aliases);
+        Assert.Equal(before, Directory.GetFiles(input).Select(p => p + "|" + new FileInfo(p).Length + "|" + File.GetLastWriteTimeUtc(p).Ticks));
+        Assert.Equal(11, database.ReadCached().Count());
+    }
+
+    [Fact]
     public async Task TarImportReportsEveryTerminalStateAndReplaysWithoutDuplicates()
     {
         using var scope = new TestDirectory();

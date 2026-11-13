@@ -77,7 +77,8 @@ Online browsing is available on first launch. To use the local library, point "L
 
 - 🔍 **Local Image Search (optional, off by default)**
   - Enable it under "Settings → Local Library" and save, then open it from the library toolbar and build the index manually; no index is created and no extra page scans run by default
-  - Index builds and updates continue in the application background after leaving or closing the search page; reopening shows progress and allows explicit cancellation. After application exit or interruption, the next launch resumes completed pages; explicit cancellation preserves progress until manually continued
+  - Index builds and updates continue in the application background after leaving or closing the search page; reopening shows progress and allows explicit cancellation. Application exit saves processed progress; after an interruption, the next launch resumes from the last committed batch; explicit cancellation preserves progress until manually continued
+  - CPU extraction uses bounded parallelism (1–4 workers by default) and ordered batch writes (10 pages per batch); unchanged updates skip snapshots and extraction. Grayscale and blur use SIMD with scalar fallback, including in default AOT builds
   - Features are stored once per content hash and extraction profile in `features.db`; incremental updates share immutable index files and reclaim unused snapshots after publication. Legacy `generations` are migrated without retaining duplicate feature databases
   - Accepts a file picker, drag and drop, clipboard images and rectangle cropping; results show the matched page, source copy and original page number, and "Read from this page" overrides history restoration while the query survives navigation back
   - The backend is pure C#, reusing SkiaSharp and SQLite with no additional runtime; a separate windowless host exists for build and verification. Source galleries are never written to
@@ -267,6 +268,8 @@ EHVIEWER_TEST_ROOT="<library-root>" dotnet test tests/EhViewerForPc.Core.Tests -
 dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
 dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=false
 ```
+
+For the index CPU / SIMD implementation, synthetic AOT performance samples and validation boundaries, see the [implementation report](docs/索引CPU并行与SIMD验证-2026-11-14.md).
 
 Test projects referencing the main application must run sequentially because Avalonia XAML compilation shares output files. The backend also provides `tools/imsearch/Build-Backend.ps1` and `Test-Backend.ps1`, each verification run using its own isolated directory.
 

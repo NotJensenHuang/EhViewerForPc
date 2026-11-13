@@ -14,7 +14,7 @@ public sealed record ImportEntry(string Alias, string Status, int FeatureCount, 
 public sealed record CachedImage(long ImageId, long FirstVectorId, BinaryDescriptor[] Descriptors);
 
 /// <summary>Stores backend metadata and descriptors with explicit transactions and schema checks.</summary>
-public sealed class ImageDatabase : IDisposable
+public sealed partial class ImageDatabase : IDisposable
 {
     private readonly string _connectionString;
     private readonly FileStream? _writerLease;
@@ -99,9 +99,14 @@ public sealed class ImageDatabase : IDisposable
     internal SqliteConnection Open()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        var connection = new SqliteConnection(_connectionString); connection.Open();
-        Execute(connection, "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
-        return connection;
+        var connection = new SqliteConnection(_connectionString);
+        try
+        {
+            connection.Open();
+            Execute(connection, "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
+            return connection;
+        }
+        catch { connection.Dispose(); throw; }
     }
 
     internal static object? Scalar(SqliteConnection c, string sql, params (string, object)[] values)
@@ -121,15 +126,23 @@ public sealed class ImageDatabase : IDisposable
     /// <summary>Commits one image, its aliases and descriptors atomically, with idempotent replay.</summary>
     public ImportEntry Add(string alias, byte[] hash, BinaryDescriptor[] descriptors, int minFeatures = 30, bool append = true, int duplicateDistance = 0, bool overwrite = false)
     {
+        using var writer = CreateImportWriter();
+        var result = writer.Add(alias, hash, descriptors, minFeatures, append, duplicateDistance, overwrite);
+        writer.Commit();
+        return result;
+    }
+
+    private ImportEntry AddCore(ImportWriter writer, string alias, byte[] hash, BinaryDescriptor[] descriptors,
+        int minFeatures, bool append, int duplicateDistance, bool overwrite)
+    {
         RequireWriter(); ValidateAlias(alias);
         if (minFeatures < 0 || hash.Length != (HashMode == ImageHashMode.Blake3 ? 32 : 8) || duplicateDistance is < 0 or > 64)
             throw new ArgumentOutOfRangeException(nameof(hash));
-        using var c = Open(); using var tx = c.BeginTransaction();
-        object? storedMinimum = Scalar(c, "SELECT value FROM meta WHERE key='minFeatures'");
+        object? storedMinimum = writer.Scalar("SELECT value FROM meta WHERE key='minFeatures'");
         if (storedMinimum is string stored && int.Parse(stored, System.Globalization.CultureInfo.InvariantCulture) != minFeatures)
             throw new InvalidDataException("Import threshold mismatch; use a new generation.");
-        if (storedMinimum is null) Execute(c, "INSERT INTO meta(key,value) VALUES('minFeatures',$value)", tx, ("$value", minFeatures.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-        object? found = Scalar(c, "SELECT id FROM image WHERE hash=$hash", ("$hash", hash));
+        if (storedMinimum is null) writer.Execute("INSERT INTO meta(key,value) VALUES('minFeatures',$value)", ("$value", minFeatures.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        object? found = writer.Scalar("SELECT id FROM image WHERE hash=$hash", ("$hash", hash));
         bool exactDuplicate = found is not null;
         if (found is null && HashMode == ImageHashMode.DHash && duplicateDistance > 0)
         {
@@ -142,46 +155,44 @@ public sealed class ImageDatabase : IDisposable
         }
         if (found is long existing)
         {
-            bool wasUnreferenced = (long)Scalar(c, "SELECT count(*) FROM alias WHERE image_id=$id", ("$id", existing))! == 0;
-            long? aliasOwner = Scalar(c, "SELECT image_id FROM alias WHERE path=$path", ("$path", alias)) as long?;
+            bool wasUnreferenced = (long)writer.Scalar("SELECT count(*) FROM alias WHERE image_id=$id", ("$id", existing))! == 0;
+            long? aliasOwner = writer.Scalar("SELECT image_id FROM alias WHERE path=$path", ("$path", alias)) as long?;
             if (aliasOwner is not null && aliasOwner != existing) throw new InvalidDataException("Alias already belongs to different content.");
-            if (overwrite) Execute(c, "DELETE FROM alias WHERE image_id=$id", tx, ("$id", existing));
-            if (append || overwrite || aliasOwner == existing) Execute(c, "INSERT OR IGNORE INTO alias(path,image_id) VALUES($path,$id)", tx, ("$path", alias), ("$id", existing));
-            int count = Convert.ToInt32(Scalar(c, "SELECT feature_count FROM image WHERE id=$id", ("$id", existing)));
-            if (exactDuplicate && count > minFeatures && Scalar(c, "SELECT image_id FROM vector WHERE image_id=$id", ("$id", existing)) is null)
+            if (overwrite) writer.Execute("DELETE FROM alias WHERE image_id=$id", ("$id", existing));
+            if (append || overwrite || aliasOwner == existing) writer.Execute("INSERT OR IGNORE INTO alias(path,image_id) VALUES($path,$id)", ("$path", alias), ("$id", existing));
+            int count = Convert.ToInt32(writer.Scalar("SELECT feature_count FROM image WHERE id=$id", ("$id", existing)));
+            if (exactDuplicate && count > minFeatures && writer.Scalar("SELECT image_id FROM vector WHERE image_id=$id", ("$id", existing)) is null)
             {
                 if (descriptors.Length != count) throw new InvalidDataException("Descriptor replay count differs from stored profile.");
                 byte[] encoded = EncodeDescriptors(descriptors);
                 if (_sharedFeatures is null)
-                    Execute(c, "INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", tx, ("$id", existing), ("$bytes", encoded));
+                    writer.Execute("INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", ("$id", existing), ("$bytes", encoded));
                 else
-                    _sharedFeatures.Store(Profile.Id, hash, encoded);
+                    writer.StoreFeatures(hash, encoded);
             }
             if (wasUnreferenced && exactDuplicate && count > minFeatures)
-                Execute(c, "UPDATE vector_stats SET indexed=0,segment=NULL WHERE image_id=$id", tx, ("$id", existing));
-            tx.Commit();
+                writer.Execute("UPDATE vector_stats SET indexed=0,segment=NULL WHERE image_id=$id", ("$id", existing));
             return new(alias, count <= minFeatures ? "skipped_low_features" : "already_present", count);
         }
-        if (Scalar(c, "SELECT image_id FROM alias WHERE path=$path", ("$path", alias)) is not null) throw new InvalidDataException("Alias already belongs to different content.");
+        if (writer.Scalar("SELECT image_id FROM alias WHERE path=$path", ("$path", alias)) is not null) throw new InvalidDataException("Alias already belongs to different content.");
         bool skipped = descriptors.Length <= minFeatures;
-        Execute(c, "INSERT INTO image(hash,feature_count,state) VALUES($hash,$count,$state)", tx,
+        writer.Execute("INSERT INTO image(hash,feature_count,state) VALUES($hash,$count,$state)",
             ("$hash", hash), ("$count", descriptors.Length), ("$state", skipped ? "skipped" : "imported"));
-        long id = (long)Scalar(c, "SELECT last_insert_rowid()")!;
-        Execute(c, "INSERT INTO alias(path,image_id) VALUES($path,$id)", tx, ("$path", alias), ("$id", id));
+        long id = (long)writer.Scalar("SELECT last_insert_rowid()")!;
+        writer.Execute("INSERT INTO alias(path,image_id) VALUES($path,$id)", ("$path", alias), ("$id", id));
         if (!skipped)
         {
-            long first = long.Parse((string)Scalar(c, "SELECT value FROM meta WHERE key='nextVectorId'")!, System.Globalization.CultureInfo.InvariantCulture);
+            long first = long.Parse((string)writer.Scalar("SELECT value FROM meta WHERE key='nextVectorId'")!, System.Globalization.CultureInfo.InvariantCulture);
             byte[] encoded = EncodeDescriptors(descriptors);
             if (_sharedFeatures is null)
-                Execute(c, "INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", tx, ("$id", id), ("$bytes", encoded));
+                writer.Execute("INSERT INTO vector(image_id,descriptors) VALUES($id,$bytes)", ("$id", id), ("$bytes", encoded));
             else
-                _sharedFeatures.Store(Profile.Id, hash, encoded);
-            Execute(c, "INSERT INTO vector_stats(image_id,first_id,vector_count) VALUES($id,$first,$count)", tx,
+                writer.StoreFeatures(hash, encoded);
+            writer.Execute("INSERT INTO vector_stats(image_id,first_id,vector_count) VALUES($id,$first,$count)",
                 ("$id", id), ("$first", first), ("$count", descriptors.Length));
-            Execute(c, "UPDATE meta SET value=$next WHERE key='nextVectorId'", tx, ("$next", checked(first + descriptors.Length).ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            writer.Execute("UPDATE meta SET value=$next WHERE key='nextVectorId'", ("$next", checked(first + descriptors.Length).ToString(System.Globalization.CultureInfo.InvariantCulture)));
         }
-        tx.Commit();
-        if (_dHashGraph is not null) { _dHashGraph.Add(new(System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(hash), 0, 0, 0)); _dHashIds.Add(id); }
+        if (_dHashGraph is not null) writer.RecordHash(hash, id);
         return new(alias, skipped ? "skipped_low_features" : "added", descriptors.Length);
     }
 
@@ -241,12 +252,7 @@ public sealed class ImageDatabase : IDisposable
     /// <summary>复用相同提取配置的内容特征，不共享可变图片缓冲。</summary>
     public BinaryDescriptor[]? ReadSharedFeatures(byte[] hash)
     {
-        byte[]? bytes = _sharedFeatures?.Read(Profile.Id, hash);
-        if (bytes is null) return null;
-        if (bytes.Length % 32 != 0 || bytes.Length > 10064 * 32) throw new InvalidDataException("Invalid shared descriptors.");
-        var descriptors = new BinaryDescriptor[bytes.Length / 32];
-        for (int i = 0; i < descriptors.Length; i++) descriptors[i] = BinaryDescriptor.Read(bytes.AsSpan(i * 32, 32));
-        return descriptors;
+        return _sharedFeatures?.ReadDescriptors(Profile.Id, hash);
     }
 
     /// <summary>回收未引用的别名和本地缓存，保留图像 / 向量 ID 墓碑，避免旧索引身份被复用。</summary>
@@ -323,7 +329,11 @@ public sealed class ImageDatabase : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        try { _sharedFeatures?.Dispose(); }
-        finally { _writerLease?.Dispose(); }
+        try { _importWriter?.Dispose(); }
+        finally
+        {
+            try { _sharedFeatures?.Dispose(); }
+            finally { _writerLease?.Dispose(); }
+        }
     }
 }

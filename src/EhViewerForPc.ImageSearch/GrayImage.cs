@@ -32,8 +32,32 @@ public sealed class GrayImage
     /// <summary>Gets the owned row-major grayscale pixels.</summary>
     public byte[] Pixels { get; }
 
+    /// <summary>只读解析尺寸，在像素分配前估算解码、规范化和特征工作区。</summary>
+    public static long EstimateWorkingSet(string path, FeatureProfile profile)
+    {
+        using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        long length = file.Length;
+        if (length is < 1 or > 50 * 1024 * 1024) throw new InvalidDataException("InputTooLarge.");
+        using var stream = new SKManagedStream(file, disposeManagedStream: false);
+        using var codec = SKCodec.Create(stream) ?? throw new InvalidDataException("UnsupportedImage.");
+        long pixels = (long)codec.Info.Width * codec.Info.Height;
+        int width = codec.Info.Width, height = codec.Info.Height;
+        if (length is < 1 or > 50 * 1024 * 1024 || width < 1 || height < 1 || width > 16000 || height > 16000 || pixels > 24_000_000)
+            throw new InvalidDataException("InputTooLarge.");
+        long decoding = 2 * length + 5 * pixels + 4L * 2048 * 2048;
+        if (decoding > 128L * 1024 * 1024) throw new InvalidDataException("InputTooLarge.");
+        if ((int)codec.EncodedOrigin >= 5) (width, height) = (height, width);
+        double normalization = Math.Min(1, 2048d / Math.Max(width, height));
+        int normalizedWidth = Math.Max(1, (int)Math.Round(width * normalization));
+        int normalizedHeight = Math.Max(1, (int)Math.Round(height * normalization));
+        double extraction = Math.Min(1, Math.Max((double)profile.MaxWidth / normalizedWidth, (double)profile.MaxHeight / normalizedHeight));
+        long orbPixels = (long)Math.Max(1, (int)Math.Round(normalizedWidth * extraction)) * Math.Max(1, (int)Math.Round(normalizedHeight * extraction));
+        // 包含金字塔、池化横向 float 缓冲的桶容量、角点 / 区域集合及规范化编码。
+        return Math.Max(decoding, 8L * 1024 * 1024 + 3L * normalizedWidth * normalizedHeight + 40 * orbPixels);
+    }
+
     /// <summary>Decodes a bounded first frame, applies EXIF orientation and an optional crop, and normalizes its size.</summary>
-    public static GrayImage Decode(byte[] encoded, ImageCrop? crop = null)
+    public static GrayImage Decode(byte[] encoded, ImageCrop? crop = null, bool useSimd = true)
     {
         if (encoded.Length is < 1 or > 50 * 1024 * 1024) throw new InvalidDataException("InputTooLarge or empty image.");
         using var data = SKData.CreateCopy(encoded);
@@ -56,6 +80,13 @@ public sealed class GrayImage
             throw new ArgumentOutOfRangeException(nameof(crop), "InvalidCrop.");
         byte[] gray = new byte[checked(rectangle.Width * rectangle.Height)];
         ReadOnlySpan<byte> rgba = bitmap.GetPixelSpan();
+        if (origin == 1)
+        {
+            for (int y = 0; y < rectangle.Height; y++)
+                ImageKernels.RgbaToGray(rgba.Slice((rectangle.Y + y) * bitmap.RowBytes + rectangle.X * 4, rectangle.Width * 4),
+                    gray.AsSpan(y * rectangle.Width, rectangle.Width), useSimd);
+        }
+        else
         for (int y = 0; y < rectangle.Height; y++)
         for (int x = 0; x < rectangle.Width; x++)
         {
@@ -77,7 +108,7 @@ public sealed class GrayImage
     }
 
     /// <summary>Reads an image without changing its source, and rejects a concurrent replacement.</summary>
-    public static GrayImage ReadFile(string path, ImageCrop? crop = null)
+    public static GrayImage ReadFile(string path, ImageCrop? crop = null, bool useSimd = true)
     {
         var before = new FileInfo(path);
         long length = before.Length, stamp = before.LastWriteTimeUtc.Ticks;
@@ -88,7 +119,7 @@ public sealed class GrayImage
             if (file.Length != length) throw new IOException("SourceChanging.");
             bytes = new byte[checked((int)length)]; file.ReadExactly(bytes);
         }
-        var image = Decode(bytes, crop);
+        var image = Decode(bytes, crop, useSimd);
         before.Refresh();
         if (!before.Exists || before.Length != length || before.LastWriteTimeUtc.Ticks != stamp) throw new IOException("SourceChanging.");
         return image;

@@ -6,16 +6,23 @@ namespace EhViewerForPc.ImageSearch;
 public sealed class SharedFeatureCache : IDisposable
 {
     private readonly SqliteConnection _connection;
+    private readonly bool _writable;
+    private SqliteCommand? _readCommand;
 
-    public SharedFeatureCache(string path)
+    public SharedFeatureCache(string path, bool writable = true)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        _writable = writable;
+        if (writable) Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         bool fresh = !File.Exists(path);
-        _connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
+        _connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false,
+            Mode = writable ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadOnly }.ToString());
         try
         {
             _connection.Open();
             using var command = _connection.CreateCommand();
+            command.CommandText = "PRAGMA busy_timeout=5000";
+            command.ExecuteNonQuery();
+            if (!writable) return;
             command.CommandText = (fresh ? "PRAGMA auto_vacuum=INCREMENTAL;" : string.Empty)
                 + "CREATE TABLE IF NOT EXISTS feature(profile TEXT NOT NULL,hash BLOB NOT NULL,descriptors BLOB NOT NULL,PRIMARY KEY(profile,hash)) WITHOUT ROWID";
             command.ExecuteNonQuery();
@@ -23,16 +30,32 @@ public sealed class SharedFeatureCache : IDisposable
         catch { _connection.Dispose(); throw; }
     }
 
+    public BinaryDescriptor[]? ReadDescriptors(string profile, byte[] hash)
+    {
+        byte[]? bytes = Read(profile, hash);
+        if (bytes is null) return null;
+        if (bytes.Length % 32 != 0 || bytes.Length > 10064 * 32) throw new InvalidDataException("Invalid shared descriptors.");
+        var descriptors = new BinaryDescriptor[bytes.Length / 32];
+        for (int i = 0; i < descriptors.Length; i++) descriptors[i] = BinaryDescriptor.Read(bytes.AsSpan(i * 32, 32));
+        return descriptors;
+    }
+
     internal byte[]? Read(string profile, byte[] hash)
     {
-        using var command = _connection.CreateCommand();
-        command.CommandText = "SELECT descriptors FROM feature WHERE profile=$profile AND hash=$hash";
-        command.Parameters.AddWithValue("$profile", profile); command.Parameters.AddWithValue("$hash", hash);
-        return command.ExecuteScalar() as byte[];
+        if (_readCommand is null)
+        {
+            _readCommand = _connection.CreateCommand();
+            _readCommand.CommandText = "SELECT descriptors FROM feature WHERE profile=$profile AND hash=$hash";
+            _readCommand.Parameters.Add("$profile", SqliteType.Text); _readCommand.Parameters.Add("$hash", SqliteType.Blob);
+            _readCommand.Prepare();
+        }
+        _readCommand.Parameters["$profile"].Value = profile; _readCommand.Parameters["$hash"].Value = hash;
+        return _readCommand.ExecuteScalar() as byte[];
     }
 
     internal void Store(string profile, byte[] hash, byte[] descriptors)
     {
+        if (!_writable) throw new InvalidOperationException("Feature reader is read-only.");
         using var command = _connection.CreateCommand();
         command.CommandText = "INSERT OR IGNORE INTO feature(profile,hash,descriptors) VALUES($profile,$hash,$descriptors)";
         command.Parameters.AddWithValue("$profile", profile); command.Parameters.AddWithValue("$hash", hash);
@@ -41,6 +64,7 @@ public sealed class SharedFeatureCache : IDisposable
 
     internal void StoreBatch(string profile, IEnumerable<(byte[] Hash, byte[] Bytes)> batch)
     {
+        if (!_writable) throw new InvalidOperationException("Feature reader is read-only.");
         using var transaction = _connection.BeginTransaction();
         using var command = _connection.CreateCommand();
         command.Transaction = transaction;
@@ -57,6 +81,7 @@ public sealed class SharedFeatureCache : IDisposable
 
     public int Prune(IEnumerable<(string Profile, byte[] Hash)> referenced)
     {
+        if (!_writable) throw new InvalidOperationException("Feature reader is read-only.");
         using var transaction = _connection.BeginTransaction();
         using (var command = _connection.CreateCommand())
         {
@@ -83,5 +108,9 @@ public sealed class SharedFeatureCache : IDisposable
         return removed;
     }
 
-    public void Dispose() => _connection.Dispose();
+    public void Dispose()
+    {
+        try { _readCommand?.Dispose(); }
+        finally { _connection.Dispose(); }
+    }
 }

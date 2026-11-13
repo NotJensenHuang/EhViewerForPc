@@ -24,7 +24,7 @@
         </ListBox.ItemTemplate>
       </ListBox>
       </Grid>
-      <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" IsVisible="{Binding HasSelection}">
+      <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" AutomationProperties.AutomationId="Bookmarks.Editor">
         <StackPanel Spacing="12" IsEnabled="{Binding IsIdle}">
           <SelectableTextBlock Text="双击书签或点击“打开”执行搜索。" TextWrapping="Wrap" Classes="secondary" />
           <StackPanel Spacing="10" IsEnabled="{Binding HasSelection}">

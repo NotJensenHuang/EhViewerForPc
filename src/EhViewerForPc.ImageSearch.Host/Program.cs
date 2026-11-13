@@ -40,7 +40,7 @@ internal static class Program
                 case "add":
                     var import = await ImageImporter.ImportAsync(database, Input(position), Required(options, "report-json"), new()
                     {
-                        Workers = Integer(options, "workers", 2), MinFeatures = Integer(options, "min-keypoints", 30),
+                        Workers = Integer(options, "workers", 2), BatchSize = Integer(options, "batch-size", 10), MinFeatures = Integer(options, "min-keypoints", 30),
                         Suffixes = options.GetValueOrDefault("suffix", "jpg,jpeg,png,webp,gif").Split(','), Filter = options.GetValueOrDefault("filter"),
                         Append = !options.ContainsKey("ignore"), Overwrite = options.ContainsKey("overwrite"),
                         ReplacePattern = options.GetValueOrDefault("replace"), Replacement = options.GetValueOrDefault("replacement", ""),
@@ -133,7 +133,7 @@ internal static class Program
 
     private static void PrintHelp() => Console.WriteLine("""
         imsearch C# backend --conf-dir <state> <command> [input] [options]
-        add <directory|tar> --report-json <outside-source.jsonl> [--workers 1|2] [--min-keypoints 30] [--suffix jpg,png,webp] [--filter regex] [--replace regex replacement] [--hash blake3|dhash] [--ignore|--append|--overwrite] [--phash-distance 0..64]
+        add <directory|tar> --report-json <outside-source.jsonl> [--workers 1..6] [--batch-size 1..10] [--min-keypoints 30] [--suffix jpg,png,webp] [--filter regex] [--replace regex replacement] [--hash blake3|dhash] [--ignore|--append|--overwrite] [--phash-distance 0..64]
         train --centers K --images N [--max-iter 20] [--init random|kmeans-plus-plus] [--no-2level] [--seed 20261112]
         Training defaults to <=4000000 descriptors; --training-vector-limit N (<=64000000) explicitly raises the memory budget.
         build [--batch-size 2000] [--stop-before-merge] [--stop-after-segments N] [--clean-before-merge]

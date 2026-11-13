@@ -3,6 +3,33 @@ namespace EhViewerForPc.ImageSearch.Tests;
 public sealed class StorageTests
 {
     [Fact]
+    public void BatchedWriterCommitsSharedFeaturesBeforeMetadataAndRollsBackUnfinishedBatch()
+    {
+        using var scope = new TestDirectory();
+        using var database = new ImageDatabase(scope.File("backend"), writable: true);
+        database.UseSharedFeatureCache(scope.File("shared.db"));
+        using (var writer = database.CreateImportWriter())
+        {
+            for (int i = 0; i < 3; i++) writer.Add($"{i}.png", Blake3.Hash([(byte)i]), AlgorithmTests.Descriptors(90, i));
+            Assert.Empty(database.ReadCached());
+            Assert.Throws<InvalidOperationException>(() => database.CreateImportWriter());
+            writer.Commit();
+            Assert.Equal(3, database.ReadCached().Count());
+            writer.Add("uncommitted.png", Blake3.Hash([3]), AlgorithmTests.Descriptors(90, 3));
+        }
+        Assert.Equal(3, database.ReadCached().Count());
+        using (var failed = database.CreateImportWriter())
+        {
+            failed.Add("valid.png", Blake3.Hash([4]), AlgorithmTests.Descriptors(90, 4));
+            Assert.Throws<InvalidDataException>(() => failed.Add("../unsafe.png", Blake3.Hash([5]), AlgorithmTests.Descriptors(90, 5)));
+            Assert.True(failed.IsFaulted);
+            Assert.Throws<InvalidOperationException>(() => failed.Commit());
+        }
+        Assert.Equal(3, database.ReadCached().Count());
+        database.CheckIntegrity();
+    }
+
+    [Fact]
     public void LinkedSnapshotPublishesIndependentlyWhileOriginalBucketIsBeingRead()
     {
         using var scope = new TestDirectory();

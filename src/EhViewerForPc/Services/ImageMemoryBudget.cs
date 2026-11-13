@@ -24,8 +24,21 @@ public static class ImageMemoryBudget
         {
             if (bytes < 0 || bytes > _limit - _used || (scratch && bytes > _limit / 2))
                 throw new InvalidOperationException($"图像解码需要 {bytes / 1024 / 1024} MB，超出图像内存预算。可选择压缩图或在设置中增加预算。");
+            var reservation = new Reservation(bytes);
             _used += bytes;
-            return new Reservation(bytes);
+            return reservation;
+        }
+    }
+
+    public static bool TryReserve(long bytes, out IDisposable? reservation)
+    {
+        lock (Gate)
+        {
+            reservation = null;
+            if (bytes < 0 || bytes > _limit - _used) return false;
+            reservation = new Reservation(bytes);
+            _used += bytes;
+            return true;
         }
     }
 

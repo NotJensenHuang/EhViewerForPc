@@ -1,5 +1,14 @@
 # 变更记录
 
+## 2026-11-14 实现索引 CPU 并行、批量写入与 SIMD
+- `ImageSearch/OrderedImagePipeline.cs`、`ImageWorkBudget.cs`、`Services/LocalImageSearchService.Pipeline.cs`：有界提取、原页序消费、共享图像内存预留、可取消背压及完整收尾；默认自动选择 1–4 个 worker。
+- `ImageSearch/ImageDatabase.ImportWriter.cs`、`SharedFeatureCache.cs`：复用连接与预编译语句，每 10 页按共享特征 / 后端 / 清单顺序提交检查点，取消保存健康部分，失败回滚当前批。
+- `Services/LocalImageSearchService.cs`：无变化更新保留发布快照，跳过复制 / 提取 / 训练 / 合并；记录分阶段诊断，不改变提取配置或数据格式。
+- `ImageSearch/ImageKernels.cs`、`GrayImage.cs`、`OrbExtractor.cs`：灰度和高斯模糊增加 AVX2 / SSE2 与标量回退，默认 x64 AOT 使用 SSE2；保持舍入、透明度和特征兼容。
+- `ImageSearch/ImageImporter.cs`、`ImageSearch.Host/Program.cs`：独立目录导入复用有界管线，支持 1–6 worker 和 1–10 条写入批次；归档源与可写路径强制分离，阻止报告覆盖输入 Tar。
+- `Views/BookmarksView.axaml`：未选择书签时保留编辑区域，禁用输入与操作，选中后启用。
+- `tests/`：增加 SIMD 等价、乱序背压、失败与内存等待取消、批次回滚、无变化更新及书签禁用状态回归。
+
 ## 2026-11-13 重设计索引存储并恢复中断任务
 - `ImageSearch/SharedFeatureCache.cs`、`ImageDatabase.cs`：将多代重复描述子迁入单份按提取配置 / 内容哈希去重的 SQLite 特征库；按批提交迁移后再删除旧副本，清理无引用内容。
 - `ImageSearch/ImmutableFileLinks.cs`、`ImageSearchEngine.cs`、`DiskInvertedIndex.cs`：增量快照优先硬链接不可变文件，安全替换新文件；保留在途读取，清理崩溃残留段，删除后再加入的内容正确重入索引。
