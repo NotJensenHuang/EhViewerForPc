@@ -19,7 +19,7 @@
                            Request="{Binding SingleRequest}"
                            PreloadRequest="{Binding PreloadRequest}"
                            FitMode="{Binding FitMode}"
-                           RightToLeft="{Binding RightToLeft}"
+                           RightToLeft="False"
                            MaxMegapixels="{Binding MaxMegapixels}"
                            MaxDimension="{Binding MaxDimension}"
                            PageTurnRequested="OnPageTurnRequested" />

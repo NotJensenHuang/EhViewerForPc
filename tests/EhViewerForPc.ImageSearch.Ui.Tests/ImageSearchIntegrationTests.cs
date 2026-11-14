@@ -24,6 +24,98 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
 public sealed class ImageSearchIntegrationTests
 {
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectionOnlyChangesHorizontalArrangementAndNeverReversesInputs(bool rightToLeft)
+    {
+        using var scope = new Fixture(); var gallery = scope.CreateCopies()[0];
+        scope.Services.Settings.RightToLeft = rightToLeft;
+        using var page = new ReaderPage(new ReaderViewModel(scope.Services, gallery, initialPageNumber: 3));
+        var window = new Window { Width = 740, Height = 600, Content = page };
+        try
+        {
+            window.Show();
+            foreach (var mode in new[] { ReadingMode.Single, ReadingMode.Continuous, ReadingMode.Double })
+            {
+                await page.ViewModel.SetModeAsync(mode);
+                if (mode == ReadingMode.Double) page.ViewModel.SetDirection(rightToLeft);
+                else { page.ViewModel.ToggleDirection(); Assert.Equal(rightToLeft, page.ViewModel.RightToLeft); }
+                page.ViewModel.TryNavigateToPageNumber(3);
+                await Task.Delay(100); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+                page.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Left });
+                Assert.Equal("2 / 5", page.ViewModel.PageLabel);
+                page.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Right });
+                Assert.Equal("3 / 5", page.ViewModel.PageLabel);
+                Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+                if (mode == ReadingMode.Single)
+                {
+                    Assert.True(page.SimulateWheelForTest(-1));
+                    Assert.Equal("4 / 5", page.ViewModel.PageLabel);
+                }
+                else
+                {
+                    var scroll = page.FindControl<ScrollViewer>(mode == ReadingMode.Double ? "HorizontalScroll" : "ContinuousScroll")!;
+                    scroll.Offset = mode == ReadingMode.Double ? new Vector(200, 0) : new Vector(0, 200);
+                    await Task.Delay(100); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+                    double before = mode == ReadingMode.Double ? scroll.Offset.X : scroll.Offset.Y;
+                    var point = scroll.TranslatePoint(new Point(100, 100), window)!.Value;
+                    window.MouseWheel(point, new Vector(0, -1));
+                    Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+                    double after = mode == ReadingMode.Double ? scroll.Offset.X : scroll.Offset.Y;
+                    Assert.True(after > before, $"{mode}, RTL={rightToLeft}: wheel {before} -> {after}");
+                }
+            }
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task ReopenedSearchPageBindsRealBuildStageCounts()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        Task build = scope.Services.ImageSearch.BuildAsync(copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray(),
+            new InlineIndexProgress(p =>
+            {
+                if (p.IndexProgress is not { Stage: IndexBuildStage.Assigning, Total: > 0 } value || value.Completed != value.Total) return;
+                reached.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(20))) throw new TimeoutException("Progress observer release");
+            }), CancellationToken.None);
+        Window? window = null;
+        try
+        {
+            await reached.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            using var vm = new ImageSearchViewModel(scope.Services, () => copies);
+            using var page = new ImageSearchPage(vm);
+            window = new Window { Width = 540, Height = 420, Content = page }; window.Show();
+            Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+            var bar = window.GetVisualDescendants().OfType<ProgressBar>().Single(b => AutomationProperties.GetAutomationId(b) == "ImageSearch.Progress");
+            Assert.True(bar.IsEffectivelyVisible); Assert.False(bar.IsIndeterminate); Assert.Equal(1, bar.Value);
+            Assert.Contains("个特征", vm.StatusText); Assert.Equal(6, vm.ProcessedPages);
+        }
+        finally { release.Set(); window?.Close(); await build; }
+    }
+
+    [AvaloniaFact]
+    public async Task BuildReportsItsWorkAfterPageExtractionFinishes()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var statuses = new List<LocalImageSearchStatus>();
+        await scope.Services.ImageSearch.BuildAsync(copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray(),
+            new InlineIndexProgress(statuses.Add), CancellationToken.None);
+        var messages = statuses.Select(p => p.Message).ToArray();
+        Assert.Contains(messages, message => message.StartsWith("正在分配图片特征", StringComparison.Ordinal));
+        Assert.Contains(messages, message => message.StartsWith("正在合并图片索引", StringComparison.Ordinal));
+        Assert.Contains(messages, message => message.StartsWith("正在校验图片索引", StringComparison.Ordinal));
+        Assert.Contains(statuses, p => p.IndexProgress is { Stage: IndexBuildStage.Assigning, Total: > 0 });
+        Assert.Contains(statuses, p => p.IndexProgress is { Stage: IndexBuildStage.ValidatingIndex, Total: > 0 });
+        Assert.All(statuses.Where(p => p.IndexProgress is not null), p => Assert.Equal(6, p.Processed));
+    }
+
     [AvaloniaFact]
     public async Task CpuAndAutomaticGpuPublishIdenticalIndexesAndReleaseMemory()
     {
@@ -514,7 +606,7 @@ public sealed class ImageSearchIntegrationTests
             Assert.True(read.IsEnabled);
             var readBg = Assert.IsAssignableFrom<ISolidColorBrush>(read.Background).Color;
             var readFg = Assert.IsAssignableFrom<ISolidColorBrush>(read.Foreground).Color;
-            var surface = Assert.IsType<Border>(read.Parent);
+            var surface = read.GetVisualAncestors().OfType<Border>().First(b => AutomationProperties.GetAutomationId(b) == "Library.ReadSurface");
             var opaque = Assert.IsAssignableFrom<ISolidColorBrush>(surface.Background).Color;
             Assert.Equal(255, opaque.A);
             double alpha = readBg.A / 255d;
@@ -746,7 +838,10 @@ public sealed class ImageSearchIntegrationTests
             Dispatcher.UIThread.RunJobs();
             Assert.Same(more, menu.Target);
             Assert.True(menu.IsOpen);
-            Assert.Equal(reader.ViewModel.DirectionLabel, Assert.IsType<MenuItem>(menu.Items[0]).Header);
+            var directions = menu.Items.OfType<MenuItem>().Take(2).ToArray();
+            Assert.Equal(new[] { "左→右", "右→左" }, directions.Select(m => m.Header));
+            Assert.All(directions, item => Assert.False(item.IsEnabled));
+            Assert.Equal(reader.ViewModel.RightToLeft, directions[1].IsChecked);
             menu.Hide();
             var missing = reader.GetVisualDescendants().OfType<SelectableTextBlock>().Single(c => AutomationProperties.GetAutomationId(c) == "Reader.MissingPage");
             Assert.True(missing.IsEffectivelyVisible);
@@ -923,7 +1018,7 @@ public sealed class ImageSearchIntegrationTests
 
     private sealed class Fixture : IDisposable
     {
-        private readonly string _root = Path.Combine(Path.GetTempPath(), "EhSearchUI-" + Guid.NewGuid().ToString("N"));
+        private readonly string _root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../.qa/progress-repair-20261114/ui-" + Guid.NewGuid().ToString("N")));
         internal AppServices Services { get; }
         internal Fixture()
         {

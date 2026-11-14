@@ -20,7 +20,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
         nameof(Info), nameof(StableId), nameof(WorkId), nameof(Title), nameof(FolderName),
         nameof(FolderPath), nameof(FolderPathDisplay), nameof(Gid), nameof(GidText),
         nameof(PageCount), nameof(CanRead), nameof(PageCountText), nameof(LanguageText), nameof(HasLanguages),
-        nameof(IsIncomplete), nameof(HasMissingPages), nameof(HasZeroByteFiles), nameof(IsEmpty),
+        nameof(IsIncomplete), nameof(HasMissingPages), nameof(HasZeroByteFiles), nameof(IsEmpty), nameof(CanContinueDownload),
         nameof(IsDuplicateGid), nameof(IncompleteText), nameof(MissingText), nameof(ExtensionSummary),
         nameof(ExpectedPagesText), nameof(LastWriteText), nameof(CoverSourceText), nameof(HeaderErrorText),
         nameof(ProgressDetail), nameof(TooltipText), nameof(Details), nameof(CoverRequest),
@@ -110,6 +110,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public bool HasLanguages => Info.Languages.Length > 0;
     public bool IsIncomplete => Info.IsIncomplete;
+    public bool CanContinueDownload => IsIncomplete && Gid is > 0 && !Info.HasGidConflict && !(_downloadIsPrimary && IsDownloadActive);
     public bool HasMissingPages => Info.HasMissingPages;
     public bool HasZeroByteFiles => Info.ZeroByteFiles > 0;
     public bool IsEmpty => Info.PageCount == 0;
@@ -296,6 +297,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(DownloadFraction));
         OnPropertyChanged(nameof(DownloadStatusText));
         OnPropertyChanged(nameof(DownloadAutomationText));
+        OnPropertyChanged(nameof(CanContinueDownload));
     }
 
     public string ProgressText
@@ -412,6 +414,7 @@ public sealed class GalleryVersionViewModel
     }
 
     public bool IsIncomplete => Info.IsIncomplete;
+    public bool CanContinueDownload => IsIncomplete && Info.Gid is > 0 && !Info.HasGidConflict;
 
     public string LastWriteText => Info.LastWriteUtc == default
         ? "—"

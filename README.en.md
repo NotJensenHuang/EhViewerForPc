@@ -41,7 +41,7 @@ Online browsing is available on first launch. To use the local library, point "L
 ## 🌟 Key Features
 
 - 📚 **Local Library**
-  - Strictly read-only: opened with `FileAccess.Read` only, with no write APIs in use; the self-test compares before/after snapshots of path, size and mtime
+  - Source files are no longer subject to a global read-only constraint. Scanning, reading and indexing still leave them unchanged; the self-test compares before/after snapshots of path, size and mtime. Clicking "Continue download" adds missing pages in the selected copy's original folder, preserving existing images and metadata. This change adds no edit/delete controls
   - Reads directory layouts produced by EhViewer-style apps: VERSION1 / VERSION2 / CBOR metadata, 8-digit page filenames, `.thumb` covers and `.ehviewer` files containing GID, token and page count
   - Multiple data sources are merged by `WorkId` into one card with a copy-count badge; version management lets you choose a copy and a default, while progress is shared per work
   - Search by title, folder or GID; sorting, language and progress filters, favourites and duplicate-copy flags
@@ -51,6 +51,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - Single page (fit page / width / height / original, 1x–8x zoom, dragging, wheel / click / keyboard paging), vertical continuous and horizontal continuous modes (the whole strip is reversed for RTL); double-page spreads keep their original aspect ratio
   - Progress is stored as "original page number + in-page offset"; online reading and local copies share one progress key, so reading continues after a download
   - Local and downloaded copies retain missing-page slots and the original total; missing pages show a placeholder while later page numbers and progress stay aligned
+  - The More menu lists both left-to-right and right-to-left options, controlling horizontal continuous layout only and disabled in other modes. Arrow keys, the wheel and single-page click zones keep fixed directions
   - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
   - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
   - The reader opens inside the main window only; immersive mode hides the sidebar and title, and Esc exits it
@@ -60,6 +61,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - A download engine independent of the local library: the queue is persisted in `downloads.json`, resumes from its last state after exit or a crash, and completed tasks move to the download archive
   - Configurable download root and subdirectory rules; with "register download directory as source" and automatic updates enabled, a gallery is indexed as soon as its first image lands, without rescanning other sources
   - Incomplete copies remain readable and reaching the current last page does not mark the whole work as finished; gallery concurrency 1–8, per-gallery page concurrency 1–8, with serialized throttling on pagination requests
+  - Local cards, details and version rows offer "Continue download" for the selected copy's exact original folder without changing the global download root; a GID and token are required. Conflicting original files are preserved and reported as failed pages. Repair tasks can be removed from the queue, but cannot delete the original folder
   - Completed pages are detected by 8-digit filenames, so retries fetch only missing pages and failures are recorded per page; the output layout and metadata remain readable by similar apps
   - When an original image link is unavailable, the reader falls back to the resized image and shows the quality actually used
   - Changing the download root offers "use the new location for future downloads only" and "move existing downloads and update paths". A move pauses writes, verifies files and synchronises tasks, archives and library paths, with cancellation and interrupted-move recovery
@@ -78,6 +80,7 @@ Online browsing is available on first launch. To use the local library, point "L
 - 🔍 **Local Image Search (optional, off by default)**
   - Enable it under "Settings → Local Library" and save, then open it from the library toolbar and build the index manually; no index is created and no extra page scans run by default
   - Index builds and updates continue in the application background after leaving or closing the search page; reopening shows progress and allows explicit cancellation. Application exit saves processed progress; after an interruption, the next launch resumes from the last committed batch; explicit cancellation preserves progress until manually continued
+  - Building shows actual feature-assignment counts, merged partitions, checksum bytes and the current stage percentage. Stages without a known total use an activity indicator; extracted-page counts are not presented as build progress
   - The CPU index pipeline defaults to logical processor count minus 2 (1–32 workers), with a 128–1024 MiB workspace and separate reader/index quotas. On Windows, the app automatically tries ComputeSharp / DirectX 12 for FAST scores and large training Hamming-distance assignments, falling back to CPU if unavailable or failed. Grayscale and blur retain SIMD. CPU and GPU share the original extraction identity; existing indexes do not need rebuilding; area resizing reuses geometric weights while retaining identical pixels
   - Page tasks and completion states are persisted in batches. New jobs resume directly from their pending queue; training/building resumes do not first fall back to a full source-page scan. Before publication, source changes are checked in a separate, checkpointed stage. Source-image reads are serialized and synchronous I/O uses Windows background priority, while decoding and computation remain bounded and parallel. Unchanged updates skip snapshots and extraction
   - Features are stored once per content hash and extraction profile in `features.db`; incremental updates share immutable index files and reclaim unused snapshots after publication. Legacy `generations` are migrated without retaining duplicate feature databases
@@ -218,7 +221,7 @@ Main window: `Ctrl+F` focuses the current page's search box, `F5` refreshes the 
 
 | Key | Action |
 | :--- | :--- |
-| ← / → | Page turn (direction follows reading order) |
+| ← / → | Previous / next page, fixed regardless of page arrangement |
 | PageUp / PageDown / Space | Page turn |
 | Home / End | First / last page |
 | + / - / 0 | Zoom in / out / fit page |
@@ -226,7 +229,7 @@ Main window: `Ctrl+F` focuses the current page's search box, `F5` refreshes the 
 | Double click | Toggle fit page ↔ 100% |
 | Wheel | Single page: pan when content overflows, then turn pages at the edge; horizontal mode: scroll horizontally |
 | F11 / Esc | Fullscreen / exit fullscreen (press again to close) |
-| M / D / B / ? | Mode (single → vertical → horizontal) / direction / background / shortcut help |
+| M / D / B / ? | Mode (single → vertical → horizontal) / horizontal page arrangement / background / shortcut help |
 
 ## 🗂️ Data Storage
 

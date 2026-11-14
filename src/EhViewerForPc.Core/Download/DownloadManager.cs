@@ -15,7 +15,7 @@ namespace EhViewerForPc.Core.Download;
 /// registered as a library source (that is what makes "downloads" a data source
 /// the user can point anywhere, label and re-enable at will).
 /// </summary>
-public sealed class DownloadManager : IDisposable
+public sealed partial class DownloadManager : IDisposable
 {
     private readonly AppPaths _paths;
     private readonly AppSettings _settings;
@@ -413,6 +413,7 @@ public sealed class DownloadManager : IDisposable
 
     public void Remove(DownloadTask task, bool deleteFiles)
     {
+        if (deleteFiles && task.FillMissingOnly) throw new InvalidOperationException("补页任务保留原目录，请只移除任务。");
         bool deleteNow;
         lock (_gate)
         {
@@ -551,7 +552,7 @@ public sealed class DownloadManager : IDisposable
                 task.Message = task.ResampledPages.Count == 0 ? "已完成" : $"已完成（{task.ResampledPages.Count} 页使用压缩图）";
                 task.FinishedUtc = DateTime.UtcNow.ToString("O");
                 task.TotalBytes = FolderSize(task.FolderPath);
-                _archive.RemoveAll(e => e.Gid == task.Gid);
+                _archive.RemoveAll(e => PathIdentity.Comparer.Equals(e.FolderPath, task.FolderPath));
                 _archive.Insert(0, new DownloadArchiveEntry
                 {
                     Gid = task.Gid,
@@ -617,16 +618,23 @@ public sealed class DownloadManager : IDisposable
 
     private async Task ExecuteAsync(DownloadTask task, CancellationToken token)
     {
-        Directory.CreateDirectory(RootPath);
+        if (task.FillMissingOnly) ValidateRepairTarget(task.FolderPath, task.DestinationRoot);
+        else Directory.CreateDirectory(RootPath);
         if (task.FolderPath.Length == 0)
         {
             task.FolderPath = BuildFolderPath(task, RootPath);
         }
 
-        Directory.CreateDirectory(task.FolderPath);
+        if (!task.FillMissingOnly) Directory.CreateDirectory(task.FolderPath);
 
         task.Message = "获取页面列表";
         RaiseTask(task);
+
+        if (task.FillMissingOnly)
+        {
+            var details = await _client.GetDetailsAsync(task.Gid, task.Token, token).ConfigureAwait(false);
+            if (details.Pages > 0) task.PageCount = details.Pages;
+        }
 
         IReadOnlyList<EhPageRef> pages = await _client
             .GetAllPagesAsync(task.Gid, task.Token, task.PageCount, null, token)
@@ -645,10 +653,12 @@ public sealed class DownloadManager : IDisposable
             SaveLocked();
         }
 
-        if (_settings.Download.WriteEhviewerHeader)
+        if (_settings.Download.WriteEhviewerHeader && !task.FillMissingOnly)
             await File.WriteAllTextAsync(Path.Combine(task.FolderPath, ".ehviewer"), BuildEhviewerHeader(task), new UTF8Encoding(false), token).ConfigureAwait(false);
 
-        int already = pages.Count(p => HasPageFile(task.FolderPath, p.Page));
+        var repairPages = task.FillMissingOnly ? ReadExistingRepairPages(task.FolderPath) : null;
+        bool HasPage(int page) => repairPages?.Contains(page) ?? HasPageFile(task.FolderPath, page);
+        int already = pages.Count(p => HasPage(p.Page));
         task.DownloadedPages = already;
         task.Message = "下载中";
         RaiseTask(task);
@@ -669,7 +679,7 @@ public sealed class DownloadManager : IDisposable
             string pageUrl = page.PageUrl.Length > 0 ? page.PageUrl : EhUrls.ImagePage(_client.Site, page);
             try
             {
-                if (HasPageFile(task.FolderPath, page.Page)) return;
+                if (HasPage(page.Page)) return;
 
                 var cached = await _images.GetAsync(page, task.Quality == ImageQuality.Original, innerToken, task.ResampledWidth).ConfigureAwait(false);
                 string extension = ImageSignature.DetectFile(cached.Path) switch
@@ -677,14 +687,19 @@ public sealed class DownloadManager : IDisposable
                     ImageKind.Png => ".png", ImageKind.Gif => ".gif", ImageKind.Webp => ".webp", _ => ".jpg"
                 };
                 string target = Path.Combine(task.FolderPath, page.Page.ToString("D8", CultureInfo.InvariantCulture) + extension);
-                string temporary = target + ".part";
+                if (task.FillMissingOnly)
+                {
+                    ValidateRepairTarget(task.FolderPath, task.DestinationRoot);
+                    target = GetRepairPagePath(task.FolderPath, page.Page, extension);
+                }
+                string temporary = task.FillMissingOnly ? target + "." + Guid.NewGuid().ToString("N") + ".part" : target + ".part";
                 try
                 {
                     await using (var input = File.OpenRead(cached.Path))
                     await using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
                         await input.CopyToAsync(output, innerToken).ConfigureAwait(false);
                     innerToken.ThrowIfCancellationRequested();
-                    File.Move(temporary, target, true);
+                    File.Move(temporary, target, overwrite: !task.FillMissingOnly);
                 }
                 finally { try { File.Delete(temporary); } catch (IOException) { } }
                 if (task.Quality == ImageQuality.Original && !cached.IsOriginal)
@@ -711,19 +726,22 @@ public sealed class DownloadManager : IDisposable
 
         token.ThrowIfCancellationRequested();
 
+        var remaining = task.FillMissingOnly ? ReadExistingRepairPages(task.FolderPath) : null;
+        if (remaining is not null)
+            failed.AddRange(pages.Where(p => !remaining.Contains(p.Page)).Select(p => p.Page));
         lock (_gate)
         {
-            task.FailedPages = failed.OrderBy(p => p).ToList();
-            task.DownloadedPages = pages.Count(p => HasPageFile(task.FolderPath, p.Page));
+            task.FailedPages = failed.Distinct().OrderBy(p => p).ToList();
+            task.DownloadedPages = pages.Count(p => remaining?.Contains(p.Page) ?? HasPageFile(task.FolderPath, p.Page));
             SaveLocked();
         }
 
-        if (failed.Count > 0)
+        if (task.FailedPages.Count > 0)
         {
-            throw new EhException($"{failed.Count} 页下载失败（可重试）");
+            throw new EhException($"{task.FailedPages.Count} 页下载失败（可重试）");
         }
 
-        await WriteMetadataAsync(task, token).ConfigureAwait(false);
+        if (!task.FillMissingOnly) await WriteMetadataAsync(task, token).ConfigureAwait(false);
     }
 
     private async Task WriteMetadataAsync(DownloadTask task, CancellationToken token)

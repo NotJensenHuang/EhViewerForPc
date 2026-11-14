@@ -12,7 +12,7 @@ namespace EhViewerForPc.Services;
 /// Application-wide service container. Created once on the UI thread before the
 /// main window is shown and disposed when the application exits.
 /// </summary>
-public sealed class AppServices : IDisposable
+public sealed partial class AppServices : IDisposable
 {
     private bool _disposed;
     private readonly object _settingsSaveGate = new();

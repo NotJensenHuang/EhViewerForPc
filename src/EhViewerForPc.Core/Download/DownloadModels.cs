@@ -19,6 +19,9 @@ public enum DownloadState
 /// </summary>
 public sealed class DownloadTask
 {
+    public string TaskKey { get; set; } = string.Empty;
+    /// <summary>仅在用户主动补页时写入指定的既有副本，不覆盖原文件或元数据。</summary>
+    public bool FillMissingOnly { get; set; }
     public long Gid { get; set; }
     public string Token { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
@@ -43,7 +46,7 @@ public sealed class DownloadTask
     public List<int> ResampledPages { get; set; } = [];
 
     [JsonIgnore]
-    public string Id => Gid.ToString(CultureInfo.InvariantCulture);
+    public string Id => string.IsNullOrEmpty(TaskKey) ? Gid.ToString(CultureInfo.InvariantCulture) : TaskKey;
 
     [JsonIgnore]
     public bool IsFinished => State == DownloadState.Completed;

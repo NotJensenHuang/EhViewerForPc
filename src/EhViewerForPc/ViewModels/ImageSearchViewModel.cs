@@ -41,6 +41,9 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     private byte[]? _input;
     private int _requestVersion;
     private bool _disposed;
+    private IndexBuildProgress? _indexProgress;
+    public bool IsProgressIndeterminate => !IsBuilding || _indexProgress is not { Total: > 0 };
+    public double ProgressFraction => _indexProgress?.Fraction ?? 0;
     [ObservableProperty] private string _statusText = "正在读取索引状态…";
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _isBuilding;
@@ -85,6 +88,9 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
             StatusText = status.Message;
             ProcessedPages = status.Processed;
             TotalPages = status.Total;
+            _indexProgress = status.IndexProgress;
+            OnPropertyChanged(nameof(IsProgressIndeterminate));
+            OnPropertyChanged(nameof(ProgressFraction));
             if (!IsBuilding) HasPendingBuild = status.CanResume;
         }
         NotifyAvailability();
@@ -117,6 +123,7 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
     partial void OnHasPendingBuildChanged(bool value) => OnPropertyChanged(nameof(IndexActionLabel));
 
     partial void OnIsBusyChanged(bool value) => NotifyAvailability();
+    partial void OnIsBuildingChanged(bool value) => OnPropertyChanged(nameof(IsProgressIndeterminate));
     partial void OnHasIndexChanged(bool value) => NotifyAvailability();
     partial void OnIndexedPagesChanged(int value) => OnPropertyChanged(nameof(Coverage));
     private void NotifyAvailability()

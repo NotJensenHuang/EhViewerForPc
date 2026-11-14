@@ -13,7 +13,10 @@ namespace EhViewerForPc.Services;
 /// <summary>Captures immutable gallery scalars before leaving the UI thread.</summary>
 public sealed record ImageSearchGallery(string SourceId, string StableId, string WorkId, string Folder);
 /// <summary>Reports the current index job without exposing backend details in the search flow.</summary>
-public sealed record LocalImageSearchStatus(string Message, int Processed = 0, int Total = 0, int Indexed = 0, int Skipped = 0, int Failed = 0, int Reused = 0, bool CanResume = false);
+public sealed record LocalImageSearchStatus(string Message, int Processed = 0, int Total = 0, int Indexed = 0, int Skipped = 0, int Failed = 0, int Reused = 0, bool CanResume = false)
+{
+    public IndexBuildProgress? IndexProgress { get; init; }
+}
 /// <summary>Identifies an exact physical page and its owning local copy.</summary>
 public sealed record LocalImageSearchHit(GalleryInfo Gallery, int PageNumber, string FilePath, long Length, long MtimeTicks, float Score, string GenerationId);
 /// <summary>Requests explicit navigation to an original page number in a concrete copy.</summary>
@@ -379,7 +382,10 @@ public sealed partial class LocalImageSearchService : IDisposable
                     SaveBuildCheckpoint(root, job);
                     progress?.Report(new("正在构建图片索引…", extraction.Processed, job.TotalPages, extraction.Indexed, extraction.Skipped, extraction.Failed));
                     long started = System.Diagnostics.Stopwatch.GetTimestamp();
-                    ImageSearchEngine.Build(backend, cancellationToken: token, allowedImageIds: backend.AliasedImageIds(), workers: options.Workers);
+                    ImageSearchEngine.Build(backend, new IndexProgressObserver(value =>
+                        progress?.Report(new(DescribeIndexProgress(value), extraction.Processed, job.TotalPages,
+                            extraction.Indexed, extraction.Skipped, extraction.Failed, extraction.Reused) { IndexProgress = value })),
+                        cancellationToken: token, allowedImageIds: backend.AliasedImageIds(), workers: options.Workers);
                     if (BuildStatistics is { } statistics)
                         Volatile.Write(ref _statistics, statistics with { IndexMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds });
                     needsBuild = resumeBuild = false;

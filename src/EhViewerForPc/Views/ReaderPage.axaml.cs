@@ -190,9 +190,8 @@ public partial class ReaderPage : DocumentPage
 
         // Small per-notch step keeps horizontal panning pixel-smooth instead
         // of jumping half a viewport per wheel tick.
-        double step = Math.Clamp(HorizontalScroll.Viewport.Width * 0.12, 48, 240) * Math.Abs(delta);
-        double direction = _viewModel.RightToLeft ? delta : -delta;
-        HorizontalScroll.Offset = HorizontalScroll.Offset + new Vector(direction * step, 0);
+        double step = Math.Clamp(HorizontalScroll.Viewport.Width * 0.12, 48, 240) * delta;
+        HorizontalScroll.Offset = HorizontalScroll.Offset + new Vector(-step, 0);
     }
 
     private void OnPageTurnRequested(object? sender, PageTurnEventArgs e)
@@ -223,6 +222,7 @@ public partial class ReaderPage : DocumentPage
     }
 
     internal void ToggleDirection() => _viewModel.ToggleDirection();
+    internal void SetDirection(bool rightToLeft) => _viewModel.SetDirection(rightToLeft);
 
     internal void ToggleBackground() => _viewModel.ToggleBackground();
 
@@ -254,7 +254,6 @@ public partial class ReaderPage : DocumentPage
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.KeyModifiers.HasFlag(KeyModifiers.Alt) && e.Key is Key.Left or Key.Right) return;
-        bool rtl = _viewModel.RightToLeft;
         switch (e.Key)
         {
             case Key.Escape:
@@ -277,12 +276,12 @@ public partial class ReaderPage : DocumentPage
                 return;
 
             case Key.Left:
-                _viewModel.Step(rtl ? 1 : -1);
+                _viewModel.Step(-1);
                 e.Handled = true;
                 return;
 
             case Key.Right:
-                _viewModel.Step(rtl ? -1 : 1);
+                _viewModel.Step(1);
                 e.Handled = true;
                 return;
 
@@ -366,7 +365,7 @@ public partial class ReaderPage : DocumentPage
         const string text = """
             阅读器快捷键
 
-            ← / →        翻页（随阅读方向自动反转）
+            ← / →        上一页 / 下一页
             PageUp / PageDown / 空格   翻页
             Home / End   首页 / 末页
             + / - / 0    放大 / 缩小 / 适应
@@ -378,7 +377,7 @@ public partial class ReaderPage : DocumentPage
             F11          全屏
             Esc          退出全屏；再按关闭阅读器
             M            切换单页 / 纵向连续 / 横向连续
-            D            切换阅读方向
+            D            切换横向连续的页面排列
             B            切换背景色
             ?            显示本帮助
             """;

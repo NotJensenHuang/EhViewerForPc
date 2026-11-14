@@ -507,20 +507,25 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     public void ToggleDirection()
+        => SetDirection(!_rightToLeft);
+
+    public void SetDirection(bool rightToLeft)
     {
-        if (IsHorizontalMode) { _suppressScrollSync = true; _relocationVersion++; }
-        _rightToLeft = !_rightToLeft;
+        if (!IsHorizontalMode || _rightToLeft == rightToLeft) return;
+        _suppressScrollSync = true;
+        _relocationVersion++;
+        _rightToLeft = rightToLeft;
         _services.Settings.RightToLeft = _rightToLeft;
         _services.TrySaveSettings(out _);
         OnPropertyChanged(nameof(RightToLeft));
         OnPropertyChanged(nameof(DirectionLabel));
-        if (IsHorizontalMode && _horizontalItems.Count > 0)
+        if (_horizontalItems.Count > 0)
         {
             RebuildHorizontalDisplay();
             SuppressSyncWhileRelocating(() =>
                 HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
         }
-        else if (IsHorizontalMode)
+        else
         {
             SuppressSyncWhileRelocating(static () => { });
         }

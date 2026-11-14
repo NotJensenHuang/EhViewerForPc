@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-11-14 构建阶段进度、原路径补页与固定阅读输入
+- `ImageSearch/IndexBuildProgress.cs`、`ImageSearchEngine.cs`、`DiskInvertedIndex.cs`、`CheckedFile.cs`：新增特征分配、分段、合并和校验字节的实际阶段进度，限频通知并支持校验中取消；保持既有索引格式，已有索引在单次构建中只校验一次。
+- `Services/LocalImageSearchService*`、`ImageSearchViewModel.cs`、`ImageSearchPage.axaml`：后台服务保存阶段计数，页面显示当前阶段确定进度并在重开后恢复绑定，无总量阶段使用活动指示。
+- `Core/Download/DownloadManager.Repair.cs`、`DownloadManager.cs`、`DownloadModels.cs`：用户主动补页使用副本独立任务键和精确原目录，持久化、暂停、继续沿用下载服务；保留原图片和元数据，同名冲突报告失败页，禁止补页任务删除原目录。
+- `Services/AppServices.LocalDownloads.cs`、`ViewModels/`、`Views/LibraryPage.axaml`、`GalleryDetailsPage.axaml`、`VersionsPage.axaml`：卡片、详情和版本行提供继续下载入口，完成后定向更新原数据源，不修改全局下载目录。
+- `ReaderViewModel.cs`、`MainWindow.axaml`、`ReaderPage.axaml*`：菜单同时显示左右单选项，仅控制横向连续页面排列；方向键、滚轮及单页点击区域不随排列反向。
+- `tests/`、`README.md`、`README.en.md`、`PRODUCT.md`、`DESIGN.md`、`AGENTS.md`：增加真实下载边界、进度、取消恢复及输入回归；按用户最新确认解除本地库全局只读约束，暂不新增编辑 / 删除入口；验证见 `docs/构建进度与原路径补页-2026-11-14.md`。
+
 ## 2026-11-14 修复页图提取的面积缩放热点
 - `ImageSearch/GrayImage.cs`：面积缩小时预计算横向权重、复用逐行纵向权重，消除每个源像素的重复边界计算；保持 double 乘法 / 累加顺序和舍入，线性 / 高阶插值与极端轴长保留原路径。
 - `tests/EhViewerForPc.ImageSearch.Tests/ResizeCompatibilityTests.cs`：固定旧版像素与规范化 PNG 内容哈希金样，覆盖单轴平票舍入、并发及输出所有权，保护已有特征身份。

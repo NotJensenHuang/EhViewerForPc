@@ -14,11 +14,12 @@ public sealed class DiskInvertedIndex
     private readonly string _path;
     private readonly bool _allowLinkedPublication;
 
-    private DiskInvertedIndex(string path, string profileId, string quantizerHash, bool allowLinkedPublication)
+    private DiskInvertedIndex(string path, string profileId, string quantizerHash, bool allowLinkedPublication,
+        Action<long, long>? progress = null, CancellationToken token = default)
     {
         _path = path;
         _allowLinkedPublication = allowLinkedPublication;
-        using var reader = CheckedFile.Open(path, allowLinkedPublication);
+        using var reader = CheckedFile.Open(path, allowLinkedPublication, progress, token);
         if (reader.ReadUInt64() != 0x3146564943524d49UL || CheckedFile.ReadShortString(reader) != profileId || CheckedFile.ReadShortString(reader) != quantizerHash)
             throw new InvalidDataException("IVF format, profile or quantizer mismatch; rebuild required.");
         int count = reader.ReadInt32();
@@ -47,14 +48,23 @@ public sealed class DiskInvertedIndex
     /// <summary>Validates and opens a read-only index.</summary>
     public static DiskInvertedIndex Open(string path, string profileId, string quantizerHash, bool allowLinkedPublication = false) => new(path, profileId, quantizerHash, allowLinkedPublication);
 
+    internal static DiskInvertedIndex OpenWithProgress(string path, string profileId, string quantizerHash,
+        Action<long, long>? progress, CancellationToken token) => new(path, profileId, quantizerHash, false, progress, token);
+
     /// <summary>Computes a quantizer file's identity.</summary>
     public static string HashQuantizer(string path) { using var file = File.OpenRead(path); return Convert.ToHexStringLower(SHA256.HashData(file)); }
 
     /// <summary>Writes an index atomically, accepting a streaming source for each bucket.</summary>
     public static void Write(string path, string profileId, string quantizerHash, int buckets,
         Func<int, IEnumerable<IndexVector>> readBucket, CancellationToken cancellationToken = default)
+        => WriteWithProgress(path, profileId, quantizerHash, buckets, readBucket, null, null, cancellationToken);
+
+    internal static void WriteWithProgress(string path, string profileId, string quantizerHash, int buckets,
+        Func<int, IEnumerable<IndexVector>> readBucket, Action<long, long>? bucketsProgress,
+        Action<long, long>? checksumProgress, CancellationToken cancellationToken)
     {
         if (buckets is < 1 or > 1048576) throw new ArgumentOutOfRangeException(nameof(buckets));
+        bucketsProgress?.Invoke(0, buckets);
         CheckedFile.Write(path, writer =>
         {
             writer.Write(0x3146564943524d49UL); writer.Write(profileId); writer.Write(quantizerHash); writer.Write(buckets);
@@ -84,13 +94,14 @@ public sealed class DiskInvertedIndex
                     }
                 }
                 table[i] = new(offset, count, writer.BaseStream.Position - offset); total += count;
+                bucketsProgress?.Invoke(i + 1, buckets);
             }
             long end = writer.BaseStream.Position;
             writer.BaseStream.Position = countsPosition; writer.Write((long)images.Count); writer.Write(total);
             writer.BaseStream.Position = tablePosition;
             foreach (var bucket in table) { writer.Write(bucket.Offset); writer.Write(bucket.Count); writer.Write(bucket.Length); }
             writer.BaseStream.Position = end;
-        });
+        }, checksumProgress, cancellationToken);
     }
 
     /// <summary>Streams a bucket's records and verifies decompressed size and ordering.</summary>

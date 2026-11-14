@@ -4,7 +4,7 @@ namespace EhViewerForPc.ImageSearch;
 
 internal static class CheckedFile
 {
-    internal static void Write(string path, Action<BinaryWriter> write)
+    internal static void Write(string path, Action<BinaryWriter> write, Action<long, long>? progress = null, CancellationToken token = default)
     {
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".part";
         try
@@ -16,40 +16,51 @@ internal static class CheckedFile
                 writer.Flush();
                 long length = file.Position;
                 file.Position = 0;
-                byte[] hash = SHA256.HashData(file);
+                byte[] hash = Hash(file, length, progress, token);
                 file.Position = length;
                 file.Write(hash);
                 file.Flush(true);
             }
+            token.ThrowIfCancellationRequested();
             File.Move(temporary, path, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
-    internal static BinaryReader Open(string path, bool allowDelete = false)
+    internal static BinaryReader Open(string path, bool allowDelete = false, Action<long, long>? progress = null, CancellationToken token = default)
     {
         var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | (allowDelete ? FileShare.Delete : 0));
         try
         {
             if (file.Length < 40) throw new InvalidDataException("Truncated search file.");
-            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            byte[] buffer = new byte[65536];
-            long remaining = file.Length - 32;
-            while (remaining > 0)
-            {
-                int count = file.Read(buffer, 0, (int)Math.Min(buffer.Length, remaining));
-                if (count == 0) throw new EndOfStreamException();
-                hash.AppendData(buffer, 0, count);
-                remaining -= count;
-            }
+            byte[] actual = Hash(file, file.Length - 32, progress, token);
             Span<byte> expected = stackalloc byte[32];
             file.ReadExactly(expected);
-            if (!CryptographicOperations.FixedTimeEquals(expected, hash.GetHashAndReset()))
+            if (!CryptographicOperations.FixedTimeEquals(expected, actual))
                 throw new InvalidDataException("Search file checksum mismatch.");
             file.Position = 0;
             return new BinaryReader(file);
         }
         catch { file.Dispose(); throw; }
+    }
+
+    private static byte[] Hash(Stream stream, long length, Action<long, long>? progress, CancellationToken token)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] buffer = new byte[65536];
+        long completed = 0;
+        progress?.Invoke(0, length);
+        while (completed < length)
+        {
+            token.ThrowIfCancellationRequested();
+            int count = stream.Read(buffer, 0, (int)Math.Min(buffer.Length, length - completed));
+            if (count == 0) throw new EndOfStreamException();
+            hash.AppendData(buffer, 0, count);
+            completed += count;
+            progress?.Invoke(completed, length);
+        }
+        token.ThrowIfCancellationRequested();
+        return hash.GetHashAndReset();
     }
 
     internal static BinaryDescriptor ReadDescriptor(BinaryReader reader) => new(reader.ReadUInt64(), reader.ReadUInt64(), reader.ReadUInt64(), reader.ReadUInt64());

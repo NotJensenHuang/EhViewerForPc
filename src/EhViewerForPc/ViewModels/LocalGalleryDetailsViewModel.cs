@@ -1,20 +1,41 @@
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.ComponentModel;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Online;
 using EhViewerForPc.Services;
 
 namespace EhViewerForPc.ViewModels;
 
-public sealed partial class LocalGalleryDetailsViewModel : IDisposable
+public sealed partial class LocalGalleryDetailsViewModel : ObservableObject, IDisposable
 {
     private readonly AppServices _services;
     private readonly CancellationTokenSource _lifetime = new();
     private bool _initialized;
+    private bool _disposed;
     private string _token;
     public GalleryItemViewModel Item { get; }
     public GalleryDetailsViewModel Presentation { get; }
     public event EventHandler<string>? TagSearchRequested;
     public bool CanRefreshMetadata => Item.Gid is > 0 && _token.Length > 0;
+    public bool CanContinueDownload => !_disposed && Item.CanContinueDownload && _services.CanContinueLocalDownload(Item.Info);
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasDownloadStatus))]
+    private string _downloadStatus = string.Empty;
+    public bool HasDownloadStatus => DownloadStatus.Length > 0;
+
+    [RelayCommand(CanExecute = nameof(CanContinueDownload))]
+    private async Task ContinueDownloadAsync()
+    {
+        if (!CanContinueDownload) return;
+        DownloadStatus = "正在加入补页任务…";
+        try
+        {
+            var task = await _services.ContinueLocalDownloadAsync(Item.Info, _lifetime.Token);
+            if (!_lifetime.IsCancellationRequested) DownloadStatus = "已加入补页任务 · " + task.FolderPath;
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception error) { if (!_lifetime.IsCancellationRequested) DownloadStatus = "无法继续下载：" + error.Message; }
+    }
 
     public LocalGalleryDetailsViewModel(GalleryItemViewModel item, AppServices services)
     {
@@ -61,6 +82,7 @@ public sealed partial class LocalGalleryDetailsViewModel : IDisposable
 
     private void OnItemChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        ContinueDownloadCommand.NotifyCanExecuteChanged();
         if (e.PropertyName != nameof(GalleryItemViewModel.Info)) return;
         Presentation.PagesText = Item.PageCountText;
         Presentation.CoverRequest = Item.CoverRequest;
@@ -68,7 +90,10 @@ public sealed partial class LocalGalleryDetailsViewModel : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         Item.PropertyChanged -= OnItemChanged;
         _lifetime.Cancel();
+        _lifetime.Dispose();
     }
 }

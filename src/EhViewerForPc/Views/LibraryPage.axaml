@@ -125,9 +125,14 @@
                     <Border Grid.Row="0" Background="{DynamicResource AppBgBrush}" CornerRadius="4"
                             HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="8"
                             AutomationProperties.AutomationId="Library.ReadSurface">
+                      <StackPanel Orientation="Horizontal" Spacing="4">
                       <Button Content="阅读" FontWeight="SemiBold" FontSize="13" MinHeight="32" Padding="12,4"
                               IsEnabled="{Binding CanRead}" Click="OnReadCard"
                               AutomationProperties.Name="阅读此作品" AutomationProperties.AutomationId="Library.Read" />
+                      <Button Content="继续下载" FontSize="13" MinHeight="32" Padding="10,4" IsVisible="{Binding IsIncomplete}"
+                              IsEnabled="{Binding CanContinueDownload}" Click="OnContinueDownload" ToolTip.Tip="{Binding FolderPath}"
+                              AutomationProperties.AutomationId="Library.ContinueDownload" />
+                      </StackPanel>
                     </Border>
                     <TextBlock Grid.Row="1" Classes="title" Text="{Binding Title}" TextWrapping="Wrap"
                                MaxLines="2" MinHeight="40" Margin="0,8,0,0" />

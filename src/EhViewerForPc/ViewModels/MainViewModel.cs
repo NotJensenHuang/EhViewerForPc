@@ -99,6 +99,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public AppServices Services => _services;
 
+    [RelayCommand]
+    private async Task ContinueDownloadAsync(GalleryItemViewModel? item)
+    {
+        if (item is null || !item.CanContinueDownload) return;
+        StatusText = "正在读取缺页下载信息…";
+        try
+        {
+            var task = await _services.ContinueLocalDownloadAsync(item.Info, _lifetime.Token);
+            if (_disposed) return;
+            StatusText = "已加入补页任务 · " + task.FolderPath;
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch (Exception error) { if (!_disposed) StatusText = "无法继续下载：" + error.Message; }
+    }
+
     /// <summary>True when this gallery id already exists in a local source.</summary>
     public bool HasLocalCopy(long gid)
     {
@@ -546,12 +561,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public async Task ImportDownloadAsync(EhViewerForPc.Core.Download.DownloadTask task)
     {
-        if (!_services.Settings.Download.AddAsSource) return;
+        if (!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) return;
         while (IsScanning) await Task.Delay(50, _lifetime.Token);
         if (!Directory.Exists(task.FolderPath)) return;
         string root = string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot;
-        var source = _services.Settings.AddSource(root, "下载目录");
-        _services.TrySaveSettings(out _);
+        var source = task.FillMissingOnly
+            ? _services.Settings.Sources.FirstOrDefault(s => Core.Storage.PathIdentity.Comparer.Equals(s.RootPath, root))
+            : _services.Settings.AddSource(root, "下载目录");
+        if (source is null) return;
+        if (!task.FillMissingOnly) _services.TrySaveSettings(out _);
         // Scan the changing gallery only; other sources are never revisited.
         var result = await Task.Run(() => _services.Scanner.Scan(root, null, false, null, _lifetime.Token, source.Id, source.DisplayName, true, onlyFolder: task.FolderPath));
         if (_disposed) return;
@@ -562,6 +580,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             gallery.ExpectedPages = task.PageCount;
             gallery.IsIncomplete = pages.IsIncomplete;
             gallery.MissingRanges = pages.MissingRanges;
+            gallery.HasHeaderPageCountOutdated = pages.HeaderPageCountOutdated;
         }
         var completed = result.Galleries.Where(g => EhViewerForPc.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).ToArray();
         var all = _all.SelectMany(i => i.Versions).Where(g => !EhViewerForPc.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).Concat(completed).ToArray();

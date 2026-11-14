@@ -77,7 +77,9 @@
     </ScrollViewer>
     <Border Grid.Row="2" Classes="statusbar">
       <StackPanel Spacing="6">
-        <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" />
+        <ProgressBar IsIndeterminate="{Binding IsProgressIndeterminate}" Value="{Binding ProgressFraction}"
+                     Minimum="0" Maximum="1" IsVisible="{Binding IsBusy}" Height="3"
+                     AutomationProperties.AutomationId="ImageSearch.Progress" AutomationProperties.Name="{Binding StatusText}" />
         <SelectableTextBlock Text="{Binding StatusText}" TextWrapping="Wrap" Classes="caption" AutomationProperties.AutomationId="ImageSearch.Status" />
       </StackPanel>
     </Border>

@@ -61,6 +61,12 @@ public sealed class ImageSearchEngine
     /// <summary>Builds bounded segments and publishes a streaming merge; a paused build remains resumable.</summary>
     public static BuildResult Build(ImageDatabase database, int batchSize = 2000, bool stopBeforeMerge = false,
         bool cleanBeforeMerge = false, int? stopAfterSegments = null, CancellationToken cancellationToken = default, IReadOnlySet<long>? allowedImageIds = null, int workers = 1)
+        => Build(database, null, batchSize, stopBeforeMerge, cleanBeforeMerge, stopAfterSegments, cancellationToken, allowedImageIds, workers);
+
+    /// <summary>沿真实分配、合并与校验工作报告有界频率的阶段进度，保留原 Build 入口兼容。</summary>
+    public static BuildResult Build(ImageDatabase database, IProgress<IndexBuildProgress>? progress, int batchSize = 2000,
+        bool stopBeforeMerge = false, bool cleanBeforeMerge = false, int? stopAfterSegments = null,
+        CancellationToken cancellationToken = default, IReadOnlySet<long>? allowedImageIds = null, int workers = 1)
     {
         database.RequireWriter();
         if (batchSize is < 1 or > 2000 || stopAfterSegments is < 1 || workers is < 1 or > IndexBuildOptions.MaximumWorkers)
@@ -69,6 +75,20 @@ public sealed class ImageSearchEngine
         string quantizerPath = Path.Combine(directory, "quantizer.bin");
         var quantizer = BinaryHnsw.Load(quantizerPath, profileId);
         string quantizerHash = DiskInvertedIndex.HashQuantizer(quantizerPath);
+        var reporter = new IndexBuildProgressReporter(progress);
+        long totalVectors = 0, assignedVectors = 0;
+        if (reporter.Enabled)
+        {
+            using var statistics = database.Open();
+            using var command = statistics.CreateCommand();
+            command.CommandText = "SELECT coalesce(sum(vector_count),0),coalesce(sum(CASE WHEN segment IS NOT NULL THEN vector_count ELSE 0 END),0) FROM vector_stats s WHERE indexed=0 AND EXISTS(SELECT 1 FROM alias a WHERE a.image_id=s.image_id)";
+            using var reader = command.ExecuteReader();
+            reader.Read();
+            totalVectors = reader.GetInt64(0);
+            assignedVectors = reader.GetInt64(1);
+        }
+        Action<long, long>? FileProgress(IndexBuildStage stage, int part = 0, int parts = 0) => !reporter.Enabled ? null :
+            (done, total) => reporter.Report(new(stage, done, total, part, parts), done == 0);
         // 文件落盘与 SQLite 检查点之间崩溃会留下孤立段；它们没有任何已提交引用。
         var pendingSegments = new HashSet<string>(StringComparer.Ordinal);
         using (var connection = database.Open())
@@ -78,8 +98,10 @@ public sealed class ImageSearchEngine
             using var reader = command.ExecuteReader();
             while (reader.Read()) pendingSegments.Add(reader.GetString(0));
         }
+        DiskInvertedIndex? previousIndex = null;
         if (File.Exists(Path.Combine(directory, "invlists.bin")))
-            _ = DiskInvertedIndex.Open(Path.Combine(directory, "invlists.bin"), profileId, quantizerHash);
+            previousIndex = DiskInvertedIndex.OpenWithProgress(Path.Combine(directory, "invlists.bin"), profileId, quantizerHash,
+                FileProgress(IndexBuildStage.CheckingExistingIndex), cancellationToken);
         foreach (string file in Directory.EnumerateFiles(directory, "segment-*.ivf"))
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -87,9 +109,11 @@ public sealed class ImageSearchEngine
             if (IsSegmentName(name) && !pendingSegments.Contains(name)) File.Delete(file);
         }
         int written = 0;
+        reporter.StartAssignment(assignedVectors, totalVectors);
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            reporter.ReportAssignment();
             var batch = database.ReadCached(unsegmentedOnly: true, limit: batchSize).ToArray();
             if (batch.Length == 0) break;
             var buckets = Enumerable.Range(0, quantizer.Count).Select(_ => new List<IndexVector>()).ToArray();
@@ -103,12 +127,15 @@ public sealed class ImageSearchEngine
                 {
                     if ((i & 127) == 0) cancellationToken.ThrowIfCancellationRequested();
                     assigned[i] = quantizer.Search(image.Descriptors[i], 1)[0];
+                    if ((i & 127) == 127) reporter.AdvanceAssignment(128);
                 }
+                reporter.AdvanceAssignment(image.Descriptors.Length % 128);
                 assignments[ordinal] = assigned;
             }
             // 量化器在此阶段只读；按页并行查桶，随后依旧按原向量 ID 顺序落盘。
             if (workers == 1) for (int ordinal = 0; ordinal < batch.Length; ordinal++) AssignImage(ordinal);
             else Parallel.For(0, batch.Length, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, AssignImage);
+            reporter.ReportAssignment();
             for (int ordinal = 0; ordinal < batch.Length; ordinal++)
             {
                 var image = batch[ordinal];
@@ -119,7 +146,8 @@ public sealed class ImageSearchEngine
                 }
             }
             string segment = "segment-" + Guid.NewGuid().ToString("N") + ".ivf";
-            DiskInvertedIndex.Write(Path.Combine(directory, segment), profileId, quantizerHash, buckets.Length, b => buckets[b], cancellationToken);
+            DiskInvertedIndex.WriteWithProgress(Path.Combine(directory, segment), profileId, quantizerHash, buckets.Length, b => buckets[b],
+                FileProgress(IndexBuildStage.WritingSegment, written + 1), FileProgress(IndexBuildStage.CheckingSegment, written + 1), cancellationToken);
             // The durable file precedes its checkpoint. An orphan file is never read by a subsequent build.
             using (var connection = database.Open())
             using (var transaction = connection.BeginTransaction())
@@ -139,7 +167,7 @@ public sealed class ImageSearchEngine
         if (stopBeforeMerge) return new(false, written, 0, 0);
         var sources = new List<DiskInvertedIndex>();
         string published = Path.Combine(directory, "invlists.bin");
-        if (File.Exists(published)) sources.Add(DiskInvertedIndex.Open(published, profileId, quantizerHash));
+        if (previousIndex is not null) sources.Add(previousIndex);
         var segmentNames = new List<string>();
         using (var connection = database.Open())
         using (var command = connection.CreateCommand())
@@ -150,7 +178,9 @@ public sealed class ImageSearchEngine
             {
                 string name = reader.GetString(0);
                 if (!IsSegmentName(name)) throw new InvalidDataException("Invalid segment checkpoint.");
-                segmentNames.Add(name); sources.Add(DiskInvertedIndex.Open(Path.Combine(directory, name), profileId, quantizerHash));
+                segmentNames.Add(name);
+                sources.Add(DiskInvertedIndex.OpenWithProgress(Path.Combine(directory, name), profileId, quantizerHash,
+                    FileProgress(IndexBuildStage.ReadingSegments, segmentNames.Count, pendingSegments.Count + written), cancellationToken));
             }
         }
         if (cleanBeforeMerge)
@@ -161,13 +191,16 @@ public sealed class ImageSearchEngine
         }
         // A separate destination preserves the old index until every new bucket and checksum is durable.
         string candidate = Path.Combine(directory, "invlists.new.bin");
-        DiskInvertedIndex.Write(candidate, profileId, quantizerHash, quantizer.Count,
-            b => allowedImageIds is null ? DiskInvertedIndex.MergeBucket(sources, b) : DiskInvertedIndex.MergeBucket(sources, b).Where(v => allowedImageIds.Contains(v.ImageId)), cancellationToken);
-        var validated = DiskInvertedIndex.Open(candidate, profileId, quantizerHash);
+        DiskInvertedIndex.WriteWithProgress(candidate, profileId, quantizerHash, quantizer.Count,
+            b => allowedImageIds is null ? DiskInvertedIndex.MergeBucket(sources, b) : DiskInvertedIndex.MergeBucket(sources, b).Where(v => allowedImageIds.Contains(v.ImageId)),
+            FileProgress(IndexBuildStage.Merging), FileProgress(IndexBuildStage.HashingIndex), cancellationToken);
+        var validated = DiskInvertedIndex.OpenWithProgress(candidate, profileId, quantizerHash, FileProgress(IndexBuildStage.ValidatingIndex), cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
+        reporter.Report(new(IndexBuildStage.Publishing, 0, 0), true);
         File.Move(candidate, published, overwrite: true);
         using (var connection = database.Open()) ImageDatabase.Execute(connection, "UPDATE vector_stats SET indexed=1 WHERE segment IS NOT NULL");
         foreach (string name in segmentNames) File.Delete(Path.Combine(directory, name));
+        reporter.Report(new(IndexBuildStage.Complete, 1, 1), true);
         return new(true, written, validated.ImageCount, validated.VectorCount);
     }
 

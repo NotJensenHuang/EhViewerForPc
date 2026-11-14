@@ -324,10 +324,11 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     [RelayCommand]
     private void OpenFolder() => _owner.OpenTaskFolder(this);
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanDeleteFiles))]
     private System.Threading.Tasks.Task DeleteFilesAsync() { ConfirmDelete = false; return _owner.RemoveWithFiles(this); }
     [ObservableProperty] private bool _confirmDelete;
-    [RelayCommand] private void RequestDelete() => ConfirmDelete = true;
+    public bool CanDeleteFiles => !Task.FillMissingOnly;
+    [RelayCommand(CanExecute = nameof(CanDeleteFiles))] private void RequestDelete() => ConfirmDelete = true;
     [RelayCommand] private void CancelDelete() => ConfirmDelete = false;
     [RelayCommand] private void Read() => _owner.ReadTaskCommand.Execute(this);
 
@@ -371,6 +372,9 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public void Refresh()
     {
         OnPropertyChanged(string.Empty);
+        DeleteFilesCommand.NotifyCanExecuteChanged();
+        RequestDeleteCommand.NotifyCanExecuteChanged();
+        if (!CanDeleteFiles) ConfirmDelete = false;
     }
 }
 

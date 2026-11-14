@@ -173,6 +173,13 @@ public partial class LibraryPage : UserControl
         e.Handled = true;
     }
 
+    private async void OnContinueDownload(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is Control { DataContext: GalleryItemViewModel item } && _viewModel is not null)
+            await _viewModel.ContinueDownloadCommand.ExecuteAsync(item);
+    }
+
     private void OnCardKeyDown(object? sender, KeyEventArgs e)
     {
         if (!ReferenceEquals(e.Source, sender)) return;
@@ -192,6 +199,12 @@ public partial class LibraryPage : UserControl
         var menu = new ContextMenu();
         menu.Items.Add(CreateMenuItem("阅读", () => _viewModel.OpenGalleryCommand.Execute(item)));
         menu.Items.Add(CreateMenuItem("查看详情", () => _viewModel.OpenDetailsCommand.Execute(item)));
+        if (item.IsIncomplete)
+        {
+            var resume = CreateMenuItem("继续下载缺页", () => _viewModel.ContinueDownloadCommand.Execute(item));
+            resume.IsEnabled = item.CanContinueDownload;
+            menu.Items.Add(resume);
+        }
         if (item.HasMultipleVersions)
         {
             menu.Items.Add(CreateMenuItem($"版本管理（{item.Versions.Count}）",

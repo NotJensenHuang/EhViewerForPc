@@ -24,6 +24,13 @@ public partial class VersionsPage : DocumentPage
 
     /// <summary>Copy the user chose to read; null when the dialog was just closed.</summary>
     public GalleryInfo? ReadVersion => _viewModel?.ReadVersion;
+    public override void Dispose() => _viewModel?.Dispose();
+
+    private async void OnContinueDownload(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is not null && sender is Button { Tag: GalleryVersionViewModel version })
+            await _viewModel.ContinueDownloadCommand.ExecuteAsync(version);
+    }
 
     /// <summary>Copy the user marked as the default for this work.</summary>
     public GalleryInfo? DefaultVersion => _viewModel?.DefaultVersion;

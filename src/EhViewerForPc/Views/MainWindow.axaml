@@ -123,7 +123,12 @@
               <ui:FASymbolIcon Symbol="More" FontSize="16" />
               <Button.Flyout>
                 <MenuFlyout Placement="BottomEdgeAlignedRight">
-                  <MenuItem Header="{Binding DirectionLabel}" Click="OnReaderDirection" />
+                  <MenuItem Header="左→右" ToggleType="Radio" IsChecked="{Binding !RightToLeft, Mode=OneWay}"
+                            IsEnabled="{Binding IsHorizontalMode}" Click="OnReaderLeftToRight"
+                            AutomationProperties.AutomationId="Reader.Direction.LeftToRight" ToolTip.Tip="横向连续模式的页面排列" />
+                  <MenuItem Header="右→左" ToggleType="Radio" IsChecked="{Binding RightToLeft, Mode=OneWay}"
+                            IsEnabled="{Binding IsHorizontalMode}" Click="OnReaderRightToLeft"
+                            AutomationProperties.AutomationId="Reader.Direction.RightToLeft" ToolTip.Tip="横向连续模式的页面排列" />
                   <MenuItem Header="背景色" Click="OnReaderBackground" />
                   <Separator />
                   <MenuItem Header="重试本页" Click="OnReaderRetry" />

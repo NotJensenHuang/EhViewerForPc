@@ -58,6 +58,9 @@
                           Tag="{Binding}" Click="OnSetDefault" IsEnabled="{Binding !IsPrimary}" />
                   <Button Content="打开文件夹" Classes="ghost" FontSize="12" Padding="10,3" MinHeight="26"
                           Tag="{Binding}" Click="OnOpenFolder" />
+                  <Button Content="继续下载" FontSize="12" Padding="10,3" MinHeight="26" Tag="{Binding}"
+                          IsVisible="{Binding IsIncomplete}" IsEnabled="{Binding CanContinueDownload}"
+                          Click="OnContinueDownload" ToolTip.Tip="{Binding FolderPath}" AutomationProperties.AutomationId="Versions.ContinueDownload" />
                 </WrapPanel>
 
                 <SelectableTextBlock Grid.Row="1" Grid.Column="0" Text="{Binding FolderName}"
@@ -78,7 +81,10 @@
     </ScrollViewer>
 
     <Border Grid.Row="2" Classes="statusbar">
-      <Button Content="关闭" Click="OnClose" HorizontalAlignment="Right" VerticalAlignment="Center" />
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <SelectableTextBlock Text="{Binding StatusText}" IsVisible="{Binding HasStatus}" TextWrapping="Wrap" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="关闭" Click="OnClose" HorizontalAlignment="Right" VerticalAlignment="Center" />
+      </Grid>
     </Border>
   </Grid>
 </UserControl>

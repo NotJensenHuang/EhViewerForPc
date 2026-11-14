@@ -626,7 +626,8 @@ public partial class MainWindow : Window
     private async void OnReaderHorizontalMode(object? sender, RoutedEventArgs e) { if (ActiveReader is { } r) await r.ToggleHorizontalModeAsync(); }
     private void OnReaderImmersive(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleImmersive();
     private void OnReaderFullscreen(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleFullscreen();
-    private void OnReaderDirection(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleDirection();
+    private void OnReaderLeftToRight(object? sender, RoutedEventArgs e) => ActiveReader?.SetDirection(false);
+    private void OnReaderRightToLeft(object? sender, RoutedEventArgs e) => ActiveReader?.SetDirection(true);
     private void OnReaderBackground(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleBackground();
     private void OnReaderRetry(object? sender, RoutedEventArgs e) => ActiveReader?.RetryCurrentPage();
     private void OnReaderHelp(object? sender, RoutedEventArgs e) => ActiveReader?.ShowHelpFlyout();

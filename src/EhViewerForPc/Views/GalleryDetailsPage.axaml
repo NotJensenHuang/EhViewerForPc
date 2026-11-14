@@ -5,6 +5,8 @@
     <controls:GalleryDetailsView.Actions>
       <WrapPanel Classes="actions">
         <Button Content="开始阅读" Classes="accent" IsEnabled="{Binding Item.CanRead}" Click="OnRead" />
+        <Button Content="继续下载" Command="{Binding ContinueDownloadCommand}" IsVisible="{Binding Item.IsIncomplete}"
+                ToolTip.Tip="{Binding Item.FolderPath}" AutomationProperties.AutomationId="LocalDetails.ContinueDownload" />
         <Button Content="打开文件夹" Click="OnOpenFolder" />
         <Button Content="{Binding Item.FavoriteText}" Click="OnToggleFavorite" />
         <Button Content="清除进度" Click="OnClearProgress" />
@@ -15,6 +17,7 @@
       <StackPanel Spacing="8">
         <SelectableTextBlock Text="{Binding Item.ProgressDetail}" Classes="secondary" />
         <SelectableTextBlock Text="{Binding Item.Details}" Classes="caption" TextWrapping="Wrap" />
+        <SelectableTextBlock Text="{Binding DownloadStatus}" IsVisible="{Binding HasDownloadStatus}" TextWrapping="Wrap" />
       </StackPanel>
     </controls:GalleryDetailsView.SideContent>
     <controls:GalleryDetailsView.ExtraContent>

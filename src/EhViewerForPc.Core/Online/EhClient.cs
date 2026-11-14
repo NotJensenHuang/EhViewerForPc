@@ -56,6 +56,9 @@ public sealed class EhClient : IDisposable
     internal EhClient(AppSettings settings, HttpClient webClient) : this(settings)
     { _web.Dispose(); _web = webClient; }
 
+    internal EhClient(AppSettings settings, HttpClient webClient, HttpClient imageClient) : this(settings, webClient)
+    { _images.Dispose(); _images = imageClient; }
+
     public EhSession Session => _session;
     public int ResampledWidth => _settings.ResampledWidth;
 
