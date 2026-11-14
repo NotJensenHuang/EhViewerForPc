@@ -1,5 +1,9 @@
 # 变更记录
 
+## 2026-11-14 收敛 Windows 支持范围并记录 GPU 与恢复方案
+- `README.md`、`README.en.md`、`PRODUCT.md`、`AGENTS.md`：按最新需求仅面向 Windows 10 / 11 x64，移除其他平台支持承诺与发布命令，中英文命令同步为 PowerShell。
+- `docs/ComputeSharp与索引快速恢复方案-2026-11-14.md`：记录真实任务规模、恢复重枚举复现、纯 C# ComputeSharp AOT 小原型与分阶段实施方案；GPU 方案尚未接入主程序，未宣称实际建库提速。
+
 ## 2026-11-14 解除索引并行瓶颈并扩展训练与分桶
 - `ImageSearch/IndexBuildOptions.cs`、`OrderedImagePipeline.cs`：默认按逻辑处理器数减 2 使用 1–32 worker，工作区随 CPU 与 GC 内存上限扩展到 128–1024 MiB，保留有界队列与原页序提交。
 - `Services/ImageMemoryBudget.cs`、`LocalImageSearchService.Pipeline.cs`：索引与前台位图分别限额、统一记账，移除共享 128 MiB 对较大页图的隐性串行限制；进度显示并行度，诊断记录活动页峰值和配额等待时间。

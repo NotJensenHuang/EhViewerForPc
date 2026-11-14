@@ -1,6 +1,6 @@
 # EhViewer for PC
 
-Windows 桌面优先的 E-Hentai / ExHentai 浏览与本地漫画阅读客户端，基于 Avalonia 12、.NET 11 和 FluentAvaloniaUI。
+仅面向 Windows 10 / 11 x64 的 E-Hentai / ExHentai 浏览与本地漫画阅读客户端，基于 Avalonia 12、.NET 11 和 FluentAvaloniaUI。
 
 - 核心任务：浏览与标签搜索、在线和本地阅读、管理下载、查看收藏与阅读历史。
 - 六个主入口：在线浏览、收藏、阅读历史、下载、本地库、设置。

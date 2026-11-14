@@ -16,7 +16,7 @@
     <img src="https://img.shields.io/badge/语言-C%23-purple" alt="C#">
     <img src="https://img.shields.io/badge/UI-Avalonia%2012-blue" alt="Avalonia 12">
     <img src="https://img.shields.io/badge/.NET-11.0-purple" alt=".NET 11">
-    <img src="https://img.shields.io/badge/平台-Windows%20%7C%20Linux%20%7C%20macOS-blue" alt="Platform">
+    <img src="https://img.shields.io/badge/平台-Windows-blue" alt="Platform">
   </div>
 
   <br>
@@ -31,7 +31,7 @@
 
 本项目不提供预编译分发包，请从源码构建后运行（见下方「从源码构建」）。
 
-```bash
+```powershell
 dotnet build src/EhViewerForPc -c Release
 dotnet run --project src/EhViewerForPc -c Release
 ```
@@ -138,7 +138,7 @@ dotnet run --project src/EhViewerForPc -c Release
 
 - [.NET 11 SDK](https://dotnet.microsoft.com/)（11.0.100 或更高）。仓库不提供 `global.json`，命令行与 IDE 会选用其解析到的最高版本 SDK
 - 依赖框架的发布需要 .NET 11 运行时；NativeAOT / MSIX 产物无运行时依赖
-- Windows 10 / 11 x64 已验证；Linux x64 已通过托管发布检查，macOS 后端已接入但尚未在对应系统实机验证
+- 仅面向 Windows 10 / 11 x64
 - 建议开启系统长路径支持；应用内置 `\\?\` 路径回退
 
 > 解决方案 `EhViewerForPc.slnx` 含 WAP 打包工程（`.wapproj`），`dotnet build` 无法构建它；请在 Visual Studio 中打开解决方案完成打包，命令行只构建或运行应用工程。
@@ -146,26 +146,23 @@ dotnet run --project src/EhViewerForPc -c Release
 ### 构建步骤
 
 1. 构建应用工程：
-   ```bash
+   ```powershell
    dotnet build src/EhViewerForPc -c Release
    ```
 2. 启动调试运行：
-   ```bash
+   ```powershell
    dotnet run --project src/EhViewerForPc -c Release
    ```
 3. 按需发布到独立输出目录：
-   ```bash
+   ```powershell
    # 依赖框架（体积小，需要 .NET 11 运行时）
    dotnet publish src/EhViewerForPc -c Release -r win-x64 --self-contained false -p:PublishAot=false -o artifacts/win-x64
 
    # NativeAOT（自包含原生单文件，无需 .NET 运行时）
    dotnet publish src/EhViewerForPc -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64-aot
-
-   # Linux x64 托管发布
-   dotnet publish src/EhViewerForPc -c Release -r linux-x64 --self-contained false -p:PublishAot=false -o artifacts/linux-x64
    ```
 
-Release 配置默认启用 `PublishAot`，依赖框架与跨平台托管发布需显式指定 `-p:PublishAot=false`。
+Release 配置默认启用 `PublishAot`，依赖框架的托管发布需显式指定 `-p:PublishAot=false`。
 
 ### NativeAOT 与打包
 
@@ -203,7 +200,7 @@ Release 配置默认启用 `PublishAot`，依赖框架与跨平台托管发布�
 
 示例：
 
-```bash
+```powershell
 # 本地库自检（资料库只读）
 dotnet run --project src/EhViewerForPc -c Release -- --self-test --root "<本地资料库目录>" --out docs/selftest.json
 
@@ -216,7 +213,7 @@ EhViewerForPc.exe --ui-smoke --out "<输出目录>"
 
 ## ⌨️ 快捷键
 
-主窗口：`Ctrl+F`（macOS 为 `Cmd+F`）聚焦当前页面搜索框、`F5` 刷新当前页、`Esc` 清除本地库搜索词。
+主窗口：`Ctrl+F` 聚焦当前页面搜索框、`F5` 刷新当前页、`Esc` 清除本地库搜索词。
 
 | 按键 | 动作 |
 | :--- | :--- |
@@ -257,12 +254,13 @@ logs/                    运行日志（不含 token 与页面内容）
 
 ## 🧪 测试与验证
 
-```bash
+```powershell
 # 核心回归（解析、存储、下载、设置合并、内存预算等）
 dotnet test tests/EhViewerForPc.Core.Tests -c Debug
 
 # 可选：以本机资料库运行只读集成测试
-EHVIEWER_TEST_ROOT="<本地资料库目录>" dotnet test tests/EhViewerForPc.Core.Tests -c Debug
+$env:EHVIEWER_TEST_ROOT = '<本地资料库目录>'
+dotnet test tests/EhViewerForPc.Core.Tests -c Debug
 
 # 以图搜图后端与无窗口界面回归
 dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
@@ -270,6 +268,8 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 ```
 
 索引 CPU / SIMD 的实现见[实施记录](docs/索引CPU并行与SIMD验证-2026-11-14.md)，后续并行扩容、较大页面性能对照及验证边界见[并行扩容记录](docs/索引并行扩容与阶段加速-2026-11-14.md)。
+
+跨厂商 GPU 加速与大库断点恢复仍处于方案阶段，ComputeSharp 的 C# / AOT 小原型及恢复入口诊断见[GPU 与快速恢复方案](docs/ComputeSharp与索引快速恢复方案-2026-11-14.md)。
 
 引用主程序的测试工程需串行运行（Avalonia XAML 编译共享输出文件）。后端另提供 `tools/imsearch/Build-Backend.ps1` 与 `Test-Backend.ps1`，每次验证使用独立的隔离目录。
 
@@ -286,7 +286,6 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 - 收藏分类名称是本地显示名，不写回站点账号配置
 - 连续 / 横向模式为整页适配滚动，不提供页内缩放（单页模式支持 1x–8x）
 - 无全局位图缓存，页面与封面位图由控件独占；扫描不做文件系统实时监听，下载完成后按设置自动刷新或手动刷新
-- Linux / macOS 的窗口、输入法、文件选择器与浏览器登录尚未在对应系统实机验证
 - 本地以图搜图的真实图库召回率与全库检索性能未验证
 
 ## 💖 依赖与致谢
@@ -295,7 +294,7 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 
 | 库 | 用途 | 许可 |
 | :--- | :--- | :--- |
-| Avalonia / Avalonia.Desktop / Avalonia.Themes.Fluent | 跨平台 UI 与 Fluent 主题 | MIT |
+| Avalonia / Avalonia.Desktop / Avalonia.Themes.Fluent | 桌面 UI 与 Fluent 主题 | MIT |
 | FluentAvaloniaUI | 导航视图、Frame 与 Fluent 控件 | MIT |
 | CommunityToolkit.Mvvm | MVVM 源生成 | MIT |
 | Avalonia.Skia / SkiaSharp / Avalonia.HarfBuzz | 图像渲染、解码与文本整形 | MIT |

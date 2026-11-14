@@ -2,7 +2,7 @@
 
 ## 事实来源与适用范围
 
-- 本项目是 EhViewer for PC：Avalonia 12.1.6 + FluentAvaloniaUI 3.0.2 + .NET 11（`net11.0`）的桌面漫画客户端，Windows 优先，Linux / macOS 走 Avalonia.Desktop 后端。
+- 本项目是 EhViewer for PC：Avalonia 12.1.6 + FluentAvaloniaUI 3.0.2 + .NET 11（`net11.0`）的桌面漫画客户端，仅面向 Windows 10 / 11 x64；按最新需求，不再承担其他桌面系统的适配与发布验证。
 - 产品与需求以 `PRODUCT.md` 为准，视觉以 `DESIGN.md` 为准，功能与命令以 `README.md` 为准，验证边界以 `docs/REMEDIATION.md`、`docs/TEST_REPORT.md` 等专题记录为准；与当前实现冲突时以代码为准并同步文档，不要照抄历史快照中的旧结论。
 
 ## 文件格式与语言
@@ -33,7 +33,7 @@
 - Release 默认 `PublishAot=true`（Windows x64 原生发布），`EhViewerMsixBuild=true` 时退回托管自包含；AOT 代码生成只在 publish 管线发生，因此 `packaging/EhViewerForPc.Msix` 的 `PublishAotForMsix` / `InjectAotPayload` target 不要删除或改为 build 阶段执行。
 - 所有持久化 JSON 走源生成上下文：Core 侧 `StorageJsonContext`（设置、进度、作品、扫描缓存、下载队列、迁移日志、标签库），视图侧 `ReaderJsonContext`（页面尺寸、UI 审计报告），以图搜图侧 `SearchJsonContext`。**新增持久化根类型必须同时登记 `[JsonSerializable]` 并调用 `JsonFileStore` 的 `JsonTypeInfo<T>` 重载**；禁止 `JsonSerializer.Serialize(object)` 等反射重载。构建成功不能证明 AOT 下序列化可用。
 - HTML 解析固定使用 `Online/HtmlLite.cs` 的容错解析器，不引入依赖 CSS 选择器、正则回溯或动态代码生成的第三方 HTML 库。
-- 平台专属代码置于 csproj 条件或 `OperatingSystem.IsWindows()` 守卫内（COM、app.manifest、Windows SDK 导入库、浏览器登录），文件 / 目录打开统一走 `PlatformLauncher`，路径比较遵循 `PathIdentity` 的 OS 大小写规则；每次跨平台改动至少验证 Linux x64 托管发布。
+- Windows 专属代码沿用 csproj 条件或 `OperatingSystem.IsWindows()` 守卫（COM、app.manifest、Windows SDK 导入库、浏览器登录），文件 / 目录打开统一走 `PlatformLauncher`，路径比较遵循 `PathIdentity`；发布验证以 Windows x64 为目标。
 
 ## 数据与文件安全（最高优先级）
 
@@ -66,12 +66,11 @@
   dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
   dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=false
   dotnet publish src/EhViewerForPc -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64-aot
-  dotnet publish src/EhViewerForPc -c Release -r linux-x64 --self-contained false -p:PublishAot=false
   ```
   以图搜图后端另用 `tools/imsearch/Build-Backend.ps1` / `Test-Backend.ps1`（含 `-Aot` 变体）。引用主程序的测试工程需串行运行（Avalonia XAML 编译共享输出文件）。
 - 无人值守入口以 `StartupOptions.Parse` 为准：`--online-probe`、`--login-probe`、`--self-test`（`--skip-snapshot` / `--deep-probe`）、`--ui-smoke`、`--ui-audit`、`--reader-regression`、`--navigation-regression`、`--anim-probe`（`--dump-frames`）、`--probe-file`、`--image-search-probe-root`、`--bookmark-probe-root`、`--verbose`。分派在 `Program.cs` / `App.axaml.cs`，其中 `--reader-regression` 由 `UiSmokeService` 内部消费；新增模式须同时注册参数、接入分派并同步 README，且保持无弹窗、不触发真实账号写入。
 - 测试数据隔离：一律 `--data-dir` 指向已忽略的 `.qa/`，UI 冒烟使用合成资料库并阻断站点访问（`--ui-smoke` 自动隔离数据目录）；真实库只读，测试不得写入。烟测必须走真实代码路径，不能用测试里复制一份逻辑自证。
-- Debug 通过不能证明 Release / AOT / 剪裁产物可用：涉及绑定、序列化、反射、原生资源或 UI 的改动，必须使用全新输出目录执行 AOT publish 并实际启动验证，不得拿既有 exe 或旧 `artifacts/` 当证据。站点在线结论需注明来自固定 fixture 还是真实站点；Linux / macOS 未实机验证要明确列出。
+- Debug 通过不能证明 Release / AOT / 剪裁产物可用：涉及绑定、序列化、反射、原生资源或 UI 的改动，必须使用全新输出目录执行 AOT publish 并实际启动验证，不得拿既有 exe 或旧 `artifacts/` 当证据。站点在线结论需注明来自固定 fixture 还是真实站点；未执行的设备与真实桌面验证要明确列出。
 - 性能与内存结论注明环境、场景、样本量与测量边界；未执行设备 / UI 验证要明确列出，没有测量不得宣称零分配或具体倍数收益。
 
 ## 文档与变更记录
