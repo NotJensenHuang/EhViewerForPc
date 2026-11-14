@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 
@@ -142,6 +143,11 @@ public sealed class GrayImage
         if (width < 1 || height < 1 || (long)width * height > 24_000_000) throw new ArgumentOutOfRangeException(nameof(width));
         byte[] pixels = new byte[width * height];
         double dx = (double)Width / width, dy = (double)Height / height;
+        if (interpolation == ImageInterpolation.Area && dx >= 1 && dy >= 1 && Width <= 16384 && Height <= 16384)
+        {
+            ResizeArea(pixels, width, height, dx, dy);
+            return new(width, height, pixels);
+        }
         for (int y = 0; y < height; y++)
         for (int x = 0; x < width; x++)
         {
@@ -175,6 +181,56 @@ public sealed class GrayImage
             }
         }
         return new(width, height, pixels);
+    }
+
+    private void ResizeArea(byte[] output, int width, int height, double dx, double dy)
+    {
+        // 轴长上限覆盖解码支持的图片，保留极端自建 GrayImage 的原路径，避免预计算无限扩张。
+        int[] axis = ArrayPool<int>.Shared.Rent(2 * width + 1);
+        double[]? weights = null;
+        try
+        {
+            weights = ArrayPool<double>.Shared.Rent(Width + 2 * width + Height + 3);
+            Span<int> offsets = axis.AsSpan(0, width + 1), starts = axis.AsSpan(width + 1, width);
+            int used = 0;
+            for (int x = 0; x < width; x++)
+            {
+                double left = x * dx, right = (x + 1) * dx;
+                int first = (int)left, end = (int)Math.Ceiling(right);
+                starts[x] = first;
+                offsets[x] = used;
+                for (int sx = first; sx < end; sx++)
+                    weights[used++] = Math.Min(right, sx + 1) - Math.Max(left, sx);
+            }
+            offsets[width] = used;
+            double area = dx * dy;
+            for (int y = 0; y < height; y++)
+            {
+                double top = y * dy, bottom = (y + 1) * dy;
+                int firstRow = (int)top, endRow = (int)Math.Ceiling(bottom);
+                for (int sy = firstRow; sy < endRow; sy++)
+                    weights[used + sy - firstRow] = Math.Min(bottom, sy + 1) - Math.Max(top, sy);
+                for (int x = 0; x < width; x++)
+                {
+                    double sum = 0;
+                    int first = starts[x], offset = offsets[x], count = offsets[x + 1] - offset;
+                    for (int sy = firstRow; sy < endRow; sy++)
+                    {
+                        int row = Math.Min(sy, Height - 1) * Width;
+                        double vertical = weights[used + sy - firstRow];
+                        // 保留逐项 double 乘法和 sy → sx 累加顺序，不能改成分离卷积或重新结合乘加。
+                        for (int i = 0; i < count; i++)
+                            sum += Pixels[row + Math.Min(first + i, Width - 1)] * weights[offset + i] * vertical;
+                    }
+                    output[y * width + x] = (byte)Math.Clamp((int)Math.Round(sum / area), 0, 255);
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<int>.Shared.Return(axis);
+            if (weights is not null) ArrayPool<double>.Shared.Return(weights);
+        }
     }
 
     private static double Kernel(double x, ImageInterpolation interpolation)

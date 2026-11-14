@@ -1,5 +1,10 @@
 # 变更记录
 
+## 2026-11-14 修复页图提取的面积缩放热点
+- `ImageSearch/GrayImage.cs`：面积缩小时预计算横向权重、复用逐行纵向权重，消除每个源像素的重复边界计算；保持 double 乘法 / 累加顺序和舍入，线性 / 高阶插值与极端轴长保留原路径。
+- `tests/EhViewerForPc.ImageSearch.Tests/ResizeCompatibilityTests.cs`：固定旧版像素与规范化 PNG 内容哈希金样，覆盖单轴平票舍入、并发及输出所有权，保护已有特征身份。
+- `README.md`、`README.en.md`、`PRODUCT.md`、`docs/页图提取缩放热点优化-2026-11-14.md`：明确此次针对提取阶段 CPU 热点，记录新旧完整 AOT 后端对照、真实调用链与性能边界。
+
 ## 2026-11-14 修复 GPU 训练的小批次同步瓶颈
 - `ImageSearch/ComputeSharpAccelerator.cs`：训练描述子容量从 8,192 提高到 131,072，仍按每 dispatch 最多 8M 次比较缩小批次；合并描述子 / 中心上传与归属 / 距离回读，减少 GPU 空档与 CPU 等待。
 - `tests/EhViewerForPc.ImageSearch.Tests/GpuTests.cs`：覆盖大批次后一条尾数据、4,096 中心比较上限、空输入、平票及结果缓冲边界；保持已有索引与训练输出兼容。
