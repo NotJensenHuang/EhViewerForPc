@@ -3,6 +3,26 @@ namespace EhViewerForPc.ImageSearch.Tests;
 public sealed class StorageTests
 {
     [Fact]
+    public void ParallelTrainingAndBucketAssignmentProduceIdenticalPublishedFiles()
+    {
+        using var scope = new TestDirectory();
+        foreach (int workers in new[] { 1, 12 })
+        {
+            using var database = new ImageDatabase(scope.File("backend-" + workers), writable: true);
+            using (var writer = database.CreateImportWriter())
+            {
+                for (int i = 0; i < 12; i++) writer.Add($"{i}.png", Blake3.Hash([(byte)i]), AlgorithmTests.Descriptors(500, i));
+                writer.Commit();
+            }
+            ImageSearchEngine.Train(database, 64, 12, iterations: 3, workers: workers);
+            Assert.Equal(12, ImageSearchEngine.Build(database, workers: workers).IndexedImages);
+            database.CheckIntegrity();
+        }
+        foreach (string name in new[] { "quantizer.bin", "invlists.bin" })
+            Assert.Equal(File.ReadAllBytes(scope.File("backend-1/" + name)), File.ReadAllBytes(scope.File("backend-12/" + name)));
+    }
+
+    [Fact]
     public void BatchedWriterCommitsSharedFeaturesBeforeMetadataAndRollsBackUnfinishedBatch()
     {
         using var scope = new TestDirectory();

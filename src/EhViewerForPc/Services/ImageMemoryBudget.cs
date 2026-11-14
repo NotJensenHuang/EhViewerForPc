@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using EhViewerForPc.ImageSearch;
 
 namespace EhViewerForPc.Services;
 
@@ -13,8 +14,12 @@ public static class ImageMemoryBudget
     private static readonly object Gate = new();
     private static readonly ConditionalWeakTable<Bitmap, Reservation> Bitmaps = new();
     private static long _used;
+    private static long _indexUsed;
     private static long _limit = 256L * 1024 * 1024;
-    public static long UsedBytes { get { lock (Gate) return _used; } }
+    public static long UsedBytes { get { lock (Gate) return _used + _indexUsed; } }
+    public static long IndexUsedBytes { get { lock (Gate) return _indexUsed; } }
+    // 后台索引与前台位图分别限额，仍由同一个服务记账；索引不能吃掉阅读器的显示额度。
+    public static long IndexLimitBytes => IndexBuildOptions.MemoryCapacityBytes + (16L + 2 * IndexBuildOptions.MaximumWorkers) * 1024 * 1024;
     public static long LimitBytes { get { lock (Gate) return _limit; } }
     public static void Configure(int megabytes) { lock (Gate) _limit = Math.Clamp(megabytes, 64, 1536) * 1024L * 1024; }
 
@@ -42,6 +47,18 @@ public static class ImageMemoryBudget
         }
     }
 
+    public static bool TryReserveIndex(long bytes, out IDisposable? reservation)
+    {
+        lock (Gate)
+        {
+            reservation = null;
+            if (bytes < 0 || bytes > IndexLimitBytes - _indexUsed) return false;
+            reservation = new Reservation(bytes, index: true);
+            _indexUsed += bytes;
+            return true;
+        }
+    }
+
     public static WriteableBitmap CreateBitmap(int width, int height)
     {
         var reservation = (Reservation)Reserve(checked((long)width * height * 4));
@@ -60,13 +77,17 @@ public static class ImageMemoryBudget
         if (Bitmaps.TryGetValue(bitmap, out var lease)) { Bitmaps.Remove(bitmap); lease.Dispose(); }
     }
 
-    private sealed class Reservation(long bytes) : IDisposable
+    private sealed class Reservation(long bytes, bool index = false) : IDisposable
     {
         private int _released;
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _released, 1) != 0) return;
-            lock (Gate) _used -= bytes;
+            lock (Gate)
+            {
+                if (index) _indexUsed -= bytes;
+                else _used -= bytes;
+            }
             GC.SuppressFinalize(this);
         }
         ~Reservation() => Dispose();

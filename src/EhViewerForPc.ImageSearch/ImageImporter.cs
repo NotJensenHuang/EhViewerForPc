@@ -9,9 +9,9 @@ namespace EhViewerForPc.ImageSearch;
 public sealed record ImportOptions
 {
     /// <summary>Gets the number of extraction workers, limited to six.</summary>
-    public int Workers { get; init; } = 2;
+    public int Workers { get; init; } = IndexBuildOptions.DefaultWorkers;
     public int BatchSize { get; init; } = 10;
-    public long WorkingSetBytes { get; init; } = 128L * 1024 * 1024;
+    public long WorkingSetBytes { get; init; } = IndexBuildOptions.DefaultWorkingSetBytes;
     public bool UseSimd { get; init; } = true;
     /// <summary>Gets the low-feature skip threshold (inclusive).</summary>
     public int MinFeatures { get; init; } = 30;

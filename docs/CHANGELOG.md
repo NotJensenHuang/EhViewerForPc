@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-11-14 解除索引并行瓶颈并扩展训练与分桶
+- `ImageSearch/IndexBuildOptions.cs`、`OrderedImagePipeline.cs`：默认按逻辑处理器数减 2 使用 1–32 worker，工作区随 CPU 与 GC 内存上限扩展到 128–1024 MiB，保留有界队列与原页序提交。
+- `Services/ImageMemoryBudget.cs`、`LocalImageSearchService.Pipeline.cs`：索引与前台位图分别限额、统一记账，移除共享 128 MiB 对较大页图的隐性串行限制；进度显示并行度，诊断记录活动页峰值和配额等待时间。
+- `ImageSearch/BinaryKModes.cs`、`ImageSearchEngine.cs`、`Services/LocalImageSearchService.cs`：中心分配、位直方图和描述子查桶使用有界并行，保留随机序列、平票规则、向量 ID 和发布文件内容。
+- `ImageSearch/ImageImporter.cs`、`ImageSearch.Host/Program.cs`：目录导入随资源自动扩容，`add` / `train` / `build` 支持 `--workers 1..32`；保留 Tar 的单 payload 约束。
+- `tests/`：覆盖 12 worker 并发、训练与发布文件等价、运行中取消、前后台内存隔离和等待时退出；性能与验证证据见并行扩容专题。
+
 ## 2026-11-14 实现索引 CPU 并行、批量写入与 SIMD
 - `ImageSearch/OrderedImagePipeline.cs`、`ImageWorkBudget.cs`、`Services/LocalImageSearchService.Pipeline.cs`：有界提取、原页序消费、共享图像内存预留、可取消背压及完整收尾；默认自动选择 1–4 个 worker。
 - `ImageSearch/ImageDatabase.ImportWriter.cs`、`SharedFeatureCache.cs`：复用连接与预编译语句，每 10 页按共享特征 / 后端 / 清单顺序提交检查点，取消保存健康部分，失败回滚当前批。

@@ -23,7 +23,8 @@ public static class OrderedImagePipeline
         Func<TWorker> createWorker, Func<TWorker, TInput, CancellationToken, ValueTask<TOutput>> process,
         Action<TOutput> commit, int workers, int capacity, CancellationToken token) where TWorker : IDisposable
     {
-        if (workers is < 1 or > 6 || capacity < workers || capacity > 32) throw new ArgumentOutOfRangeException(nameof(workers));
+        if (workers is < 1 or > IndexBuildOptions.MaximumWorkers || capacity < workers || capacity > IndexBuildOptions.MaximumWorkers * 4)
+            throw new ArgumentOutOfRangeException(nameof(workers));
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         var ct = cancellation.Token;
         using var admission = new SemaphoreSlim(capacity, capacity);

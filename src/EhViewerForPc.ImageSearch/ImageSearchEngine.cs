@@ -35,10 +35,11 @@ public sealed class ImageSearchEngine
 
     /// <summary>Trains and saves a new quantizer, refusing to invalidate existing index segments.</summary>
     public static KModesResult Train(ImageDatabase database, int centers, int images, int iterations = 20, bool plusPlus = false,
-        bool twoLevel = true, int seed = 20261112, CancellationToken cancellationToken = default, int trainingVectorLimit = 4_000_000)
+        bool twoLevel = true, int seed = 20261112, CancellationToken cancellationToken = default, int trainingVectorLimit = 4_000_000, int workers = 1)
     {
         database.RequireWriter();
-        if (images < 1 || trainingVectorLimit is < 1 or > 64_000_000) throw new ArgumentOutOfRangeException(nameof(images));
+        if (images < 1 || trainingVectorLimit is < 1 or > 64_000_000 || workers is < 1 or > IndexBuildOptions.MaximumWorkers)
+            throw new ArgumentOutOfRangeException(nameof(images));
         if (File.Exists(Path.Combine(database.DirectoryPath, "invlists.bin")) || Directory.EnumerateFiles(database.DirectoryPath, "segment-*.ivf").Any())
             throw new InvalidOperationException("Train a new generation instead of replacing an indexed quantizer.");
         // Explicit cap prevents a mistakenly chosen image limit from filling memory during training.
@@ -50,7 +51,7 @@ public sealed class ImageSearchEngine
                 throw new InvalidOperationException("TrainingBudgetExceeded: reduce training images or train in a separately budgeted job.");
             data.AddRange(image.Descriptors);
         }
-        var trained = BinaryKModes.Train(data.ToArray(), centers, iterations, plusPlus, twoLevel, seed, cancellationToken);
+        var trained = BinaryKModes.Train(data.ToArray(), centers, iterations, plusPlus, twoLevel, seed, cancellationToken, workers);
         var graph = new BinaryHnsw(seed: seed);
         foreach (var center in trained.Centers) graph.Add(center, cancellationToken);
         graph.Save(Path.Combine(database.DirectoryPath, "quantizer.bin"), database.Profile.Id);
@@ -59,10 +60,11 @@ public sealed class ImageSearchEngine
 
     /// <summary>Builds bounded segments and publishes a streaming merge; a paused build remains resumable.</summary>
     public static BuildResult Build(ImageDatabase database, int batchSize = 2000, bool stopBeforeMerge = false,
-        bool cleanBeforeMerge = false, int? stopAfterSegments = null, CancellationToken cancellationToken = default, IReadOnlySet<long>? allowedImageIds = null)
+        bool cleanBeforeMerge = false, int? stopAfterSegments = null, CancellationToken cancellationToken = default, IReadOnlySet<long>? allowedImageIds = null, int workers = 1)
     {
         database.RequireWriter();
-        if (batchSize is < 1 or > 2000 || stopAfterSegments is < 1) throw new ArgumentOutOfRangeException(nameof(batchSize));
+        if (batchSize is < 1 or > 2000 || stopAfterSegments is < 1 || workers is < 1 or > IndexBuildOptions.MaximumWorkers)
+            throw new ArgumentOutOfRangeException(nameof(batchSize));
         string directory = database.DirectoryPath, profileId = database.Profile.Id;
         string quantizerPath = Path.Combine(directory, "quantizer.bin");
         var quantizer = BinaryHnsw.Load(quantizerPath, profileId);
@@ -91,12 +93,28 @@ public sealed class ImageSearchEngine
             var batch = database.ReadCached(unsegmentedOnly: true, limit: batchSize).ToArray();
             if (batch.Length == 0) break;
             var buckets = Enumerable.Range(0, quantizer.Count).Select(_ => new List<IndexVector>()).ToArray();
-            foreach (var image in batch)
+            var assignments = new int[batch.Length][];
+            void AssignImage(int ordinal)
             {
+                var image = batch[ordinal];
                 cancellationToken.ThrowIfCancellationRequested();
+                int[] assigned = new int[image.Descriptors.Length];
                 for (int i = 0; i < image.Descriptors.Length; i++)
                 {
-                    int bucket = quantizer.Search(image.Descriptors[i], 1)[0];
+                    if ((i & 127) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    assigned[i] = quantizer.Search(image.Descriptors[i], 1)[0];
+                }
+                assignments[ordinal] = assigned;
+            }
+            // 量化器在此阶段只读；按页并行查桶，随后依旧按原向量 ID 顺序落盘。
+            if (workers == 1) for (int ordinal = 0; ordinal < batch.Length; ordinal++) AssignImage(ordinal);
+            else Parallel.For(0, batch.Length, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = cancellationToken }, AssignImage);
+            for (int ordinal = 0; ordinal < batch.Length; ordinal++)
+            {
+                var image = batch[ordinal];
+                for (int i = 0; i < image.Descriptors.Length; i++)
+                {
+                    int bucket = assignments[ordinal][i];
                     buckets[bucket].Add(new(image.FirstVectorId + i, image.ImageId, image.Descriptors[i].Xor(quantizer[bucket])));
                 }
             }

@@ -44,6 +44,7 @@ public sealed class ImageSearchIntegrationTests
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(4)]
+    [InlineData(12)]
     public async Task ParallelBatchesRemainSearchableAndUnchangedUpdatesKeepPublishedSnapshot(int workers)
     {
         using var scope = new Fixture(); var copies = scope.CreateCopies();
@@ -74,14 +75,42 @@ public sealed class ImageSearchIntegrationTests
         using var scope = new Fixture(); var copies = scope.CreateCopies();
         scope.Services.Settings.ImageSearch.Enabled = true;
         long before = ImageMemoryBudget.UsedBytes;
-        using var occupied = ImageMemoryBudget.Reserve(ImageMemoryBudget.LimitBytes - before);
+        Assert.True(ImageMemoryBudget.TryReserveIndex(ImageMemoryBudget.IndexLimitBytes, out var occupied));
+        using var reservation = occupied;
         var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
         Task build = scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None);
-        while (scope.Services.ImageSearch.BuildStatus?.Message != "正在等待可用图像内存…") await Task.Delay(10);
+        var timeout = DateTime.UtcNow.AddSeconds(10);
+        while (scope.Services.ImageSearch.BuildStatus?.Message != "正在等待可用图像内存…" && DateTime.UtcNow < timeout) await Task.Delay(10);
+        Assert.Equal("正在等待可用图像内存…", scope.Services.ImageSearch.BuildStatus?.Message);
         scope.Services.ImageSearch.Dispose();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => build);
-        Assert.Equal(ImageMemoryBudget.LimitBytes, ImageMemoryBudget.UsedBytes);
-        occupied.Dispose();
+        Assert.Equal(before + ImageMemoryBudget.IndexLimitBytes, ImageMemoryBudget.UsedBytes);
+        occupied!.Dispose();
+        Assert.Equal(before, ImageMemoryBudget.UsedBytes);
+    }
+
+    [AvaloniaFact]
+    public async Task IndexBuildKeepsReaderMemoryAvailableWhenBothBudgetsAreOccupied()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        long before = ImageMemoryBudget.UsedBytes;
+        // 占满前台显示额度，后台提取仍应正常完成；反向占满索引额度也不妨碍阅读器分配。
+        using (ImageMemoryBudget.Reserve(ImageMemoryBudget.LimitBytes - before))
+        {
+            var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+            var status = await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None,
+                options: new IndexBuildOptions { Workers = 12, WorkingSetBytes = 256L * 1024 * 1024 }).WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Equal(6, status.Indexed);
+            Assert.Equal(0, ImageMemoryBudget.IndexUsedBytes);
+        }
+        Assert.True(ImageMemoryBudget.TryReserveIndex(ImageMemoryBudget.IndexLimitBytes, out var index));
+        using (index)
+        using (ImageMemoryBudget.Reserve(1024 * 1024))
+        {
+            Assert.False(ImageMemoryBudget.TryReserveIndex(1, out _));
+            Assert.Equal(before + ImageMemoryBudget.IndexLimitBytes + 1024 * 1024, ImageMemoryBudget.UsedBytes);
+        }
         Assert.Equal(before, ImageMemoryBudget.UsedBytes);
     }
 

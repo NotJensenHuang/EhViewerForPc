@@ -3,6 +3,48 @@ namespace EhViewerForPc.ImageSearch.Tests;
 public sealed class PipelineTests
 {
     [Fact]
+    public void AutomaticResourcesScalePastLegacyCapsAndRemainBounded()
+    {
+        var options = new IndexBuildOptions();
+        options.Validate();
+        if (Environment.ProcessorCount >= 8) Assert.InRange(options.Workers, 6, IndexBuildOptions.MaximumWorkers);
+        Assert.InRange(options.WorkingSetBytes, 128L * 1024 * 1024, IndexBuildOptions.MaximumWorkingSetBytes);
+        Assert.Equal(128L * 1024 * 1024, IndexBuildOptions.GetMemoryCapacity(0));
+        Assert.Equal(256L * 1024 * 1024, IndexBuildOptions.GetMemoryCapacity(4L * 1024 * 1024 * 1024));
+        new IndexBuildOptions { Workers = 32, WorkingSetBytes = 1024L * 1024 * 1024 }.Validate();
+        Assert.Throws<ArgumentOutOfRangeException>(() => new IndexBuildOptions { Workers = 33 }.Validate());
+    }
+
+    [Fact]
+    public async Task PipelineCanKeepMoreThanSixWorkersBusyWithoutChangingCommitOrder()
+    {
+        const int workers = 12;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int active = 0, disposed = 0;
+        var committed = new List<int>();
+        async ValueTask<int> Process(Worker _, int value, CancellationToken token)
+        {
+            if (Interlocked.Increment(ref active) == workers) ready.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return value;
+        }
+        Task pipeline = OrderedImagePipeline.RunAsync(Enumerable.Range(0, workers),
+            () => new Worker(() => Interlocked.Increment(ref disposed)), Process, committed.Add,
+            workers, workers * 2, CancellationToken.None);
+        try
+        {
+            await Task.WhenAny(ready.Task, pipeline).WaitAsync(TimeSpan.FromSeconds(5));
+            if (pipeline.IsCompleted) await pipeline;
+            Assert.Equal(workers, Volatile.Read(ref active));
+        }
+        finally { release.TrySetResult(); }
+        await pipeline.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(Enumerable.Range(0, workers), committed);
+        Assert.Equal(workers, disposed);
+    }
+
+    [Fact]
     public async Task SlowFirstItemKeepsAdmissionBoundedAndCommitsInStableOrder()
     {
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

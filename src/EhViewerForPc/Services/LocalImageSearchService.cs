@@ -305,7 +305,7 @@ public sealed partial class LocalImageSearchService : IDisposable
                 int centers = Math.Min(4096, Math.Max(1, Math.Min(trainingDescriptors / 30, (int)(4 * Math.Sqrt(trainingDescriptors)))));
                 progress?.Report(new("正在训练图片索引…", processed, pages.Count, indexed, skipped, failed));
                 long started = System.Diagnostics.Stopwatch.GetTimestamp();
-                ImageSearchEngine.Train(backend, centers, 3000, cancellationToken: token);
+                ImageSearchEngine.Train(backend, centers, 3000, cancellationToken: token, workers: options.Workers);
                 if (BuildStatistics is { } statistics)
                     Volatile.Write(ref _statistics, statistics with { TrainingMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds });
             }
@@ -314,7 +314,7 @@ public sealed partial class LocalImageSearchService : IDisposable
             progress?.Report(new("正在构建图片索引…", processed, pages.Count, indexed, skipped, failed));
             long buildStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             if (needsBuild || resumed || backend.HasPendingImages)
-                ImageSearchEngine.Build(backend, cancellationToken: token, allowedImageIds: backend.AliasedImageIds());
+                ImageSearchEngine.Build(backend, cancellationToken: token, allowedImageIds: backend.AliasedImageIds(), workers: options.Workers);
             if (BuildStatistics is { } builtStatistics)
                 Volatile.Write(ref _statistics, builtStatistics with { IndexMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted).TotalMilliseconds });
             var validated = new ImageSearchEngine(backend, allowLinkedPublication: true);

@@ -10,7 +10,8 @@ namespace EhViewerForPc.Services;
 
 public sealed record LocalIndexBuildStatistics(int Workers, int BatchSize, long WorkingSetLimit, long PeakWorkspaceBytes,
     int DecodedPages, int ExtractedPages, int CommittedBatches, double DecodeMilliseconds, double ExtractMilliseconds,
-    double WriteMilliseconds, bool Unchanged = false, double HashMilliseconds = 0, double TrainingMilliseconds = 0, double IndexMilliseconds = 0);
+    double WriteMilliseconds, bool Unchanged = false, double HashMilliseconds = 0, double TrainingMilliseconds = 0, double IndexMilliseconds = 0,
+    int PeakParallelPages = 0, double MemoryWaitMilliseconds = 0);
 
 public sealed partial class LocalImageSearchService
 {
@@ -26,8 +27,15 @@ public sealed partial class LocalImageSearchService
 
     private sealed class ExtractionCounters
     {
-        internal int Decoded, Extracted;
-        internal long DecodeTicks, HashTicks, ExtractTicks;
+        internal int Decoded, Extracted, Active, Peak;
+        internal long DecodeTicks, HashTicks, ExtractTicks, MemoryWaitTicks;
+
+        internal void Enter()
+        {
+            int active = Interlocked.Increment(ref Active), peak;
+            do { peak = Volatile.Read(ref Peak); }
+            while (active > peak && Interlocked.CompareExchange(ref Peak, active, peak) != peak);
+        }
     }
 
     private sealed class ExtractionWorker : IDisposable
@@ -151,37 +159,47 @@ public sealed partial class LocalImageSearchService
                 if (!file.Exists || file.Length != candidate.File.Length || file.LastWriteTimeUtc.Ticks != candidate.File.MtimeTicks) continue;
                 if (candidate.Cached is { } cached)
                     return new(work.Gallery, work.Page, candidate, cached.Alias, cached.State, Reused: true);
-                long estimate;
+                long estimate, waitStarted = Stopwatch.GetTimestamp();
                 // Header 解析同样受配额约束；解析完释放后再申请整个像素工作区，避免升级租约死锁。
                 using (await budget.ReserveAsync(Math.Min(52L * 1024 * 1024, file.Length + 2L * 1024 * 1024), token).ConfigureAwait(false))
-                    estimate = GrayImage.EstimateWorkingSet(file.FullName, profile);
-                using var memory = await budget.ReserveAsync(estimate, token).ConfigureAwait(false);
-                long started = Stopwatch.GetTimestamp();
-                var image = GrayImage.ReadFile(file.FullName, useSimd: options.UseSimd);
-                Interlocked.Add(ref counters.DecodeTicks, Stopwatch.GetTimestamp() - started);
-                started = Stopwatch.GetTimestamp();
-                byte[] canonical = image.EncodePng();
-                string payload = Convert.ToHexStringLower(SHA256.HashData(canonical));
-                string asset = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(FeatureProfile.NormalizerVersion + "\n" + payload)));
-                byte[] hash = Blake3.Hash(canonical);
-                Interlocked.Add(ref counters.HashTicks, Stopwatch.GetTimestamp() - started);
-                Interlocked.Increment(ref counters.Decoded);
-                BinaryDescriptor[]? descriptors;
-                try { descriptors = worker.Cache?.ReadDescriptors(worker.ProfileId, hash); }
-                catch (InvalidDataException error) { throw new InvalidOperationException("共享图片特征损坏，请重新提取重建。", error); }
-                bool reused = descriptors is not null;
-                if (descriptors is null)
                 {
-                    started = Stopwatch.GetTimestamp();
-                    var features = worker.Extractor.Extract(image, token);
-                    descriptors = new BinaryDescriptor[features.Length];
-                    for (int i = 0; i < features.Length; i++) descriptors[i] = features[i].Descriptor;
-                    Interlocked.Add(ref counters.ExtractTicks, Stopwatch.GetTimestamp() - started);
-                    Interlocked.Increment(ref counters.Extracted);
+                    Interlocked.Add(ref counters.MemoryWaitTicks, Stopwatch.GetTimestamp() - waitStarted);
+                    estimate = GrayImage.EstimateWorkingSet(file.FullName, profile);
                 }
-                file.Refresh();
-                if (!file.Exists || file.Length != candidate.File.Length || file.LastWriteTimeUtc.Ticks != candidate.File.MtimeTicks) continue;
-                return new(work.Gallery, work.Page, candidate, "pages/" + asset + ".png", descriptors.Length <= 30 ? "skipped" : "indexed", hash, descriptors, reused);
+                waitStarted = Stopwatch.GetTimestamp();
+                using var memory = await budget.ReserveAsync(estimate, token).ConfigureAwait(false);
+                Interlocked.Add(ref counters.MemoryWaitTicks, Stopwatch.GetTimestamp() - waitStarted);
+                counters.Enter();
+                try
+                {
+                    long started = Stopwatch.GetTimestamp();
+                    var image = GrayImage.ReadFile(file.FullName, useSimd: options.UseSimd);
+                    Interlocked.Add(ref counters.DecodeTicks, Stopwatch.GetTimestamp() - started);
+                    started = Stopwatch.GetTimestamp();
+                    byte[] canonical = image.EncodePng();
+                    string payload = Convert.ToHexStringLower(SHA256.HashData(canonical));
+                    string asset = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(FeatureProfile.NormalizerVersion + "\n" + payload)));
+                    byte[] hash = Blake3.Hash(canonical);
+                    Interlocked.Add(ref counters.HashTicks, Stopwatch.GetTimestamp() - started);
+                    Interlocked.Increment(ref counters.Decoded);
+                    BinaryDescriptor[]? descriptors;
+                    try { descriptors = worker.Cache?.ReadDescriptors(worker.ProfileId, hash); }
+                    catch (InvalidDataException error) { throw new InvalidOperationException("共享图片特征损坏，请重新提取重建。", error); }
+                    bool reused = descriptors is not null;
+                    if (descriptors is null)
+                    {
+                        started = Stopwatch.GetTimestamp();
+                        var features = worker.Extractor.Extract(image, token);
+                        descriptors = new BinaryDescriptor[features.Length];
+                        for (int i = 0; i < features.Length; i++) descriptors[i] = features[i].Descriptor;
+                        Interlocked.Add(ref counters.ExtractTicks, Stopwatch.GetTimestamp() - started);
+                        Interlocked.Increment(ref counters.Extracted);
+                    }
+                    file.Refresh();
+                    if (!file.Exists || file.Length != candidate.File.Length || file.LastWriteTimeUtc.Ticks != candidate.File.MtimeTicks) continue;
+                    return new(work.Gallery, work.Page, candidate, "pages/" + asset + ".png", descriptors.Length <= 30 ? "skipped" : "indexed", hash, descriptors, reused);
+                }
+                finally { Interlocked.Decrement(ref counters.Active); }
             }
             catch (Exception error) when (error is InvalidDataException or IOException or ArgumentException or UnauthorizedAccessException) { }
         }
@@ -192,11 +210,12 @@ public sealed partial class LocalImageSearchService
         SqliteConnection manifest, List<(ImageSearchGallery Gallery, GalleryPage Page)> pages, Dictionary<string, LibrarySource> sources,
         bool rebuild, IndexBuildOptions options, IProgress<LocalImageSearchStatus>? progress, CancellationToken token)
     {
-        long workspace = Math.Min(options.WorkingSetBytes, ImageMemoryBudget.LimitBytes / 2);
-        long reserved = workspace + (16L + 2 * options.Workers) * 1024 * 1024;
+        long overhead = (16L + 2 * options.Workers) * 1024 * 1024;
+        long workspace = Math.Min(options.WorkingSetBytes, ImageMemoryBudget.IndexLimitBytes - overhead);
+        long reserved = workspace + overhead;
         IDisposable? reservation;
         bool waiting = false;
-        while (!ImageMemoryBudget.TryReserve(reserved, out reservation))
+        while (!ImageMemoryBudget.TryReserveIndex(reserved, out reservation))
         {
             token.ThrowIfCancellationRequested();
             if (!waiting) { progress?.Report(new("正在等待可用图像内存…", Total: pages.Count)); waiting = true; }
@@ -270,13 +289,13 @@ public sealed partial class LocalImageSearchService
                 writeTicks += Stopwatch.GetTimestamp() - start;
                 if (buffered >= options.BatchSize || processed % 10 == 0 || processed == pages.Count) Flush();
                 if (processed % 10 == 0 || processed == pages.Count)
-                    progress?.Report(new($"正在提取页图 {processed:N0} / {pages.Count:N0}", processed, pages.Count, indexed, skipped, failed, reused));
+                    progress?.Report(new($"正在提取页图 {processed:N0} / {pages.Count:N0} · {options.Workers} 并行", processed, pages.Count, indexed, skipped, failed, reused));
             }
             catch { writeFailed = true; throw; }
         }
         try
         {
-            progress?.Report(new("正在提取页图…", Total: pages.Count));
+            progress?.Report(new($"正在提取页图…（{options.Workers} 并行，{workspace / 1024 / 1024} MiB 工作区）", Total: pages.Count));
             await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, pages, sources, token),
                 () => new ExtractionWorker(backend.Profile, root, rebuild, options.UseSimd),
                 (worker, work, ct) => ExtractPageAsync(worker, work, backend.Profile, options, budget, counters, ct),
@@ -297,7 +316,8 @@ public sealed partial class LocalImageSearchService
                 Volatile.Write(ref _statistics, new(options.Workers, options.BatchSize, workspace, budget.PeakBytes,
                     counters.Decoded, counters.Extracted, commits, counters.DecodeTicks * 1000d / Stopwatch.Frequency,
                     counters.ExtractTicks * 1000d / Stopwatch.Frequency, writeTicks * 1000d / Stopwatch.Frequency,
-                    HashMilliseconds: counters.HashTicks * 1000d / Stopwatch.Frequency));
+                    HashMilliseconds: counters.HashTicks * 1000d / Stopwatch.Frequency,
+                    PeakParallelPages: counters.Peak, MemoryWaitMilliseconds: counters.MemoryWaitTicks * 1000d / Stopwatch.Frequency));
             }
         }
     }

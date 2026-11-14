@@ -4,6 +4,33 @@ namespace EhViewerForPc.ImageSearch.Tests;
 
 public sealed class AlgorithmTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ParallelTrainingPreservesCentersCountsAndDistance(bool plusPlus, bool twoLevel)
+    {
+        var data = Descriptors(10240, 730);
+        // 混入重复描述子，覆盖同距选择与多数位平票。
+        for (int i = 0; i < data.Length; i += 3) data[i] = default;
+        var serial = BinaryKModes.Train(data, 64, iterations: 3, plusPlus: plusPlus, twoLevel: twoLevel);
+        var parallel = BinaryKModes.Train(data, 64, iterations: 3, plusPlus: plusPlus, twoLevel: twoLevel, workers: 12);
+        Assert.Equal(serial.Centers, parallel.Centers);
+        Assert.Equal(serial.Frequencies, parallel.Frequencies);
+        Assert.Equal(serial.Distance, parallel.Distance);
+    }
+
+    [Fact]
+    public void ParallelTrainingObservesCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var data = Descriptors(65536, 42);
+        cancellation.CancelAfter(TimeSpan.FromMilliseconds(10));
+        Assert.ThrowsAny<OperationCanceledException>(() => BinaryKModes.Train(data, 128, iterations: 100,
+            twoLevel: false, cancellationToken: cancellation.Token, workers: 12));
+    }
+
     [Fact]
     public void Blake3MatchesAllOfficialChunkAndTreeBoundaryVectors()
     {

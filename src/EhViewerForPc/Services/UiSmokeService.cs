@@ -870,7 +870,8 @@ public static class UiSmokeService
                 report["coverAllocation"] = new { loads = 100, allocatedBytes = GC.GetTotalAllocatedBytes(true) - allocatedBefore,
                     oldRawBufferEstimate = 100L * 256 * 384 * 4 };
             }
-            report["imageMemory"] = new { usedBytes = ImageMemoryBudget.UsedBytes, limitBytes = ImageMemoryBudget.LimitBytes };
+            report["imageMemory"] = new { usedBytes = ImageMemoryBudget.UsedBytes, limitBytes = ImageMemoryBudget.LimitBytes,
+                indexUsedBytes = ImageMemoryBudget.IndexUsedBytes, indexLimitBytes = ImageMemoryBudget.IndexLimitBytes };
         }
 
         if (window.Shell is { } updatedShell)
