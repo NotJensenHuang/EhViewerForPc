@@ -270,7 +270,7 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 
 For the index CPU / SIMD implementation, see the [implementation report](docs/索引CPU并行与SIMD验证-2026-11-14.md). Later concurrency changes, larger-page benchmarks and validation boundaries are in the [parallel scaling report](docs/索引并行扩容与阶段加速-2026-11-14.md).
 
-ComputeSharp GPU computation and persistent pending-job recovery are integrated into the app. See the [implementation and validation report](docs/ComputeSharp与持久化恢复实现-2026-11-14.md) for measurements, compatibility and device coverage. A hardware DirectX 12 compute device is required; only NVIDIA was tested locally, with AMD / Intel hardware still unverified. GPU handles part of the computation and does not guarantee faster processing for every image or batch. The standalone Host CLI still defaults to CPU.
+ComputeSharp GPU computation and persistent pending-job recovery are integrated into the app. See the [implementation and validation report](docs/ComputeSharp与持久化恢复实现-2026-11-14.md) for measurements, compatibility and device coverage. A hardware DirectX 12 compute device is required; only NVIDIA was tested locally, with AMD / Intel hardware still unverified. GPU training uses comparison-bounded larger batches with combined upload/readback to reduce CPU synchronization waits; see the [training-batch fix report](docs/GPU训练批次与同步开销-2026-11-14.md). GPU handles part of the computation and does not guarantee faster processing for every image or batch. The standalone Host CLI still defaults to CPU.
 
 Explicitly run hardware GPU regressions (hardware cases are skipped by default on CI without a device):
 

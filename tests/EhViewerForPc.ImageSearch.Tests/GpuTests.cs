@@ -63,6 +63,36 @@ public sealed class GpuTests
         Assert.True(gpu.IsAvailable, gpu.FailureReason);
     }
 
+    [GpuFact]
+    public void HardwareAssignmentPreservesPackedBatchTailAndComparisonBound()
+    {
+        using var gpu = new ComputeSharpAccelerator();
+        Assert.True(gpu.TryInitialize(), gpu.FailureReason);
+        foreach (var shape in new[] { (Rows: 131073, Centers: 33), (Rows: 2049, Centers: 4096), (Rows: 0, Centers: 1) })
+        {
+            var data = AlgorithmTests.Descriptors(shape.Rows, 42);
+            var centers = AlgorithmTests.Descriptors(shape.Centers, 52);
+            if (centers.Length > 1) centers[1] = centers[0];
+            if (data.Length > 0) data[^1] = centers[0];
+            int[] ids = Enumerable.Repeat(-42, data.Length + 5).ToArray();
+            Assert.True(gpu.TryAssign(data, centers, ids, out long distance, CancellationToken.None), gpu.FailureReason);
+            long expected = 0;
+            for (int i = 0; i < data.Length; i++)
+            {
+                int best = 257, chosen = 0;
+                for (int c = 0; c < centers.Length; c++)
+                {
+                    int candidate = data[i].Distance(centers[c]);
+                    if (candidate < best) { best = candidate; chosen = c; }
+                }
+                expected += best;
+                Assert.Equal(chosen, ids[i]);
+            }
+            Assert.Equal(expected, distance);
+            Assert.All(ids.Skip(data.Length), value => Assert.Equal(-42, value));
+        }
+    }
+
     [Fact]
     public void FailedAcceleratorResultsAreDiscardedBeforeCpuFallback()
     {

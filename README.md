@@ -270,7 +270,7 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 
 索引 CPU / SIMD 的实现见[实施记录](docs/索引CPU并行与SIMD验证-2026-11-14.md)，后续并行扩容、较大页面性能对照及验证边界见[并行扩容记录](docs/索引并行扩容与阶段加速-2026-11-14.md)。
 
-ComputeSharp GPU 与持久化待办恢复已接入应用，实测、兼容性与设备验证边界见[实施与验证报告](docs/ComputeSharp与持久化恢复实现-2026-11-14.md)。需要支持计算的硬件 DirectX 12 设备；本机只验证 NVIDIA，AMD / Intel 尚未实机验证。GPU 只接管部分计算，不能保证所有页图与批次都更快；独立 Host CLI 默认仍使用 CPU。
+ComputeSharp GPU 与持久化待办恢复已接入应用，实测、兼容性与设备验证边界见[实施与验证报告](docs/ComputeSharp与持久化恢复实现-2026-11-14.md)。需要支持计算的硬件 DirectX 12 设备；本机只验证 NVIDIA，AMD / Intel 尚未实机验证。GPU 训练按比较量组织较大批次并合并上传 / 回读，减少 CPU 同步等待，诊断与对照见[训练批次修复记录](docs/GPU训练批次与同步开销-2026-11-14.md)。GPU 只接管部分计算，不能保证所有页图与批次都更快；独立 Host CLI 默认仍使用 CPU。
 
 显式运行硬件 GPU 回归（无设备的 CI 默认跳过硬件用例）：
 

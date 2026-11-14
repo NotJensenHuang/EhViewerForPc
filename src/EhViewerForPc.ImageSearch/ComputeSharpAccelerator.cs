@@ -12,14 +12,15 @@ public sealed partial class ComputeSharpAccelerator : IImageComputeAccelerator
 {
     public const long HostWorkingSetBytes = 32L * 1024 * 1024;
     private const int MaximumPixels = 4 * 1024 * 1024;
-    private const int ChunkSize = 8192;
+    // 描述子容量与单次比较量分开限制；二级训练常见 64 个中心，避免 8K 小块饿死 GPU。
+    private const int ChunkSize = 131072;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private static readonly object DeviceGate = new();
     private static GraphicsDevice? _sharedDevice;
     private static int _deviceUsers;
     private GraphicsDevice? _device;
-    private ReadWriteBuffer<uint>? _pixels, _descriptors, _centers;
-    private ReadWriteBuffer<int>? _scores, _ids, _distances;
+    private ReadWriteBuffer<uint>? _pixels, _descriptors;
+    private ReadWriteBuffer<int>? _scores, _assignments;
     private int _pixelCapacity, _scoreCapacity;
     private bool _attempted, _disabled, _disposed;
     private long _scoreDispatches, _assignmentDispatches;
@@ -90,10 +91,8 @@ public sealed partial class ComputeSharpAccelerator : IImageComputeAccelerator
     [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "仅 int/uint，元数据显式保留，固定最大容量。")]
     private void EnsureAssignmentBuffers()
     {
-        _descriptors ??= _device!.AllocateReadWriteBuffer<uint>(ChunkSize * 8);
-        _centers ??= _device!.AllocateReadWriteBuffer<uint>(4096 * 8);
-        _ids ??= _device!.AllocateReadWriteBuffer<int>(ChunkSize);
-        _distances ??= _device!.AllocateReadWriteBuffer<int>(ChunkSize);
+        _descriptors ??= _device!.AllocateReadWriteBuffer<uint>((ChunkSize + 4096) * 8);
+        _assignments ??= _device!.AllocateReadWriteBuffer<int>(ChunkSize * 2);
     }
 
     public bool TryGetFastScores(GrayImage image, int threshold, int[] scores, CancellationToken token)
@@ -141,24 +140,24 @@ public sealed partial class ComputeSharpAccelerator : IImageComputeAccelerator
         {
             if (!EnsureDevice()) return false;
             EnsureAssignmentBuffers();
-            uint[] words = ArrayPool<uint>.Shared.Rent(Math.Max(ChunkSize, centers.Length) * 8);
-            int[]? distances = null;
+            uint[] words = ArrayPool<uint>.Shared.Rent((ChunkSize + centers.Length) * 8);
+            int[]? results = null;
             try
             {
-                distances = ArrayPool<int>.Shared.Rent(ChunkSize);
-                Encode(centers, words);
-                _centers!.CopyFrom(words.AsSpan(0, centers.Length * 8), 0);
+                results = ArrayPool<int>.Shared.Rent(ChunkSize * 2);
                 int chunk = Math.Min(ChunkSize, Math.Max(256, 8 * 1024 * 1024 / centers.Length));
                 for (int offset = 0; offset < data.Length; offset += chunk)
                 {
                     token.ThrowIfCancellationRequested();
                     int count = Math.Min(chunk, data.Length - offset);
                     Encode(data.AsSpan(offset, count), words);
-                    _descriptors!.CopyFrom(words.AsSpan(0, count * 8), 0);
-                    _device!.For(count, new AssignmentShader(_descriptors!, _centers!, _ids!, _distances!, centers.Length));
-                    _ids!.CopyTo(ids.AsSpan(offset, count), 0);
-                    _distances!.CopyTo(distances.AsSpan(0, count), 0);
-                    for (int i = 0; i < count; i++) distance += distances[i];
+                    Encode(centers, words.AsSpan(count * 8));
+                    // 每批只上传 / 回读各一次。尾批的中心与距离偏移都按实际 count，不能使用容量。
+                    _descriptors!.CopyFrom(words.AsSpan(0, (count + centers.Length) * 8), 0);
+                    _device!.For(count, new AssignmentShader(_descriptors!, _assignments!, centers.Length, count));
+                    _assignments!.CopyTo(results.AsSpan(0, count * 2), 0);
+                    results.AsSpan(0, count).CopyTo(ids.AsSpan(offset, count));
+                    for (int i = 0; i < count; i++) distance += results[count + i];
                     Interlocked.Increment(ref _assignmentDispatches);
                 }
                 token.ThrowIfCancellationRequested();
@@ -167,7 +166,7 @@ public sealed partial class ComputeSharpAccelerator : IImageComputeAccelerator
             finally
             {
                 ArrayPool<uint>.Shared.Return(words);
-                if (distances is not null) ArrayPool<int>.Shared.Return(distances);
+                if (results is not null) ArrayPool<int>.Shared.Return(results);
             }
         }
         catch (Exception error) when (error is not OperationCanceledException) { Disable(error); distance = 0; return false; }
@@ -196,10 +195,10 @@ public sealed partial class ComputeSharpAccelerator : IImageComputeAccelerator
     private void ReleaseBuffers()
     {
         // 某一释放失败也继续处理其他资源。
-        foreach (var resource in new IDisposable?[] { _pixels, _scores, _descriptors, _centers, _ids, _distances })
+        foreach (var resource in new IDisposable?[] { _pixels, _scores, _descriptors, _assignments })
             try { resource?.Dispose(); } catch (Exception error) { FailureReason ??= error.GetType().Name; }
-        _pixels = _descriptors = _centers = null;
-        _scores = _ids = _distances = null;
+        _pixels = _descriptors = null;
+        _scores = _assignments = null;
         _pixelCapacity = _scoreCapacity = 0;
     }
 
@@ -233,8 +232,8 @@ public sealed partial class ComputeSharpAccelerator : IImageComputeAccelerator
 
     [ThreadGroupSize(DefaultThreadGroupSizes.X)]
     [GeneratedComputeShaderDescriptor]
-    internal readonly partial struct AssignmentShader(ReadWriteBuffer<uint> data, ReadWriteBuffer<uint> centers,
-        ReadWriteBuffer<int> ids, ReadWriteBuffer<int> distances, int centerCount) : IComputeShader
+    internal readonly partial struct AssignmentShader(ReadWriteBuffer<uint> data, ReadWriteBuffer<int> results,
+        int centerCount, int count) : IComputeShader
     {
         public void Execute()
         {
@@ -242,10 +241,11 @@ public sealed partial class ComputeSharpAccelerator : IImageComputeAccelerator
             for (int c = 0; c < centerCount; c++)
             {
                 int distance = 0;
-                for (int w = 0; w < 8; w++) distance += (int)Hlsl.CountBits(data[ThreadIds.X * 8 + w] ^ centers[c * 8 + w]);
+                for (int w = 0; w < 8; w++) distance += (int)Hlsl.CountBits(data[ThreadIds.X * 8 + w] ^ data[(count + c) * 8 + w]);
                 if (distance < best) { best = distance; chosen = c; }
             }
-            ids[ThreadIds.X] = chosen; distances[ThreadIds.X] = best;
+            results[ThreadIds.X] = chosen;
+            results[count + ThreadIds.X] = best;
         }
     }
 

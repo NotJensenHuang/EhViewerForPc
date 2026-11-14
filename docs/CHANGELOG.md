@@ -1,5 +1,10 @@
 # 变更记录
 
+## 2026-11-14 修复 GPU 训练的小批次同步瓶颈
+- `ImageSearch/ComputeSharpAccelerator.cs`：训练描述子容量从 8,192 提高到 131,072，仍按每 dispatch 最多 8M 次比较缩小批次；合并描述子 / 中心上传与归属 / 距离回读，减少 GPU 空档与 CPU 等待。
+- `tests/EhViewerForPc.ImageSearch.Tests/GpuTests.cs`：覆盖大批次后一条尾数据、4,096 中心比较上限、空输入、平票及结果缓冲边界；保持已有索引与训练输出兼容。
+- `README.md`、`README.en.md`、`PRODUCT.md`、`docs/GPU训练批次与同步开销-2026-11-14.md`：记录训练阶段诊断、CPU / GPU 等价对照与实际 AOT 测量，明确 GPU 调用墙钟时间不等于硬件忙碌率。
+
 ## 2026-11-14 持久化待办恢复并接入 ComputeSharp
 - `Services/LocalImageSearchService.Plan.cs`、`LocalImageSearchService.cs`、`Core/Models/ImageIndexBuildCheckpoint.cs`：将候选页、签名与完成状态保存在独立任务表，恢复直接读取待办，训练 / 构建不回退全量页扫描；源目录核对按画廊块提交接续，旧任务首次补建计划并复用既有特征。
 - `Services/LocalImageSearchService.Pipeline.cs`、`BackgroundIoScope.cs`、`ImageSearch/GrayImage.cs`：页状态与清单同一事务提交，恢复重试失败页，空计划允许重新发现后续页图；磁盘读取与 CPU 解码分离、限一路读源图，同步源 I/O 与检查点提交使用 Windows 后台优先级。
