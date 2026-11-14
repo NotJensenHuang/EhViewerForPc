@@ -24,6 +24,136 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
 public sealed class ImageSearchIntegrationTests
 {
+    [AvaloniaFact]
+    public async Task BatchRepairUsesAllCopiesReusesQueuedTasksAndReportsMissingLinks()
+    {
+        using var scope = new Fixture(); scope.CreateCopies(named: true);
+        string root = scope.Services.Settings.Sources[0].RootPath;
+        string bad = Path.Combine(root, "43-缺少链接"); Directory.CreateDirectory(bad);
+        File.WriteAllBytes(Path.Combine(bad, "00000003.png"), SyntheticImages.Create(77, 200, 280).EncodePng());
+        scope.Services.Works.Upsert(new() { WorkId = "42", Gid = 42, Token = "fixture", Title = "合成测试" });
+        using var shell = new ShellViewModel(scope.Services); await shell.Library.InitializeAsync();
+        var copies = shell.Library.SnapshotAllWorks().Single(i => i.Gid == 42).Versions;
+        var source = scope.Services.Settings.Sources.Single(s => s.Id == copies[0].SourceId);
+        var original = scope.Services.Downloads.EnqueueRepair(new() { Gid = 42, Token = "fixture", Pages = 5 }, copies[0].FolderPath, source.RootPath, false);
+        original.State = EhViewerForPc.Core.Download.DownloadState.Running;
+        await shell.Library.FillMissingPagesCommand.ExecuteAsync(null);
+        Assert.Equal(2, scope.Services.Downloads.Tasks.Count);
+        Assert.Same(original, scope.Services.Downloads.Tasks.Single(t => t.FolderPath == original.FolderPath));
+        Assert.Equal(2, scope.Services.Downloads.Tasks.Select(t => t.Id).Distinct().Count());
+        Assert.True(shell.Library.HasRepairFailures);
+        Assert.Contains("43-缺少链接", shell.Library.RepairFailureDetails);
+        await shell.Library.FillMissingPagesCommand.ExecuteAsync(null);
+        Assert.Equal(2, scope.Services.Downloads.Tasks.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task VersionChecksReadEachOriginalFolderAndDetailsOpensVersionManagement()
+    {
+        using var scope = new Fixture(); var physical = scope.CreateCopies(named: true);
+        scope.Services.Works.Upsert(new() { WorkId = "42", Gid = 42, Token = "fixture", Title = "合成测试", PageCount = 5, Metadata = new() });
+        using var shell = new ShellViewModel(scope.Services); await shell.Library.InitializeAsync();
+        var item = shell.Library.SnapshotAllWorks().Single();
+        File.WriteAllBytes(Path.Combine(physical[0].FolderPath, "00000002.png"), SyntheticImages.Create(44, 200, 280).EncodePng());
+        File.WriteAllBytes(Path.Combine(physical[1].FolderPath, "00000004.png"), []);
+        using var vm = new VersionsViewModel(item, scope.Services, shell.Library.ApplyScannedCopy);
+        await vm.CheckPagesCommand.ExecuteAsync(null);
+        var first = vm.Versions.Single(v => v.FolderPath == physical[0].FolderPath);
+        var second = vm.Versions.Single(v => v.FolderPath == physical[1].FolderPath);
+        Assert.Equal(new[] { 4 }, first.Info.MissingRanges.SelectMany(r => Enumerable.Range(r.Start, r.End - r.Start + 1)));
+        Assert.Contains("缺页：4", first.DetectionText);
+        Assert.Equal(1, second.Info.ZeroByteFiles); Assert.Contains("缺页：2", second.DetectionText);
+        Assert.Contains("0 字节：1", second.DetectionText);
+        Assert.Equal(4, item.Versions.Single(v => v.FolderPath == physical[0].FolderPath).PageCount);
+        Directory.Move(physical[1].FolderPath, physical[1].FolderPath + "-offline");
+        await vm.CheckPagesCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("检测失败", first.DetectionText);
+        Assert.Contains("检测失败", second.DetectionText);
+        StartupOptions.Current = StartupOptions.Parse(["--ui-smoke"]);
+        var window = new MainWindow(shell) { Width = 920, Height = 600 };
+        try
+        {
+            window.Show(); shell.Navigate("library");
+            shell.Library.OpenDetailsCommand.Execute(item);
+            await Task.Delay(100); window.UpdateLayout();
+            var button = window.GetVisualDescendants().OfType<Button>().Single(b => AutomationProperties.GetAutomationId(b) == "LocalDetails.Versions");
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Task.Delay(100); window.UpdateLayout();
+            Assert.IsType<VersionsPage>(window.NavigationFrame.Content);
+            Assert.Equal(2, window.GetVisualDescendants().OfType<SelectableTextBlock>().Count(t => AutomationProperties.GetAutomationId(t) == "Versions.Detection"));
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RepairPageUpdatesKeepTheListCoverAndProgressRingAlive(bool secondary)
+    {
+        using var scope = new Fixture(); scope.CreateCopies(named: true);
+        string unrelatedFolder = Path.Combine(scope.Services.Settings.Sources[0].RootPath, "99-unrelated");
+        Directory.CreateDirectory(unrelatedFolder);
+        File.WriteAllBytes(Path.Combine(unrelatedFolder, "00000001.png"), SyntheticImages.Create(99, 200, 280).EncodePng());
+        using var shell = new ShellViewModel(scope.Services); await shell.Library.InitializeAsync();
+        var item = shell.Library.SnapshotAllWorks().Single(i => i.Gid == 42);
+        var unrelated = shell.Library.SnapshotAllWorks().Single(i => i.Gid == 99);
+        var info = secondary ? item.Versions.Single(v => v.FolderPath != item.FolderPath) : item.Info;
+        var source = scope.Services.Settings.Sources.Single(s => s.Id == info.SourceId);
+        var task = scope.Services.Downloads.EnqueueRepair(new() { Gid = 42, Token = "fixture", Pages = 5 }, info.FolderPath, source.RootPath, false);
+        task.State = EhViewerForPc.Core.Download.DownloadState.Running; task.DownloadedPages = 3;
+        shell.Library.ApplyDownloadStates([task]);
+        var page = new LibraryPage { DataContext = shell.Library };
+        var window = new Window { Width = 1000, Height = 700, Content = page };
+        try
+        {
+            window.Show(); await Task.Delay(100); window.UpdateLayout();
+            var list = shell.Library.Galleries; var cover = item.CoverRequest; var otherCover = unrelated.CoverRequest;
+            var order = list.ToArray();
+            var ring = window.GetVisualDescendants().OfType<FAProgressRing>().Single(r => ReferenceEquals(r.DataContext, item));
+            int detached = 0, listChanges = 0;
+            double lastProgress = ring.Value;
+            bool rewound = false;
+            var trace = new List<string> { "initial=" + ring.Value };
+            ((System.Collections.Specialized.INotifyCollectionChanged)list).CollectionChanged += (_, change) => trace.Add("collection=" + change.Action);
+            ring.PropertyChanged += (_, change) =>
+            {
+                if (change.Property == Control.DataContextProperty) trace.Add("context=" + (ReferenceEquals(ring.DataContext, item) ? "item" : "other"));
+                if (change.Property != FAProgressRing.ValueProperty) return;
+                trace.Add("value=" + ring.Value);
+                rewound |= ring.Value < lastProgress;
+                lastProgress = ring.Value;
+            };
+            int unrelatedChanges = 0;
+            unrelated.PropertyChanged += (_, _) => unrelatedChanges++;
+            ring.DetachedFromVisualTree += (_, _) => detached++;
+            shell.Library.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(MainViewModel.Galleries)) listChanges++; };
+            File.WriteAllBytes(Path.Combine(info.FolderPath, "00000002.png"), SyntheticImages.Create(44, 200, 280).EncodePng());
+            task.DownloadedPages = 4;
+            await shell.Library.ImportDownloadAsync(task);
+            await Task.Delay(100); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+            Assert.True(detached == 0 && listChanges == 0, $"page update detached ring={detached}, replaced list={listChanges}");
+            Assert.Same(list, shell.Library.Galleries);
+            Assert.Equal(order, shell.Library.Galleries);
+            Assert.Same(item, shell.Library.Galleries.Single(i => i.Gid == 42));
+            if (!secondary) Assert.Same(cover, item.CoverRequest);
+            Assert.Same(otherCover, unrelated.CoverRequest); Assert.Equal(0, unrelatedChanges);
+            Assert.Same(ring, window.GetVisualDescendants().OfType<FAProgressRing>().Single(r => ReferenceEquals(r.DataContext, item)));
+            Assert.Equal(.8, ring.Value, 3);
+            Assert.False(rewound, "Ring updates: " + string.Join("; ", trace));
+            Assert.Equal(4, item.PageCount);
+            string newFolder = Path.Combine(source.RootPath, "100-new-download"); Directory.CreateDirectory(newFolder);
+            File.WriteAllBytes(Path.Combine(newFolder, "00000001.png"), SyntheticImages.Create(100, 200, 280).EncodePng());
+            var incoming = scope.Services.Downloads.EnqueueRepair(new() { Gid = 100, Token = "fixture", Pages = 2 }, newFolder, source.RootPath, false);
+            incoming.State = EhViewerForPc.Core.Download.DownloadState.Running; incoming.DownloadedPages = 1;
+            await shell.Library.ImportDownloadAsync(incoming);
+            await Task.Delay(100); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+            Assert.Equal(3, shell.Library.Galleries.Count);
+            Assert.False(rewound, "Inserting a new download reset another progress ring: " + string.Join("; ", trace));
+            Assert.Equal(.8, ring.Value, 3);
+        }
+        finally { window.Close(); }
+    }
+
     [AvaloniaTheory]
     [InlineData(false)]
     [InlineData(true)]

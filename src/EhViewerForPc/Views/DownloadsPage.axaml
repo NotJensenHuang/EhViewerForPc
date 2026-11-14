@@ -62,6 +62,8 @@
                       <StackPanel Orientation="Horizontal" Spacing="12">
                         <SelectableTextBlock Classes="caption" Text="{Binding ProgressText}" />
                         <SelectableTextBlock Classes="caption" Text="{Binding SizeText}" Margin="0,0,10,4" />
+                        <SelectableTextBlock Classes="caption" Text="{Binding SpeedText}" IsVisible="{Binding IsRunning}"
+                                             AutomationProperties.AutomationId="Downloads.Speed" AutomationProperties.Name="当前下载速度" />
                       </StackPanel>
                     </StackPanel>
 

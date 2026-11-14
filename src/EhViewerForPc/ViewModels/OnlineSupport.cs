@@ -338,6 +338,7 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public string ProgressText => Task.ProgressText;
     public double Progress => Task.Progress;
     public string SizeText => Task.SizeText;
+    public string SpeedText => Task.State == DownloadState.Running ? DownloadTask.FormatSize((long)Task.BytesPerSecond) + "/s" : "—";
     public string Message => Task.Message;
     public string Label => Task.Label;
     public string QualityText => Task.Quality == ImageQuality.Original ? (Task.ResampledPages.Count > 0 ? $"原图（{Task.ResampledPages.Count} 页回退压缩图）" : "原图") : $"压缩图 {Task.ResampledWidth}px";

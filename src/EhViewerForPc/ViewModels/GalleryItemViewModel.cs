@@ -4,6 +4,7 @@ using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Scanning;
 using EhViewerForPc.Core.Storage;
 using EhViewerForPc.Services;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace EhViewerForPc.ViewModels;
 
@@ -54,14 +55,15 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public IReadOnlyList<GalleryInfo> Versions { get; private set; }
 
-    public void UpdateGroup(GalleryGroup group)
+    public void UpdateGroup(GalleryGroup group, bool preserveCover = false)
     {
         string selected = StableId;
         Versions = group.Versions;
+        OnPropertyChanged(nameof(Versions));
         var primary = IsPrimaryVersionPreferred
             ? Versions.FirstOrDefault(v => v.StableId == selected) ?? group.Primary
             : group.Primary;
-        SetPrimary(primary, IsPrimaryVersionPreferred);
+        SetPrimary(primary, IsPrimaryVersionPreferred, preserveCover);
         OnPropertyChanged(nameof(SourceCount));
     }
     public string WorkId { get; }
@@ -234,7 +236,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     /// <summary>Download-engine state shown as an overlay on the cover. Kept
     /// separate from reading progress; a task never overwrites it.</summary>
-    public readonly record struct DownloadProjection(DownloadState State, int DownloadedPages, int TotalPages);
+    public readonly record struct DownloadProjection(DownloadState State, int DownloadedPages, int TotalPages, double BytesPerSecond = 0);
 
     public bool HasActiveDownload => _download is not null;
 
@@ -243,6 +245,8 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     public bool IsDownloadPaused => _download is { State: DownloadState.Paused };
 
     public bool IsDownloadFailed => _download is { State: DownloadState.Failed };
+    public bool ShowDownloadSpeed => _download is { State: DownloadState.Running };
+    public string DownloadSpeedText => ShowDownloadSpeed ? DownloadTask.FormatSize((long)_download!.Value.BytesPerSecond) + "/s" : string.Empty;
 
     public bool IsDownloadIndeterminate => _download is { TotalPages: <= 0 };
 
@@ -282,7 +286,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     {
         DownloadProjection? projection = task is null || task.State == DownloadState.Completed
             ? null
-            : new DownloadProjection(task.State, task.DownloadedPages, task.PageCount);
+            : new DownloadProjection(task.State, task.DownloadedPages, task.PageCount, task.BytesPerSecond);
         bool primary = projection is null || isPrimaryVersion;
 
         if (projection == _download && primary == _downloadIsPrimary) return;
@@ -297,6 +301,8 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
         OnPropertyChanged(nameof(DownloadFraction));
         OnPropertyChanged(nameof(DownloadStatusText));
         OnPropertyChanged(nameof(DownloadAutomationText));
+        OnPropertyChanged(nameof(DownloadSpeedText));
+        OnPropertyChanged(nameof(ShowDownloadSpeed));
         OnPropertyChanged(nameof(CanContinueDownload));
     }
 
@@ -321,12 +327,17 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     /// identity (and therefore progress/favourite) does not change.
     /// </summary>
     public void SetPrimary(GalleryInfo version, bool preferred)
+        => SetPrimary(version, preferred, preserveCover: false);
+
+    private void SetPrimary(GalleryInfo version, bool preferred, bool preserveCover)
     {
         GalleryInfo target = Versions.FirstOrDefault(v =>
             string.Equals(v.StableId, version.StableId, StringComparison.OrdinalIgnoreCase)) ?? version;
 
+        bool keepCover = preserveCover && PathIdentity.Comparer.Equals(_info.FolderPath, target.FolderPath) &&
+            PathIdentity.Comparer.Equals(_info.CoverPath, target.CoverPath) && _info.CoverKind == target.CoverKind && _info.PageCount > 0;
         _info = target;
-        _coverRequest = _coverFactory(target);
+        if (!keepCover) _coverRequest = _coverFactory(target);
         IsPrimaryVersionPreferred = preferred;
 
         // Page counts differ between copies, so the progress bar has to be
@@ -336,6 +347,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
         foreach (string property in DerivedProperties)
         {
+            if (keepCover && property == nameof(CoverRequest)) continue;
             OnPropertyChanged(property);
         }
 
@@ -380,16 +392,43 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
 }
 
 /// <summary>One row in the version management window.</summary>
-public sealed class GalleryVersionViewModel
+public sealed partial class GalleryVersionViewModel : ObservableObject
 {
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DetectionText))]
+    [NotifyPropertyChangedFor(nameof(CanContinueDownload))]
+    private bool _isChecking;
+    [ObservableProperty] private bool _canCheckPages = true;
+    private bool _hasChecked;
+    private string? _detectionError;
     public GalleryVersionViewModel(GalleryInfo info, bool isPrimary)
     {
         Info = info;
         IsPrimary = isPrimary;
     }
 
-    public GalleryInfo Info { get; }
-    public bool IsPrimary { get; }
+    public GalleryInfo Info { get; private set; }
+    public bool IsPrimary { get; private set; }
+
+    public string DetectionText => IsChecking ? "正在检测缺页…" : _detectionError is not null ? "检测失败：" + _detectionError : !_hasChecked ? "尚未检测缺页" :
+        $"缺页：{(Info.MissingRanges.Count == 0 ? "无" : string.Join(", ", Info.MissingRanges))} · 0 字节：{Info.ZeroByteFiles} 个 · " +
+        (Info.ExpectedPages is int expected ? $"预期 {expected} 页" : "未记录总页数，无法核对尾部缺页");
+
+    public void ApplyInfo(GalleryInfo info, bool isPrimary, bool detected = false)
+    {
+        bool changed = !ReferenceEquals(Info, info);
+        Info = info;
+        IsPrimary = isPrimary;
+        _hasChecked |= detected;
+        if (detected || changed) _detectionError = null;
+        OnPropertyChanged(string.Empty);
+    }
+
+    public void SetDetectionError(string error)
+    {
+        _detectionError = error;
+        OnPropertyChanged(nameof(DetectionText));
+    }
     public string PrimaryBadge => IsPrimary ? "默认" : string.Empty;
     public bool IsPreferred => IsPrimary;
 
@@ -414,7 +453,7 @@ public sealed class GalleryVersionViewModel
     }
 
     public bool IsIncomplete => Info.IsIncomplete;
-    public bool CanContinueDownload => IsIncomplete && Info.Gid is > 0 && !Info.HasGidConflict;
+    public bool CanContinueDownload => !IsChecking && IsIncomplete && Info.Gid is > 0 && !Info.HasGidConflict;
 
     public string LastWriteText => Info.LastWriteUtc == default
         ? "—"

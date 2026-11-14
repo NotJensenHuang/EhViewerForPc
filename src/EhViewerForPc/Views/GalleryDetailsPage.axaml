@@ -8,6 +8,7 @@
         <Button Content="继续下载" Command="{Binding ContinueDownloadCommand}" IsVisible="{Binding Item.IsIncomplete}"
                 ToolTip.Tip="{Binding Item.FolderPath}" AutomationProperties.AutomationId="LocalDetails.ContinueDownload" />
         <Button Content="打开文件夹" Click="OnOpenFolder" />
+        <Button Content="版本管理" Click="OnVersions" AutomationProperties.AutomationId="LocalDetails.Versions" />
         <Button Content="{Binding Item.FavoriteText}" Click="OnToggleFavorite" />
         <Button Content="清除进度" Click="OnClearProgress" />
         <Button Content="刷新标签" Command="{Binding RefreshMetadataCommand}" />

@@ -96,7 +96,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     }
 
     public string ActiveText => _services.Downloads.ActiveCount > 0
-        ? $"{_services.Downloads.ActiveCount} 个任务下载中"
+        ? $"{_services.Downloads.ActiveCount} 个任务下载中 · {DownloadTask.FormatSize((long)Tasks.Sum(t => t.Task.BytesPerSecond))}/s"
         : "空闲";
 
     public void RefreshStatus()

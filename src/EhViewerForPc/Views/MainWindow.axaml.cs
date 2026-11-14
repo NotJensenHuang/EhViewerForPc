@@ -479,13 +479,14 @@ public partial class MainWindow : Window
     {
         var page = new GalleryDetailsPage(item, AppServices.Current) { Title = item.Title };
         page.ReadRequested += OnLocalReadRequested;
+        page.VersionsRequested += (_, selected) => OpenVersions(selected);
         page.TagSearchRequested += (_, term) => _shell?.SearchTag(term);
         PushDocument(page);
     }
 
     private void OpenVersions(GalleryItemViewModel item)
     {
-        var vm = new VersionsViewModel(item, AppServices.Current);
+        var vm = new VersionsViewModel(item, AppServices.Current, _shell!.Library.ApplyScannedCopy);
         var page = new VersionsPage(vm) { Title = "本地副本" };
         page.CloseRequested += (_, _) =>
         {

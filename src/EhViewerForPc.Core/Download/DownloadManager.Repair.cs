@@ -11,46 +11,16 @@ public sealed partial class DownloadManager
     /// <summary>仅由用户主动操作入队：补到选定副本的原路径，普通扫描不调用此入口。</summary>
     public DownloadTask EnqueueRepair(EhGalleryDetails details, string folder, string sourceRoot, bool startImmediately = true)
     {
-        folder = Path.GetFullPath(folder);
-        sourceRoot = Path.GetFullPath(sourceRoot);
-        ValidateRepairTarget(folder, sourceRoot);
-        if (details.Gid < 1 || string.IsNullOrWhiteSpace(details.Token)) throw new ArgumentException("画廊链接无效。");
+        var request = ValidateRepairRequest(new(details, folder, sourceRoot));
         DownloadTask task;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_relocating) throw new IOException("下载目录正在迁移，请稍后继续。");
-            task = _tasks.FirstOrDefault(t => PathIdentity.Comparer.Equals(t.FolderPath, folder))!;
-            bool added = task is null;
-            if (task is not null && task.Gid != details.Gid) throw new IOException("原目录与下载任务的画廊不一致。");
-            if (task is not null && (task.State == DownloadState.Running ||
-                (task.State == DownloadState.Pending && task.FillMissingOnly)))
+            (task, var undo) = PrepareRepairLocked(request);
+            if (undo is not null && !SaveLocked())
             {
-                if (startImmediately) SchedulePump();
-                return task;
-            }
-            if (task is { FillMissingOnly: false } && _running.ContainsKey(task.Id))
-                throw new IOException("原下载仍在停止写入，请稍后继续。");
-            task ??= new DownloadTask
-            {
-                TaskKey = Guid.NewGuid().ToString("N"), Gid = details.Gid, Title = details.DisplayTitle,
-                Category = details.Category, ThumbUrl = details.ThumbUrl, FolderPath = folder, DestinationRoot = sourceRoot,
-                Quality = _settings.ImageQuality, ResampledWidth = _settings.ResampledWidth,
-            };
-            var previous = (task.State, task.Message, task.FillMissingOnly, task.Token, task.PageCount, task.FinishedUtc, task.FailedPages, task.DestinationRoot);
-            task.FillMissingOnly = true;
-            task.DestinationRoot = sourceRoot;
-            task.Token = details.Token;
-            task.PageCount = details.Pages;
-            task.State = DownloadState.Pending;
-            task.Message = "等待补齐缺页";
-            task.FinishedUtc = null;
-            task.FailedPages = [];
-            if (added) _tasks.Insert(0, task);
-            if (!SaveLocked())
-            {
-                if (added) _tasks.Remove(task);
-                (task.State, task.Message, task.FillMissingOnly, task.Token, task.PageCount, task.FinishedUtc, task.FailedPages, task.DestinationRoot) = previous;
+                undo.Restore(_tasks);
                 throw new IOException("无法保存补页任务。");
             }
         }

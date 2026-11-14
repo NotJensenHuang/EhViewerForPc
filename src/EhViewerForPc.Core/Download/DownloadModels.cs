@@ -14,11 +14,18 @@ public enum DownloadState
 }
 
 /// <summary>
-/// One gallery download. Persisted as-is, so every runtime-only value is a
-/// computed property; the page list is re-fetched when a task resumes.
+/// One gallery download. Runtime-only transfer metrics are excluded from JSON;
+/// the page list is re-fetched when a task resumes.
 /// </summary>
 public sealed class DownloadTask
 {
+    private double _bytesPerSecond;
+    [JsonIgnore]
+    public double BytesPerSecond
+    {
+        get => State == DownloadState.Running ? Volatile.Read(ref _bytesPerSecond) : 0;
+        internal set => Volatile.Write(ref _bytesPerSecond, value);
+    }
     public string TaskKey { get; set; } = string.Empty;
     /// <summary>仅在用户主动补页时写入指定的既有副本，不覆盖原文件或元数据。</summary>
     public bool FillMissingOnly { get; set; }

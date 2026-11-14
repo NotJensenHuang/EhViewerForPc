@@ -16,9 +16,8 @@ public sealed record SortOption(LibrarySort Value, string Label);
 public sealed record LanguageOption(string? Value, string Label);
 
 /// <summary>
-/// Library screen state. Filtering/sorting always builds a fresh list and swaps
-/// it in one notification; per-item notifications are reserved for favourites
-/// and reading progress.
+/// Library screen state. Explicit filtering replaces the projection; live
+/// downloads update affected cards and reconcile the visible collection in place.
 ///
 /// Several sources are scanned in sequence (one disk at a time on purpose: the
 /// typical backup drive is a spinning disk). Copies of the same work that live
@@ -159,6 +158,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (SetProperty(ref _galleries, value))
             {
                 OnPropertyChanged(nameof(ShowInitialScan));
+                OnPropertyChanged(nameof(CanFillMissingPages));
+                FillMissingPagesCommand.NotifyCanExecuteChanged();
             }
         }
     }
@@ -559,34 +560,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ApplyDownloadStates(_services.Downloads.Tasks);
     }
 
-    public async Task ImportDownloadAsync(EhViewerForPc.Core.Download.DownloadTask task)
-    {
-        if (!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) return;
-        while (IsScanning) await Task.Delay(50, _lifetime.Token);
-        if (!Directory.Exists(task.FolderPath)) return;
-        string root = string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot;
-        var source = task.FillMissingOnly
-            ? _services.Settings.Sources.FirstOrDefault(s => Core.Storage.PathIdentity.Comparer.Equals(s.RootPath, root))
-            : _services.Settings.AddSource(root, "下载目录");
-        if (source is null) return;
-        if (!task.FillMissingOnly) _services.TrySaveSettings(out _);
-        // Scan the changing gallery only; other sources are never revisited.
-        var result = await Task.Run(() => _services.Scanner.Scan(root, null, false, null, _lifetime.Token, source.Id, source.DisplayName, true, onlyFolder: task.FolderPath));
-        if (_disposed) return;
-        foreach (var gallery in result.Galleries)
-        {
-            if (task.PageCount <= 0 || gallery.ExpectedPages == task.PageCount) continue;
-            var pages = PageFileParser.Scan(gallery.FolderPath, new SpiderHeader { HasPages = true, Pages = task.PageCount }, out _);
-            gallery.ExpectedPages = task.PageCount;
-            gallery.IsIncomplete = pages.IsIncomplete;
-            gallery.MissingRanges = pages.MissingRanges;
-            gallery.HasHeaderPageCountOutdated = pages.HeaderPageCountOutdated;
-        }
-        var completed = result.Galleries.Where(g => EhViewerForPc.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).ToArray();
-        var all = _all.SelectMany(i => i.Versions).Where(g => !EhViewerForPc.Core.Storage.PathIdentity.Comparer.Equals(g.FolderPath, task.FolderPath)).Concat(completed).ToArray();
-        ApplyGalleries(all, false);
-    }
-
     public void RefreshAllProgress()
     {
         foreach (var item in _all) item.ApplyProgress(GalleryItemViewModel.LoadProgress(_services.Progress, item.Info));
@@ -665,6 +638,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     public void ApplyFilter()
+        => ApplyFilter(updateInPlace: false);
+
+    private void ApplyFilter(bool updateInPlace)
     {
         IEnumerable<GalleryItemViewModel> query = _all;
 
@@ -733,8 +709,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _ => query.ToList(),
         };
 
-        Galleries = list;
+        if (updateInPlace) ReconcileVisibleGalleries(list);
+        else Galleries = new ObservableCollection<GalleryItemViewModel>(list);
         FilteredCount = list.Count;
+        OnPropertyChanged(nameof(CanFillMissingPages));
+        FillMissingPagesCommand.NotifyCanExecuteChanged();
         if (_all.Count > 0)
         {
             StatusText = list.Count == _all.Count

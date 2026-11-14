@@ -26,9 +26,17 @@ public sealed class AlgorithmTests
     {
         using var cancellation = new CancellationTokenSource();
         var data = Descriptors(65536, 42);
-        cancellation.CancelAfter(TimeSpan.FromMilliseconds(10));
-        Assert.ThrowsAny<OperationCanceledException>(() => BinaryKModes.Train(data, 128, iterations: 100,
-            twoLevel: false, cancellationToken: cancellation.Token, workers: 12));
+        // 模拟独立的 UI 取消线程；线程池满载时 CancelAfter 的回调可能晚于训练结束。
+        using var ready = new ManualResetEventSlim();
+        var cancelThread = new Thread(() => { ready.Set(); Thread.Sleep(10); cancellation.Cancel(); }) { IsBackground = true };
+        cancelThread.Start();
+        ready.Wait();
+        try
+        {
+            Assert.ThrowsAny<OperationCanceledException>(() => BinaryKModes.Train(data, 128, iterations: 100,
+                twoLevel: false, cancellationToken: cancellation.Token, workers: 12));
+        }
+        finally { cancelThread.Join(); }
     }
 
     [Fact]

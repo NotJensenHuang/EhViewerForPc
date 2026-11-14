@@ -11,7 +11,7 @@ using EhViewerForPc.ViewModels;
 namespace EhViewerForPc.Views;
 
 /// <summary>
-/// Local library page (offline, read-only). Requests document navigation from the shell.
+/// Local library page. Requests document navigation from the shell.
 /// </summary>
 public partial class LibraryPage : UserControl
 {

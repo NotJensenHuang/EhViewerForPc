@@ -540,9 +540,13 @@ public sealed partial class DownloadManager : IDisposable
     private async Task RunTaskAsync(DownloadTask task, CancellationTokenSource cts)
     {
         CancellationToken token = cts.Token;
+        var meter = new DownloadTransferMeter();
+        task.BytesPerSecond = 0;
+        using var samplingStop = CancellationTokenSource.CreateLinkedTokenSource(token);
+        Task sampling = SampleSpeedAsync(task, meter, samplingStop.Token);
         try
         {
-            await ExecuteAsync(task, token).ConfigureAwait(false);
+            await ExecuteAsync(task, meter, token).ConfigureAwait(false);
 
             lock (_gate)
             {
@@ -602,6 +606,10 @@ public sealed partial class DownloadManager : IDisposable
         }
         finally
         {
+            samplingStop.Cancel();
+            try { await sampling.ConfigureAwait(false); }
+            catch (Exception error) { _log?.Invoke("Download speed sampling failed: " + error.Message); }
+            task.BytesPerSecond = 0;
             bool delete;
             lock (_gate)
             {
@@ -616,7 +624,7 @@ public sealed partial class DownloadManager : IDisposable
         }
     }
 
-    private async Task ExecuteAsync(DownloadTask task, CancellationToken token)
+    private async Task ExecuteAsync(DownloadTask task, DownloadTransferMeter meter, CancellationToken token)
     {
         if (task.FillMissingOnly) ValidateRepairTarget(task.FolderPath, task.DestinationRoot);
         else Directory.CreateDirectory(RootPath);
@@ -681,7 +689,7 @@ public sealed partial class DownloadManager : IDisposable
             {
                 if (HasPage(page.Page)) return;
 
-                var cached = await _images.GetAsync(page, task.Quality == ImageQuality.Original, innerToken, task.ResampledWidth).ConfigureAwait(false);
+                var cached = await _images.GetAsync(page, task.Quality == ImageQuality.Original, innerToken, task.ResampledWidth, meter.ObservePage()).ConfigureAwait(false);
                 string extension = ImageSignature.DetectFile(cached.Path) switch
                 {
                     ImageKind.Png => ".png", ImageKind.Gif => ".gif", ImageKind.Webp => ".webp", _ => ".jpg"

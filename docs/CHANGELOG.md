@@ -1,5 +1,15 @@
 # 变更记录
 
+## 2026-11-14 下载增量刷新、实时速度与批量补页
+
+- `MainViewModel.Downloads.cs`、`MainViewModel.cs`、`GalleryItemViewModel.cs`：落盘后仅重组受影响作品，原位维护可见集合，保持已有卡片位置、未变化封面与进度环；避免 Move 清空数据上下文造成数值归零，目录扫描及页数核对在后台完成。
+- `Core/Download/DownloadTransferMeter.cs`、`DownloadManager.Progress.cs`、`DownloadManager.cs`、`DownloadModels.cs`：按实际图片接收字节统计约两秒滑动速度，500 ms 发布，缓存不计入；采样任务在暂停 / 完成 / 退出时取消并等待，速度字段不持久化。
+- `DownloadsViewModel.cs`、`OnlineSupport.cs`、`DownloadsPage.axaml`、`LibraryPage.axaml`：下载队列、卡片显示当前速度，下载页汇总速度；本地库新增当前列表所有副本的「补齐缺页」及失败明细。
+- `Core/Download/DownloadManager.Repair.Batch.cs`、`AppServices.LocalDownloads.cs`：批量请求按原路径去重，复用或继续已有任务，一次保存和通知；部分校验失败独立记录，持久化失败或提交前取消回滚。
+- `GalleryDetailsPage.axaml*`、`VersionsViewModel.cs`、`VersionsPage.axaml*`、`MainWindow.axaml.cs`：详情直达版本管理，逐版本后台检测缺页 / 0 字节 / 预期页数，支持单独重检，未知总数与离线副本分别说明。
+- `tests/`、`README.md`、`README.en.md`、`PRODUCT.md`、`DESIGN.md`：补充真实流式传输、进度控件保留、批量去重 / 回滚和版本检测回归；验证见 `docs/下载增量刷新与批量补页-2026-11-14.md`。
+- `tests/EhViewerForPc.ImageSearch.Tests/AlgorithmTests.cs`：受限线程池下旧取消测试可能在训练结束前未触发定时回调，改用独立线程触发和收尾，保留原取消断言；训练实现未改变。
+
 ## 2026-11-14 构建阶段进度、原路径补页与固定阅读输入
 - `ImageSearch/IndexBuildProgress.cs`、`ImageSearchEngine.cs`、`DiskInvertedIndex.cs`、`CheckedFile.cs`：新增特征分配、分段、合并和校验字节的实际阶段进度，限频通知并支持校验中取消；保持既有索引格式，已有索引在单次构建中只校验一次。
 - `Services/LocalImageSearchService*`、`ImageSearchViewModel.cs`、`ImageSearchPage.axaml`：后台服务保存阶段计数，页面显示当前阶段确定进度并在重开后恢复绑定，无总量阶段使用活动指示。

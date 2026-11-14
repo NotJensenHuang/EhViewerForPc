@@ -18,10 +18,12 @@
                   Margin="0,0,4,0" FontSize="12" Click="OnClearSearch"
                   IsVisible="{Binding SearchText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
         </Grid>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-          <Button Content="以图搜图" Click="OnImageSearch" AutomationProperties.AutomationId="Library.ImageSearch" />
+        <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Content="以图搜图" Click="OnImageSearch" AutomationProperties.AutomationId="Library.ImageSearch" Margin="0,0,8,4" />
+          <Button Content="补齐缺页" Command="{Binding FillMissingPagesCommand}" AutomationProperties.AutomationId="Library.FillMissing"
+                  ToolTip.Tip="补齐当前列表中所有版本的缺页，已有任务复用" Margin="0,0,8,4" />
           <ComboBox Width="132" ItemsSource="{Binding SortOptions}" SelectedItem="{Binding SelectedSort}"
-                    AutomationProperties.Name="排序方式">
+                    AutomationProperties.Name="排序方式" Margin="0,0,8,4">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="vm:SortOption">
                 <TextBlock Text="{Binding Label}" />
@@ -29,14 +31,14 @@
             </ComboBox.ItemTemplate>
           </ComboBox>
           <ComboBox Width="132" ItemsSource="{Binding LanguageOptions}" SelectedItem="{Binding SelectedLanguage}"
-                    AutomationProperties.Name="语言筛选">
+                    AutomationProperties.Name="语言筛选" Margin="0,0,0,4">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="vm:LanguageOption">
                 <TextBlock Text="{Binding Label}" />
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-        </StackPanel>
+        </WrapPanel>
       </controls:AdaptiveGrid>
 
       <ItemsControl ItemsSource="{Binding FilterOptions}" VerticalAlignment="Center">
@@ -52,6 +54,11 @@
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
+      <Expander Header="查看补页失败明细" IsVisible="{Binding HasRepairFailures}" HorizontalAlignment="Stretch">
+        <ScrollViewer MaxHeight="140" HorizontalScrollBarVisibility="Disabled">
+          <SelectableTextBlock Text="{Binding RepairFailureDetails}" TextWrapping="Wrap" />
+        </ScrollViewer>
+      </Expander>
     </StackPanel>
 
     <!-- Grid -->
@@ -114,6 +121,8 @@
                                                Minimum="0" Maximum="1" Value="{Binding DownloadFraction}" />
                             <TextBlock Text="{Binding DownloadStatusText}" FontSize="12" Foreground="#F2F4F8"
                                        TextAlignment="Center" TextWrapping="Wrap" MaxWidth="152" />
+                            <TextBlock Text="{Binding DownloadSpeedText}" IsVisible="{Binding ShowDownloadSpeed}" FontSize="12" Foreground="#F2F4F8"
+                                       TextAlignment="Center" AutomationProperties.AutomationId="Library.DownloadSpeed" AutomationProperties.Name="当前下载速度" />
                           </StackPanel>
                         </Border>
 

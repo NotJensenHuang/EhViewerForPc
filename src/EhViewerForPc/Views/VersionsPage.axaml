@@ -19,6 +19,8 @@
                                Margin="0,0,10,0" />
           <SelectableTextBlock Text="{Binding SummaryText}" Classes="caption" />
         </WrapPanel>
+        <Button Content="检测所有版本缺页" Command="{Binding CheckPagesCommand}" HorizontalAlignment="Left"
+                AutomationProperties.AutomationId="Versions.CheckAll" />
       </StackPanel>
     </Border>
 
@@ -61,6 +63,8 @@
                   <Button Content="继续下载" FontSize="12" Padding="10,3" MinHeight="26" Tag="{Binding}"
                           IsVisible="{Binding IsIncomplete}" IsEnabled="{Binding CanContinueDownload}"
                           Click="OnContinueDownload" ToolTip.Tip="{Binding FolderPath}" AutomationProperties.AutomationId="Versions.ContinueDownload" />
+                  <Button Content="检测缺页" FontSize="12" Padding="10,3" MinHeight="26" Tag="{Binding}"
+                          IsEnabled="{Binding CanCheckPages}" Click="OnCheckPages" AutomationProperties.AutomationId="Versions.CheckPages" />
                 </WrapPanel>
 
                 <SelectableTextBlock Grid.Row="1" Grid.Column="0" Text="{Binding FolderName}"
@@ -68,10 +72,14 @@
                            TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                            ToolTip.Tip="{Binding FolderPath}" />
 
-                <WrapPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Margin="0,3,0,0">
-                  <SelectableTextBlock Text="{Binding DetailText}" Margin="0,0,12,4" Classes="muted" FontSize="12" />
-                  <SelectableTextBlock Text="{Binding LastWriteText}" Classes="muted" FontSize="12" />
-                </WrapPanel>
+                <StackPanel Grid.Row="2" Margin="0,3,0,0" Spacing="4">
+                  <WrapPanel Orientation="Horizontal">
+                    <SelectableTextBlock Text="{Binding DetailText}" Margin="0,0,12,0" Classes="muted" FontSize="12" />
+                    <SelectableTextBlock Text="{Binding LastWriteText}" Classes="muted" FontSize="12" />
+                  </WrapPanel>
+                  <SelectableTextBlock Text="{Binding DetectionText}" Classes="secondary" FontSize="12" TextWrapping="Wrap"
+                                       AutomationProperties.AutomationId="Versions.Detection" />
+                </StackPanel>
               </Grid>
             </Border>
           </DataTemplate>

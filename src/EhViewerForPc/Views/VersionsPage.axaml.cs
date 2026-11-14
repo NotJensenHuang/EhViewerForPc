@@ -20,11 +20,18 @@ public partial class VersionsPage : DocumentPage
     {
         _viewModel = viewModel;
         DataContext = viewModel;
+        Loaded += async (_, _) => await viewModel.CheckPagesCommand.ExecuteAsync(null);
     }
 
     /// <summary>Copy the user chose to read; null when the dialog was just closed.</summary>
     public GalleryInfo? ReadVersion => _viewModel?.ReadVersion;
     public override void Dispose() => _viewModel?.Dispose();
+
+    private async void OnCheckPages(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is not null && sender is Button { Tag: GalleryVersionViewModel version })
+            await _viewModel.CheckVersionAsync(version);
+    }
 
     private async void OnContinueDownload(object? sender, RoutedEventArgs e)
     {

@@ -26,8 +26,10 @@ public partial class GalleryDetailsPage : DocumentPage
     }
 
     public event EventHandler<GalleryItemViewModel>? ReadRequested;
+    public event EventHandler<GalleryItemViewModel>? VersionsRequested;
     public event EventHandler<string>? TagSearchRequested;
     public override void Dispose() => _viewModel.Dispose();
+    private void OnVersions(object? sender, RoutedEventArgs e) => VersionsRequested?.Invoke(this, _item);
     private void OnRead(object? sender, RoutedEventArgs e)
     {
         if (_item.PageCount > 0) ReadRequested?.Invoke(this, _item);
