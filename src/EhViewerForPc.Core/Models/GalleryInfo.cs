@@ -25,6 +25,7 @@ public sealed class GalleryInfo
     public required string FolderPath { get; set; }
     public int PageCount { get; set; }
     public int MaxPageNumber { get; set; }
+    public bool HasNaturalPageNames { get; set; }
     public int? ExpectedPages { get; set; }
     public bool IsPageCountKnown => ExpectedPages.HasValue;
     public IReadOnlyList<PageRange> MissingRanges { get; set; } = [];

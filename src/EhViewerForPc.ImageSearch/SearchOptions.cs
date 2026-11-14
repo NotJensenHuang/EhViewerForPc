@@ -51,6 +51,7 @@ public sealed record FeatureProfile
 /// <summary>Defines search limits independent of extraction parameters.</summary>
 public sealed record SearchOptions
 {
+    public static int DefaultReadThreads => Math.Clamp(Environment.ProcessorCount, 1, 8);
     /// <summary>Gets the number of probed inverted lists.</summary>
     public int NProbe { get; init; } = 16;
     /// <summary>Gets the neighbors kept per query descriptor.</summary>
@@ -62,10 +63,10 @@ public sealed record SearchOptions
     /// <summary>Gets whether raw match count replaces Wilson scoring.</summary>
     public bool CountScore { get; init; }
     /// <summary>Gets the maximum simultaneous bucket readers.</summary>
-    public int ReadThreads { get; init; } = 2;
+    public int ReadThreads { get; init; } = DefaultReadThreads;
     internal void Validate(int centers)
     {
-        if (NProbe < 1 || NProbe > centers || K is < 1 or > 64 || Count is < 1 or > 1000 || MaxDistance is < 0 or > 255 || ReadThreads is < 1 or > 2)
+        if (NProbe < 1 || NProbe > centers || K is < 1 or > 64 || Count is < 1 or > 1000 || MaxDistance is < 0 or > 255 || ReadThreads is < 1 or > 8)
             throw new ArgumentOutOfRangeException(nameof(SearchOptions), "Invalid search limits.");
     }
 }

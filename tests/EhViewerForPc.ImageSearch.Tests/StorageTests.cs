@@ -3,6 +3,31 @@ namespace EhViewerForPc.ImageSearch.Tests;
 public sealed class StorageTests
 {
     [Fact]
+    public void BlockSearchMatchesBruteForceAcross8192RecordsAndEightReaders()
+    {
+        using var scope = new TestDirectory();
+        using var database = new ImageDatabase(scope.Path, writable: true);
+        var data = Enumerable.Range(0, 3).Select(i => AlgorithmTests.Descriptors(4000, i + 77)).ToArray();
+        for (int i = 0; i < 3; i++) database.Add($"{i}.png", Blake3.Hash([(byte)i]), data[i]);
+        ImageSearchEngine.Train(database, 1, 3, iterations: 1);
+        ImageSearchEngine.Build(database);
+        var engine = new ImageSearchEngine(database);
+        var query = data[1].Take(24).ToArray();
+        foreach (int k in new[] { 1, 3, 64 })
+        {
+            var expected = query.SelectMany(q => data.SelectMany((image, ordinal) => image.Select((d, i) =>
+                    (Id: ordinal + 1L, Vector: ordinal * 4000L + i + 1, Distance: q.Distance(d))))
+                .OrderBy(m => m.Distance).ThenBy(m => m.Vector).Take(k)).GroupBy(m => m.Id)
+                .Select(g => (Id: g.Key, Score: (float)g.Count())).OrderByDescending(m => m.Score).ThenBy(m => m.Id).ToArray();
+            foreach (int threads in new[] { 1, 2, 4, 8 })
+            {
+                var hits = engine.SearchDescriptors(query, new() { NProbe = 1, K = k, CountScore = true, MaxDistance = 255, ReadThreads = threads });
+                Assert.Equal(expected, hits.Select(h => (h.ImageId, h.Score)));
+            }
+        }
+    }
+
+    [Fact]
     public void BatchedBucketReaderPreservesAllRecordsAcrossBoundariesAndEarlyDisposal()
     {
         using var scope = new TestDirectory();

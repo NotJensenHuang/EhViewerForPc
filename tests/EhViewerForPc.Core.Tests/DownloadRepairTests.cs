@@ -49,6 +49,38 @@ public sealed class DownloadRepairTests : IDisposable
     }
 
     [Fact]
+    public void WaitingRepairStartsAtExistingPagesAndPersistsAcrossRestart()
+    {
+        for (int page = 2; page <= 51; page++) File.WriteAllBytes(Path.Combine(Folder, $"{page:D8}.png"), Png);
+        File.WriteAllBytes(Path.Combine(Folder, "00000052.png"), []);
+        File.WriteAllBytes(Path.Combine(Folder, "00000054.png"), Png);
+        var details = new EhGalleryDetails { Gid = 42, Token = "0123456789", Pages = 53 };
+        var settings = Settings(); using var client = new EhClient(settings);
+        using (var manager = new DownloadManager(Paths, settings, client))
+        {
+            var task = manager.EnqueueRepair(details, Folder, Source, false);
+            Assert.Equal(DownloadState.Pending, task.State);
+            Assert.Equal(51, task.DownloadedPages); Assert.Equal(53, task.PageCount);
+            var result = manager.EnqueueRepairs([new(details, Folder, Source)], startImmediately: false);
+            Assert.Equal(1, result.Existing); Assert.Equal(51, task.DownloadedPages);
+        }
+        using var restored = new DownloadManager(Paths, settings, client);
+        Assert.Equal(51, restored.Tasks.Single().DownloadedPages);
+    }
+
+    [Fact]
+    public async Task RestoredZeroProgressRepairsAreReconciledWithoutStartingDownloads()
+    {
+        var settings = Settings(); using var client = new EhClient(settings);
+        using var manager = new DownloadManager(Paths, settings, client);
+        var task = manager.EnqueueRepair(Details(), Folder, Source, false);
+        task.DownloadedPages = 0;
+        await manager.RefreshRepairProgressAsync();
+        Assert.Equal(1, task.DownloadedPages); Assert.Equal(DownloadState.Pending, task.State);
+        Assert.Equal(0, manager.ActiveCount);
+    }
+
+    [Fact]
     public async Task AlreadyCompletedCopyMakesNoImagePageRequestsAndPreservesEmptyAlternate()
     {
         File.WriteAllBytes(Path.Combine(Folder, "00000002.png"), Png);
@@ -134,6 +166,8 @@ public sealed class DownloadRepairTests : IDisposable
         using var manager = new DownloadManager(Paths, settings, client);
         var task = manager.EnqueueRepair(Details(), Folder, Source, false);
         task.State = DownloadState.Completed; task.Message = "completed before retry";
+        File.WriteAllBytes(Path.Combine(Folder, "00000002.png"), Png);
+        int previousProgress = task.DownloadedPages;
         using (var locked = new FileStream(Paths.DownloadTasksFile, FileMode.Open, FileAccess.Read, FileShare.None))
         {
             Assert.Throws<IOException>(() => manager.EnqueueRepair(new EhGalleryDetails { Gid = 42, Token = "changed", Pages = 5 }, Folder, Source, false));
@@ -141,6 +175,7 @@ public sealed class DownloadRepairTests : IDisposable
             Assert.Equal("completed before retry", task.Message);
             Assert.Equal("0123456789", task.Token);
             Assert.Equal(2, task.PageCount);
+            Assert.Equal(previousProgress, task.DownloadedPages);
         }
         Assert.Single(manager.Tasks);
     }

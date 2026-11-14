@@ -130,7 +130,7 @@ internal static class Program
         string score = options.GetValueOrDefault("score-type", "wilson");
         if (score is not ("wilson" or "count")) throw new ArgumentException("Invalid score-type.");
         return new() { NProbe = Integer(options, "nprobe", Math.Min(16, centers)), K = Integer(options, "k", 3), Count = Integer(options, "count", 100),
-            MaxDistance = Integer(options, "distance", 64), CountScore = score == "count", ReadThreads = Integer(options, "threads", 2) };
+            MaxDistance = Integer(options, "distance", 64), CountScore = score == "count", ReadThreads = Integer(options, "threads", SearchOptions.DefaultReadThreads) };
     }
 
     private static void PrintHelp() => Console.WriteLine("""
@@ -140,7 +140,7 @@ internal static class Program
         Training defaults to <=4000000 descriptors; --training-vector-limit N (<=64000000) explicitly raises the memory budget.
         build [--workers 1..32] [--batch-size 2000] [--stop-before-merge] [--stop-after-segments N] [--clean-before-merge]
         search <image> [--nprobe 16] [-k 3] [--distance 64] [--count 100] [--score-type wilson|count] [--out result.json]
-        Search also supports --output-format json|table and --threads 1|2. --out always writes structured JSON.
+        Search also supports --output-format json|table and --threads 1..8 (default: up to 8 logical processors). --out always writes structured JSON.
         clean [--all]
         server [--addr 127.0.0.1:8000] [--generation-id 32hex] [--profile-id 64hex] [--endpoint-file path]
         probe --out report.json      Runs a generated 64-image end-to-end suite in a new isolated --conf-dir.

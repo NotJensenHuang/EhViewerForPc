@@ -2,16 +2,19 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 
 namespace EhViewerForPc.ImageSearch;
 
 /// <summary>Stores a vector's stable identity and centroid-XOR descriptor.</summary>
+[StructLayout(LayoutKind.Sequential)]
 public readonly record struct IndexVector(long VectorId, long ImageId, BinaryDescriptor Residual);
 
 /// <summary>Reads and writes checksummed, compressed inverted lists without loading the whole index.</summary>
 public sealed class DiskInvertedIndex
 {
-    private readonly record struct Bucket(long Offset, long Count, long Length);
+    internal readonly record struct Bucket(long Offset, long Count, long Length);
     private readonly Bucket[] _buckets;
     private readonly string _path;
     private readonly bool _allowLinkedPublication;
@@ -109,32 +112,84 @@ public sealed class DiskInvertedIndex
     /// <summary>Streams a bucket's records and verifies decompressed size and ordering.</summary>
     public IEnumerable<IndexVector> ReadBucket(int bucket)
     {
-        var info = _buckets[bucket]; if (info.Count == 0) yield break;
-        using var file = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read | (_allowLinkedPublication ? FileShare.Delete : 0), 4096, FileOptions.RandomAccess);
-        file.Position = info.Offset;
-        using var limited = new LimitedStream(file, info.Length);
-        using var deflate = new DeflateStream(limited, CompressionMode.Decompress);
-        long previous = 0;
-        // 每条记录固定 48 字节；成批解压，避免对每个 UInt64 单独进入解压器。
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(48 * 1024);
+        using var reader = OpenBucket(bucket);
+        var buffer = ArrayPool<IndexVector>.Shared.Rent(1024);
         try
         {
-            for (long i = 0; i < info.Count;)
-            {
-                int count = (int)Math.Min(1024, info.Count - i);
-                deflate.ReadExactly(buffer.AsSpan(0, count * 48));
-                for (int j = 0; j < count; j++)
-                {
-                    var vector = ReadVector(buffer, j * 48);
-                    if (vector.VectorId <= previous || vector.ImageId < 1) throw new InvalidDataException("Invalid IVF vector identity.");
-                    previous = vector.VectorId;
-                    yield return vector;
-                }
-                i += count;
-            }
-            if (deflate.ReadByte() != -1) throw new InvalidDataException("IVF decompression exceeds recorded size.");
+            int count;
+            while ((count = reader.Read(buffer.AsSpan(0, 1024), CancellationToken.None)) != 0)
+                for (int i = 0; i < count; i++) yield return buffer[i];
         }
-        finally { ArrayPool<byte>.Shared.Return(buffer); }
+        finally { ArrayPool<IndexVector>.Shared.Return(buffer); }
+    }
+
+    internal BucketReader OpenBucket(int bucket) => new(_path, _buckets[bucket], _allowLinkedPublication);
+
+    /// <summary>同步块读取，无逐向量迭代器、计时或原子操作；只持有本桶文件与有界缓冲。</summary>
+    internal sealed class BucketReader : IDisposable
+    {
+        private readonly FileStream _file;
+        private readonly DeflateStream _deflate;
+        private readonly byte[]? _bytes;
+        private long _remaining, _previous;
+        private bool _ended, _disposed;
+
+        internal BucketReader(string path, Bucket bucket, bool allowDelete)
+        {
+            _file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | (allowDelete ? FileShare.Delete : 0),
+                65536, FileOptions.SequentialScan);
+            try
+            {
+                _file.Position = bucket.Offset;
+                _deflate = new DeflateStream(new LimitedStream(_file, bucket.Length), CompressionMode.Decompress);
+                if (!BitConverter.IsLittleEndian || Unsafe.SizeOf<IndexVector>() != 48)
+                    _bytes = ArrayPool<byte>.Shared.Rent(48 * 8192);
+                _remaining = bucket.Count;
+            }
+            catch
+            {
+                try { _deflate?.Dispose(); }
+                finally { _file.Dispose(); if (_bytes is not null) ArrayPool<byte>.Shared.Return(_bytes); }
+                throw;
+            }
+        }
+
+        public int Read(Span<IndexVector> destination, CancellationToken token)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (destination.IsEmpty) throw new ArgumentException("Empty vector destination.", nameof(destination));
+            token.ThrowIfCancellationRequested();
+            int count = (int)Math.Min(Math.Min(destination.Length, 8192), _remaining);
+            if (count > 0)
+            {
+                // Windows x64 的顺序布局与既有 48 字节小端记录一致，直接解压到独占块。
+                if (_bytes is null) _deflate.ReadExactly(MemoryMarshal.AsBytes(destination[..count]));
+                else _deflate.ReadExactly(_bytes.AsSpan(0, count * 48));
+                for (int i = 0; i < count; i++)
+                {
+                    var vector = _bytes is null ? destination[i] : ReadVector(_bytes, i * 48);
+                    if (vector.VectorId <= _previous || vector.ImageId < 1) throw new InvalidDataException("Invalid IVF vector identity.");
+                    _previous = vector.VectorId;
+                    destination[i] = vector;
+                }
+                _remaining -= count;
+            }
+            if (_remaining == 0 && !_ended)
+            {
+                _ended = true;
+                if (_deflate.ReadByte() != -1) throw new InvalidDataException("IVF decompression exceeds recorded size.");
+            }
+            token.ThrowIfCancellationRequested();
+            return count;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            try { _deflate.Dispose(); }
+            finally { _file.Dispose(); if (_bytes is not null) ArrayPool<byte>.Shared.Return(_bytes); }
+        }
     }
 
     private static IndexVector ReadVector(byte[] buffer, int offset)

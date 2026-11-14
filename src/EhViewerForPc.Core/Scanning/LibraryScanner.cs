@@ -62,7 +62,9 @@ public sealed partial class LibraryScanner
             string relativePath = Path.GetRelativePath(root, directory.FullName);
             GalleryCacheEntry? cached = cacheEntries.GetValueOrDefault(relativePath);
             GalleryInfo gallery;
-            if (!forceRefresh && cached is not null && snapshot.Matches(cached))
+            bool recheckLegacyPages = cache?.SchemaVersion == 3 && cached is { } &&
+                (cached.ZeroByteFiles > 0 || cached.HeaderPageCountOutdated);
+            if (!forceRefresh && !recheckLegacyPages && cached is not null && snapshot.Matches(cached))
             {
                 gallery = FromCache(cached, directory.FullName);
                 cacheHits++;
@@ -139,7 +141,7 @@ public sealed partial class LibraryScanner
         {
             token.ThrowIfCancellationRequested();
             bool gallery = File.Exists(Path.Combine(directory.FullName, ".ehviewer")) ||
-                directory.EnumerateFiles().Any(f => PageFileParser.TryParsePageName(f.Name, out _, out _));
+                directory.EnumerateFiles().Any(f => PageFileParser.IsSupportedExtension(f.Extension));
             if (gallery || !directory.EnumerateDirectories().Any()) yield return directory;
             else if (depth < 8)
                 foreach (var child in EnumerateGalleryDirectories(directory, token, depth + 1)) yield return child;
@@ -211,7 +213,8 @@ public sealed partial class LibraryScanner
             ;
         }
 
-        long? resolvedGid = nameGid ?? (header is { HasGid: true } ? header.Gid : null);
+        bool plainLocal = pages.HasNaturalPageNames && header is not { HasGid: true };
+        long? resolvedGid = plainLocal ? null : nameGid ?? (header is { HasGid: true } ? header.Gid : null);
         bool gidConflict = nameGid.HasValue && header is { HasGid: true } && nameGid.Value != header.Gid;
         (string[] languages, string[] tags) = GalleryTags.Parse(nameTitle);
         bool isIncomplete = pages.IsIncomplete;
@@ -221,13 +224,14 @@ public sealed partial class LibraryScanner
             StableId = string.Empty,
             Gid = resolvedGid,
             Token = header?.Token ?? string.Empty,
-            DirectoryGid = nameGid,
+            DirectoryGid = plainLocal ? null : nameGid,
             HeaderGid = header is { HasGid: true } ? header.Gid : null,
-            Title = string.IsNullOrWhiteSpace(nameTitle) ? directory.Name : nameTitle,
+            Title = plainLocal || string.IsNullOrWhiteSpace(nameTitle) ? directory.Name : nameTitle,
             FolderName = directory.Name,
             FolderPath = directory.FullName,
             PageCount = pages.PageCount,
             MaxPageNumber = pages.MaxPageNumber,
+            HasNaturalPageNames = pages.HasNaturalPageNames,
             ExpectedPages = pages.HasExpectedPages ? pages.ExpectedPages : null,
             MissingRanges = pages.MissingRanges,
             HasHeaderPageCountOutdated = pages.HeaderPageCountOutdated,
@@ -247,7 +251,7 @@ public sealed partial class LibraryScanner
         };
     }
 
-    private static GalleryInfo FromCache(GalleryCacheEntry entry, string folderPath)
+    private static GalleryInfo FromCache(GalleryCacheEntry entry, string folderPath, bool legacy = false)
     {
         return new GalleryInfo
         {
@@ -261,11 +265,13 @@ public sealed partial class LibraryScanner
             FolderPath = folderPath,
             PageCount = entry.PageCount,
             MaxPageNumber = entry.MaxPageNumber,
+            HasNaturalPageNames = entry.HasNaturalPageNames,
             ExpectedPages = entry.ExpectedPages,
             MissingRanges = entry.MissingRanges,
             HasHeaderPageCountOutdated = entry.HeaderPageCountOutdated,
             HasGidConflict = entry.HasGidConflict,
-            IsIncomplete = entry.PageCount == 0 || entry.MissingRanges.Count > 0,
+            IsIncomplete = entry.PageCount == 0 || entry.MissingRanges.Count > 0 ||
+                legacy && (entry.ZeroByteFiles > 0 || entry.HeaderPageCountOutdated),
             HasEhviewer = entry.HasEhviewer,
             HasThumb = entry.HasThumb,
             CoverPath = entry.CoverPath,
@@ -301,6 +307,7 @@ public sealed partial class LibraryScanner
             Title = gallery.Title,
             PageCount = gallery.PageCount,
             MaxPageNumber = gallery.MaxPageNumber,
+            HasNaturalPageNames = gallery.HasNaturalPageNames,
             ExpectedPages = gallery.ExpectedPages,
             HeaderPageCountOutdated = gallery.HasHeaderPageCountOutdated,
             HasGidConflict = gallery.HasGidConflict,
@@ -332,7 +339,7 @@ public sealed partial class LibraryScanner
         var galleries = new List<GalleryInfo>(cache.Entries.Count);
         foreach (var pair in cache.Entries)
         {
-            galleries.Add(FromCache(pair.Value, Path.Combine(rootPath, pair.Key)));
+            galleries.Add(FromCache(pair.Value, Path.Combine(rootPath, pair.Key), cache.SchemaVersion == 3));
         }
 
         AssignStableIds(galleries, sourceId, sourceName, qualifyStableId);
@@ -444,6 +451,6 @@ public sealed partial class LibraryScanner
             entry.PageFileCount == PageFileCount &&
             entry.PageLengthSum == PageLengthSum &&
             entry.PageMtimeMaxTicks == PageMtimeMaxTicks &&
-            entry.MaxPageNumber == MaxPageNumber;
+            (entry.HasNaturalPageNames || entry.MaxPageNumber == MaxPageNumber);
     }
 }

@@ -29,7 +29,8 @@ public sealed class LibraryCacheStore
 
         var cache = JsonFileStore.LoadOrDefault(
             file, StorageJsonContext.Default.LibraryCache, () => new LibraryCache(), out error);
-        if (cache.SchemaVersion != LibraryCache.CurrentSchemaVersion ||
+        // schema 3 与 4 的数据结构相同，只是缺页诊断语义不同；保留条目，扫描器定向重查。
+        if (cache.SchemaVersion is not (3 or LibraryCache.CurrentSchemaVersion) ||
             !PathIdentity.Comparer.Equals(cache.RootPath, normalizedRoot))
         {
             cache = new LibraryCache { RootPath = normalizedRoot };
@@ -45,7 +46,8 @@ public sealed class LibraryCacheStore
     {
         lock (_gate)
         {
-            cache.SchemaVersion = LibraryCache.CurrentSchemaVersion;
+            // 未经扫描的旧条目仍需保留旧语义标记；扫描器输出的新缓存才升级为当前版本。
+            if (cache.SchemaVersion != 3) cache.SchemaVersion = LibraryCache.CurrentSchemaVersion;
             cache.SavedUtc = DateTime.UtcNow;
             return JsonFileStore.Save(
                 _paths.GetLibraryCacheFile(sourceId), cache, StorageJsonContext.Default.LibraryCache, out error);

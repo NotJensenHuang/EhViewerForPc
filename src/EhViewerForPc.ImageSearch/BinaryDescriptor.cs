@@ -1,10 +1,12 @@
 // Ported from lolishinshi/imsearch 2bf2546822ca (GPL-3.0). See tools/imsearch/NOTICE.md.
 using System.Buffers.Binary;
 using System.Numerics;
+using System.Runtime.InteropServices;
 
 namespace EhViewerForPc.ImageSearch;
 
 /// <summary>Stores an ORB descriptor as four little-endian words.</summary>
+[StructLayout(LayoutKind.Sequential)]
 public readonly record struct BinaryDescriptor(ulong A, ulong B, ulong C, ulong D)
 {
     /// <summary>Reads exactly 32 descriptor bytes.</summary>

@@ -43,20 +43,20 @@ public sealed partial class DownloadManager
             if ((current.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("补页目录不能经过链接或目录联接。");
     }
 
-    private static HashSet<int> ReadExistingRepairPages(string folder)
+    private static HashSet<int> ReadExistingRepairPages(string folder, CancellationToken token = default)
     {
-        var scan = PageFileParser.Scan(folder, null, out string? error);
+        var files = PageFileParser.Enumerate(folder, out string? error);
         if (error is not null) throw new IOException("无法读取原副本目录。");
         var pages = new HashSet<int>();
-        foreach (var page in scan.Pages)
-            foreach (var candidate in page.Candidates)
-            {
-                if ((File.GetAttributes(candidate.FilePath) & FileAttributes.ReparsePoint) != 0)
-                    throw new IOException("补页目录不能包含链接页文件。");
-                if (!ImageSignature.IsValidFile(candidate.FilePath)) continue;
-                pages.Add(page.Number);
-                break;
-            }
+        foreach (var candidate in files)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!PageFileParser.TryParsePageName(candidate.FileName, out int page, out _)) continue;
+            if ((File.GetAttributes(candidate.FilePath) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("补页目录不能包含链接页文件。");
+            if (pages.Contains(page) || !ImageSignature.IsValidFile(candidate.FilePath)) continue;
+            pages.Add(page);
+        }
         return pages;
     }
 

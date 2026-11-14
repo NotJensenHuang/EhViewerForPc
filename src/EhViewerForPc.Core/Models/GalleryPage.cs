@@ -40,6 +40,7 @@ public readonly record struct PageRange(int Start, int End)
 
 public sealed class PageScanResult
 {
+    public bool HasNaturalPageNames { get; init; }
     public IReadOnlyList<GalleryPage> Pages { get; init; } = [];
     public IReadOnlyList<PageRange> MissingRanges { get; init; } = [];
     public int ExpectedPages { get; init; }

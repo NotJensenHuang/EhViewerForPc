@@ -33,6 +33,9 @@ try {
         Run-Cli 'cli-search' @('search', (Join-Path $inputs '页图 003.png'), '--conf-dir', $backend, '--nprobe', '8', '--out', (Join-Path $output 'cli-search.json'))
         $hits = Get-Content (Join-Path $output 'cli-search.json') -Raw | ConvertFrom-Json
         Check 'cli-hit' ($hits[0].aliases[0] -eq '页图 003.png') 'The requested Unicode/space path ranks first.'
+        Run-Cli 'cli-search-eight' @('search', (Join-Path $inputs '页图 003.png'), '--conf-dir', $backend, '--nprobe', '8', '--threads', '8', '--out', (Join-Path $output 'cli-search-eight.json'))
+        Check 'eight-readers-equivalent' ((Get-Content (Join-Path $output 'cli-search.json') -Raw) -eq (Get-Content (Join-Path $output 'cli-search-eight.json') -Raw)) 'Eight readers preserve every candidate and score.'
+        Run-Cli 'invalid-readers' @('search', (Join-Path $inputs '页图 003.png'), '--conf-dir', $backend, '--threads', '9') 1
         Run-Cli 'cli-clean' @('clean', '--conf-dir', $backend, '--all')
         Run-Cli 'cli-search-after-clean' @('search', (Join-Path $inputs '页图 003.png'), '--conf-dir', $backend, '--nprobe', '8', '--out', (Join-Path $output 'after-clean.json'))
         Run-Cli 'invalid-nprobe' @('search', (Join-Path $inputs '页图 003.png'), '--conf-dir', $backend, '--nprobe', '0') 1

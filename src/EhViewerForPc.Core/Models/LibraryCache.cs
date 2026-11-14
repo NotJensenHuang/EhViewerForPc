@@ -27,6 +27,7 @@ public sealed class GalleryCacheEntry
     public string Title { get; set; } = string.Empty;
     public int PageCount { get; set; }
     public int MaxPageNumber { get; set; }
+    public bool HasNaturalPageNames { get; set; }
     public int? ExpectedPages { get; set; }
     public bool HeaderPageCountOutdated { get; set; }
     public bool HasGidConflict { get; set; }

@@ -1,5 +1,6 @@
 // Port of imsearch's train/build/search orchestration; managed C# format only.
 using System.Diagnostics;
+using System.Buffers;
 using System.Runtime.InteropServices;
 
 namespace EhViewerForPc.ImageSearch;
@@ -235,36 +236,46 @@ public sealed class ImageSearchEngine
         long quantization = clock.ElapsedTicks;
         var neighbors = Enumerable.Range(0, descriptors.Length).Select(_ => new PriorityQueue<(long VectorId, long ImageId, int Distance), (int, long)>()).ToArray();
         long ioTicks = 0, computeTicks = 0;
-        Parallel.ForEach(queriesByBucket, new ParallelOptions { MaxDegreeOfParallelism = options.ReadThreads, CancellationToken = cancellationToken }, pair =>
+        Parallel.ForEach(queriesByBucket.OrderBy(p => p.Key), new ParallelOptions { MaxDegreeOfParallelism = options.ReadThreads, CancellationToken = cancellationToken }, pair =>
         {
             var (bucket, queries) = pair;
             cancellationToken.ThrowIfCancellationRequested();
             var local = queries.Select(_ => new PriorityQueue<(long VectorId, long ImageId, int Distance), (int, long)>()).ToArray();
-            long records = 0;
-            using var iterator = _index.ReadBucket(bucket).GetEnumerator();
-            while (true)
+            var buffer = ArrayPool<IndexVector>.Shared.Rent(8192);
+            long localIo = 0, localCompute = 0;
+            try
             {
-                long ioStart = Stopwatch.GetTimestamp(); bool available = iterator.MoveNext();
-                Interlocked.Add(ref ioTicks, Stopwatch.GetTimestamp() - ioStart);
-                if (!available) break;
-                if ((records++ & 4095) == 0) cancellationToken.ThrowIfCancellationRequested();
-                long computeStart = Stopwatch.GetTimestamp();
-                var vector = iterator.Current;
-                BinaryDescriptor original = vector.Residual.Xor(_quantizer[bucket]);
-                for (int j = 0; j < queries.Count; j++)
+                using var reader = _index.OpenBucket(bucket);
+                while (true)
                 {
-                    int distance = descriptors[queries[j]].Distance(original);
-                    var heap = local[j];
-                    if (heap.Count < options.K) heap.Enqueue((vector.VectorId, vector.ImageId, distance), (-distance, -vector.VectorId));
-                    else
+                    long started = Stopwatch.GetTimestamp();
+                    int count = reader.Read(buffer.AsSpan(0, 8192), cancellationToken);
+                    localIo += Stopwatch.GetTimestamp() - started;
+                    if (count == 0) break;
+                    started = Stopwatch.GetTimestamp();
+                    for (int i = 0; i < count; i++)
                     {
-                        var worst = heap.Peek();
-                        if ((distance, vector.VectorId).CompareTo((worst.Distance, worst.VectorId)) < 0)
-                        { heap.Dequeue(); heap.Enqueue((vector.VectorId, vector.ImageId, distance), (-distance, -vector.VectorId)); }
+                        var vector = buffer[i];
+                        BinaryDescriptor original = vector.Residual.Xor(_quantizer[bucket]);
+                        for (int j = 0; j < queries.Count; j++)
+                        {
+                            int distance = descriptors[queries[j]].Distance(original);
+                            var heap = local[j];
+                            if (heap.Count < options.K) heap.Enqueue((vector.VectorId, vector.ImageId, distance), (-distance, -vector.VectorId));
+                            else
+                            {
+                                var worst = heap.Peek();
+                                if ((distance, vector.VectorId).CompareTo((worst.Distance, worst.VectorId)) < 0)
+                                { heap.Dequeue(); heap.Enqueue((vector.VectorId, vector.ImageId, distance), (-distance, -vector.VectorId)); }
+                            }
+                        }
                     }
+                    localCompute += Stopwatch.GetTimestamp() - started;
                 }
-                Interlocked.Add(ref computeTicks, Stopwatch.GetTimestamp() - computeStart);
             }
+            finally { ArrayPool<IndexVector>.Shared.Return(buffer); }
+            Interlocked.Add(ref ioTicks, localIo);
+            Interlocked.Add(ref computeTicks, localCompute);
             for (int j = 0; j < queries.Count; j++)
             {
                 var heap = neighbors[queries[j]];

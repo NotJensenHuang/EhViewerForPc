@@ -1,5 +1,14 @@
 # 变更记录
 
+## 2026-11-15 CPU 检索、旧缓存迁移、补页等待进度与普通图片目录
+
+- `ImageSearch/DiskInvertedIndex.cs`、`BinaryDescriptor.cs`、`ImageSearchEngine.cs`、`SearchOptions.cs`：按桶顺序整块读取，Windows x64 直接解压到顺序布局记录，保留校验与取消；默认最多 8 个读取线程，移除逐向量迭代 / 计时 / 原子计数开销，不改变索引格式。
+- `ImageSearch.Host/Program.cs`、`tools/imsearch/`：CLI 支持 `--threads 1..8`，默认值与应用共用，原生探针比较八线程完整结果。按用户选择不引入 GPU 检索，原有建库 GPU 加速不变。
+- `LibraryCacheStore.cs`、`LibraryScanner.cs`：保留 schema 3 条目，仅重新解析受空文件 / 旧页数语义影响的条目，重扫输出当前版本，防止未扫描旧条目提前失去语义标记。
+- `DownloadManager.Repair*.cs`、`DownloadManager.cs`：入队与获取网络清单前核对已有有效页，等待阶段即显示 51/53；启动后台修正旧任务，服务负责取消和退出收尾，持久化失败恢复原进度。
+- `PageFileParser*.cs`、`GalleryInfo.cs`、`GalleryPage.cs`、`LibraryCache.cs`、`LibraryScanner.cs`：识别普通图片目录，以目录为标题、自然排序、首图封面；保留文件名模式到缓存，扫描不生成 `.ehviewer` / `.thumb`，编号来源仍保留真实缺页。
+- `tests/`、双语 README、产品与设计文档：覆盖跨块 Top-K、1 / 2 / 4 / 8 线程、旧缓存、等待进度、自然目录阅读与真实索引；证据见 `docs/CPU检索与本地目录兼容-2026-11-15.md`。
+
 ## 2026-11-14 实际索引裁剪搜索超时与缺页误分类修复
 
 - `ImageSearch/DiskInvertedIndex.cs`、`ImageSearchEngine.cs`：固定长度描述子批量解压，保留记录顺序、边界校验和既有格式；查询载入支持校验进度与取消。

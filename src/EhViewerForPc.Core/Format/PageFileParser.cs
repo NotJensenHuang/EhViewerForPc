@@ -3,7 +3,7 @@ using EhViewerForPc.Core.Models;
 
 namespace EhViewerForPc.Core.Format;
 
-public static class PageFileParser
+public static partial class PageFileParser
 {
     // EhViewer's GalleryProvider2.SUPPORT_IMAGE_EXTENSIONS order.
     private static readonly Dictionary<string, int> ExtensionPriority = new(StringComparer.OrdinalIgnoreCase)
@@ -16,9 +16,8 @@ public static class PageFileParser
     };
 
     /// <summary>
-    /// Enumerates page-named files once. The returned candidates carry length and
-    /// mtime so the library scanner can build a cache signature without touching
-    /// the disk twice.
+    /// 枚举支持的图片一次；Scan 决定使用原始页号或普通名称的自然顺序。
+    /// 同时携带大小与 mtime，扫描器可直接构造缓存签名。
     /// </summary>
     public static IReadOnlyList<PageCandidate> Enumerate(string folderPath, out string? error)
     {
@@ -29,8 +28,8 @@ public static class PageFileParser
             var directory = new DirectoryInfo(folderPath);
             foreach (FileInfo file in directory.EnumerateFiles("*", SearchOption.TopDirectoryOnly))
             {
-                if (!TryParsePageName(file.Name, out int number, out string extension)) continue;
-                if (number <= 0) continue; // EhViewer starts at 00000001.
+                string extension = file.Extension.ToLowerInvariant();
+                if (!IsSupportedExtension(extension)) continue;
 
                 files.Add(new PageCandidate
                 {
@@ -51,12 +50,20 @@ public static class PageFileParser
         return files;
     }
 
-    public static PageScanResult Scan(string folderPath, SpiderHeader? header, out string? error) =>
-        Scan(Enumerate(folderPath, out error), header, out _);
+    public static PageScanResult Scan(string folderPath, SpiderHeader? header, out string? error)
+    {
+        var files = Enumerate(folderPath, out error);
+        header ??= SpiderInfoParser.TryParseFile(Path.Combine(folderPath, ".ehviewer"), out _);
+        return Scan(files, header, out _);
+    }
 
     public static PageScanResult Scan(IReadOnlyList<PageCandidate> files, SpiderHeader? header, out string? error)
     {
         error = null;
+        bool numbered = files.Any(file => TryParsePageName(file.FileName, out _, out _));
+        if (files.Count > 0 && (!numbered || (header is not { IsValid: true } && files.Any(file =>
+                IsSupportedExtension(file.Extension) && !TryParsePageName(file.FileName, out _, out _)))))
+            return ScanNaturalPages(files);
         var grouped = new Dictionary<int, List<PageCandidate>>();
         int zeroByteFiles = 0;
 

@@ -32,6 +32,67 @@ public class LibraryScannerTests : IDisposable
     }
 
     [Fact]
+    public void LegacyCacheKeepsSafeEntriesAndOnlyRechecksChangedPageDiagnostics()
+    {
+        CreateGallery("100-safe", 100, 3);
+        CreateGallery("101-empty-alternate", 101, 3);
+        File.WriteAllBytes(Path.Combine(_root, "101-empty-alternate", "00000002.png"), []);
+        var scanner = new LibraryScanner();
+        var first = scanner.Scan(_root, null);
+        first.Cache.SchemaVersion = 3;
+        var paths = new AppPaths(Path.Combine(_root, "data")); paths.EnsureCreated();
+        Assert.True(JsonFileStore.Save(paths.GetLibraryCacheFile("test"), first.Cache, StorageJsonContext.Default.LibraryCache, out _));
+        var loaded = new LibraryCacheStore(paths).Load("test", _root, out _);
+        Assert.Equal(2, loaded.Entries.Count);
+        Assert.True(new LibraryCacheStore(paths).Save("test", loaded, out _));
+        loaded = new LibraryCacheStore(paths).Load("test", _root, out _);
+        Assert.Equal(3, loaded.SchemaVersion);
+        var instant = LibraryScanner.FromCacheOnly(loaded, _root);
+        Assert.True(instant.Single(g => g.Gid == 101).IsIncomplete);
+        var migrated = scanner.Scan(_root, loaded);
+        Assert.Equal(LibraryCache.CurrentSchemaVersion, migrated.Cache.SchemaVersion);
+        Assert.Equal(1, migrated.CacheHitCount);
+        Assert.False(migrated.Galleries.Single(g => g.Gid == 101).IsIncomplete);
+        Assert.Equal(1, migrated.Galleries.Single(g => g.Gid == 101).ZeroByteFiles);
+        var warm = scanner.Scan(_root, migrated.Cache);
+        Assert.Equal(migrated.Galleries.Count, warm.CacheHitCount);
+    }
+
+    [Fact]
+    public void PlainNestedImageFolderUsesNaturalNamesAndKeepsSourceUnchanged()
+    {
+        string folder = Path.Combine(_root, "momi", "2026-普通本地漫画"); Directory.CreateDirectory(folder);
+        foreach (string name in new[] { "Image00010.jpg", "Image00000.jpg", "Image00002.jpg" })
+            File.WriteAllBytes(Path.Combine(folder, name), [0xff, 0xd8, 0xff, 0xe0, 1]);
+        var before = Directory.GetFiles(folder).ToDictionary(p => p, p => (new FileInfo(p).Length, File.GetLastWriteTimeUtc(p)));
+        var scanner = new LibraryScanner(); var result = scanner.Scan(_root, null);
+        var gallery = Assert.Single(result.Galleries);
+        Assert.Equal("2026-普通本地漫画", gallery.Title); Assert.Null(gallery.Gid);
+        Assert.Equal(3, gallery.PageCount); Assert.False(gallery.IsIncomplete);
+        Assert.False(gallery.HasEhviewer); Assert.False(gallery.HasThumb); Assert.Null(gallery.ExpectedPages);
+        Assert.True(gallery.HasNaturalPageNames);
+        var pages = PageFileParser.Scan(folder, null, out _);
+        Assert.Equal(new[] { "Image00000.jpg", "Image00002.jpg", "Image00010.jpg" }, pages.Pages.Select(p => p.Primary!.FileName));
+        Assert.Equal(new[] { 1, 2, 3 }, pages.Pages.Select(p => p.Number)); Assert.Empty(pages.MissingRanges);
+        Assert.Equal(1, scanner.Scan(_root, result.Cache).CacheHitCount);
+        Assert.Equal(before.Keys.Order(), Directory.GetFiles(folder).Order());
+        Assert.All(before, item => Assert.Equal(item.Value, (new FileInfo(item.Key).Length, File.GetLastWriteTimeUtc(item.Key))));
+    }
+
+    [Fact]
+    public void NumberedMetadataRetainsMissingSlotsWhenALooseCoverIsPresent()
+    {
+        CreateGallery("102-numbered", 102, 3);
+        string folder = Path.Combine(_root, "102-numbered");
+        File.Delete(Path.Combine(folder, "00000002.jpg"));
+        File.WriteAllBytes(Path.Combine(folder, "cover.jpg"), [0xff, 0xd8, 0xff, 0xe0]);
+        var pages = PageFileParser.Scan(folder, null, out _);
+        Assert.False(pages.HasNaturalPageNames);
+        Assert.Equal(new[] { 1, 3 }, pages.Pages.Select(p => p.Number));
+        Assert.Equal(new[] { new PageRange(2, 2) }, pages.MissingRanges);
+    }
+
+    [Fact]
     public void ScansAndUsesCache()
     {
         CreateGallery("100-Test Gallery", 100, 3);

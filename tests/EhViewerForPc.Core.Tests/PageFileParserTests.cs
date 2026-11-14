@@ -90,6 +90,17 @@ public class PageFileParserTests : IDisposable
     }
 
     [Fact]
+    public void NaturalFilesSortNumbersAndEmptyAlternatesDoNotCreateMissingPages()
+    {
+        Touch("page10.png"); Touch("page2.webp"); Touch("page1.jpg"); Touch("page2.jpg", 0);
+        var scan = PageFileParser.Scan(_root, null, out _);
+        Assert.True(scan.HasNaturalPageNames); Assert.Equal(3, scan.PageCount);
+        Assert.False(scan.IsIncomplete); Assert.False(scan.HasExpectedPages);
+        Assert.Equal(new[] { "page1.jpg", "page2.webp", "page10.png" }, scan.Pages.Select(p => p.Primary!.FileName));
+        Assert.Equal(1, scan.ZeroByteFiles);
+    }
+
+    [Fact]
     public void ParsesPageNames()
     {
         Assert.True(PageFileParser.TryParsePageName("00000001.jpg", out int number, out string ext));

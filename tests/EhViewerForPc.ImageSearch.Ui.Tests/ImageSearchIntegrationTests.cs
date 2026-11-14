@@ -25,6 +25,33 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 public sealed class ImageSearchIntegrationTests
 {
     [AvaloniaFact]
+    public async Task WaitingRepairUsesExistingPageFractionAndPlainFoldersReadInNaturalOrder()
+    {
+        using var scope = new Fixture(); scope.CreateCopies(named: true);
+        using var shell = new ShellViewModel(scope.Services); await shell.Library.InitializeAsync();
+        var item = shell.Library.SnapshotAllWorks().Single();
+        var source = scope.Services.Settings.Sources.Single(s => s.Id == item.Info.SourceId);
+        var task = scope.Services.Downloads.EnqueueRepair(new() { Gid = 42, Token = "fixture", Pages = 5 }, item.Info.FolderPath, source.RootPath, false);
+        shell.Library.ApplyDownloadStates([task]);
+        var window = new Window { Width = 920, Height = 680, Content = new LibraryPage { DataContext = shell.Library } };
+        try
+        {
+            window.Show(); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+            var ring = window.GetVisualDescendants().OfType<FAProgressRing>().Single(r => ReferenceEquals(r.DataContext, item));
+            Assert.Equal(.6, ring.Value, 3); Assert.Contains("3/5", item.DownloadStatusText);
+        }
+        finally { window.Close(); }
+        string plain = Path.Combine(source.RootPath, "2026-普通漫画"); Directory.CreateDirectory(plain);
+        foreach (string name in new[] { "Image00000.png", "Image00002.png", "Image00010.png" })
+            File.WriteAllBytes(Path.Combine(plain, name), SyntheticImages.Create(name.Length, 200, 280).EncodePng());
+        var info = scope.Services.Scanner.Scan(source.RootPath, null, true, null, default, source.Id, source.DisplayName, true, plain).Galleries.Single();
+        using var reader = new ReaderViewModel(scope.Services, info); await reader.InitializeAsync();
+        Assert.Equal(3, reader.PageCount); Assert.False(reader.IsCurrentPageMissing);
+        Assert.True(reader.TryNavigateToPageNumber(3)); Assert.Equal("3 / 3", reader.PageLabel);
+        Assert.False(reader.IsCurrentPageMissing); Assert.False(info.IsIncomplete);
+    }
+
+    [AvaloniaFact]
     public async Task CompletedPagesAreRecheckedBeforeBatchOrSingleRepairAndLeaveIncompleteFilter()
     {
         using var scope = new Fixture(); var physical = scope.CreateCopies(named: true);

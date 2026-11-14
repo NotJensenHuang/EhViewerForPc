@@ -496,6 +496,7 @@ public sealed partial class DownloadManager : IDisposable
     /// <summary>Starts pending tasks (called once at startup when AutoStart is on).</summary>
     public void AutoStart()
     {
+        _ = RefreshRepairProgressAsync();
         if (!_settings.Download.AutoStart) return;
         lock (_gate)
         {
@@ -636,6 +637,8 @@ public sealed partial class DownloadManager : IDisposable
         if (!task.FillMissingOnly) Directory.CreateDirectory(task.FolderPath);
 
         task.Message = "获取页面列表";
+        if (task.FillMissingOnly)
+            task.DownloadedPages = ReadExistingRepairPages(task.FolderPath, token).Count(page => task.PageCount <= 0 || page <= task.PageCount);
         RaiseTask(task);
 
         if (task.FillMissingOnly)
@@ -993,6 +996,7 @@ public sealed partial class DownloadManager : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _repairProgressStop.Cancel();
         lock (_gate)
         {
             foreach (CancellationTokenSource cts in _cancellations.Values)
@@ -1012,7 +1016,8 @@ public sealed partial class DownloadManager : IDisposable
 
         // Workers own their cancellation sources until they have released all I/O.
         Task[] pending;
-        lock (_gate) pending = _running.Values.ToArray();
+        lock (_gate) pending = _running.Values.Append(_repairProgressTask).ToArray();
         try { Task.WhenAll(pending).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+        finally { _repairProgressStop.Dispose(); }
     }
 }
