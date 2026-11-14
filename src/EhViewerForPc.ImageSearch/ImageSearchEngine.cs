@@ -16,11 +16,16 @@ public sealed class ImageSearchEngine
 
     /// <summary>Opens a validated quantizer and published IVF index for querying.</summary>
     public ImageSearchEngine(ImageDatabase database, bool allowLinkedPublication = false)
+        : this(database, null, CancellationToken.None, allowLinkedPublication) { }
+
+    /// <summary>首次校验大型索引时报告读取进度，并允许取消。</summary>
+    public ImageSearchEngine(ImageDatabase database, Action<long, long>? loadProgress, CancellationToken token, bool allowLinkedPublication = false)
     {
+        token.ThrowIfCancellationRequested();
         _database = database;
         string quantizer = Path.Combine(database.DirectoryPath, "quantizer.bin");
         _quantizer = BinaryHnsw.Load(quantizer, database.Profile.Id);
-        _index = DiskInvertedIndex.Open(Path.Combine(database.DirectoryPath, "invlists.bin"), database.Profile.Id, DiskInvertedIndex.HashQuantizer(quantizer), allowLinkedPublication);
+        _index = DiskInvertedIndex.OpenWithProgress(Path.Combine(database.DirectoryPath, "invlists.bin"), database.Profile.Id, DiskInvertedIndex.HashQuantizer(quantizer), loadProgress, token, allowLinkedPublication);
         if (_index.BucketCount != _quantizer.Count) throw new InvalidDataException("Index and quantizer bucket counts differ.");
     }
 

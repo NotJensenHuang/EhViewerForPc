@@ -3,6 +3,34 @@ namespace EhViewerForPc.ImageSearch.Tests;
 public sealed class StorageTests
 {
     [Fact]
+    public void BatchedBucketReaderPreservesAllRecordsAcrossBoundariesAndEarlyDisposal()
+    {
+        using var scope = new TestDirectory();
+        var records = Enumerable.Range(1, 2501).Select(i => new IndexVector(i, i % 7 + 1, new((ulong)i, (ulong)(i * 2), 3, 4))).ToArray();
+        string path = scope.File("batch.bin");
+        DiskInvertedIndex.Write(path, "profile", "quantizer", 2, i => i == 0 ? records : []);
+        var index = DiskInvertedIndex.Open(path, "profile", "quantizer");
+        Assert.Equal(records, index.ReadBucket(0));
+        Assert.Empty(index.ReadBucket(1));
+        Assert.Single(index.ReadBucket(0).Take(1));
+        using var exclusive = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+
+    [Fact]
+    public void QueryLoaderCanCancelDuringChecksumAndCloseTheFile()
+    {
+        using var scope = new TestDirectory();
+        using var database = new ImageDatabase(scope.Path, writable: true);
+        database.Add("page.png", Blake3.Hash([1]), AlgorithmTests.Descriptors(90, 1));
+        ImageSearchEngine.Train(database, 1, 1);
+        ImageSearchEngine.Build(database);
+        using var cancellation = new CancellationTokenSource();
+        Assert.ThrowsAny<OperationCanceledException>(() => new ImageSearchEngine(database,
+            (_, _) => cancellation.Cancel(), cancellation.Token));
+        using var exclusive = new FileStream(scope.File("invlists.bin"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+    }
+
+    [Fact]
     public void ParallelTrainingAndBucketAssignmentProduceIdenticalPublishedFiles()
     {
         using var scope = new TestDirectory();

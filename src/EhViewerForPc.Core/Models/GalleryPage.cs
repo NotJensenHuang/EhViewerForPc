@@ -53,5 +53,5 @@ public sealed class PageScanResult
     public int PageCount => Pages.Count;
     public bool HasMissingPages => MissingRanges.Count > 0;
     public bool HasZeroByteFiles => ZeroByteFiles > 0;
-    public bool IsIncomplete => PageCount == 0 || HasMissingPages || HeaderPageCountOutdated || HasZeroByteFiles;
+    public bool IsIncomplete => PageCount == 0 || HasMissingPages;
 }

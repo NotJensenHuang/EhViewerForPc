@@ -265,8 +265,7 @@ public sealed partial class LibraryScanner
             MissingRanges = entry.MissingRanges,
             HasHeaderPageCountOutdated = entry.HeaderPageCountOutdated,
             HasGidConflict = entry.HasGidConflict,
-            IsIncomplete = entry.PageCount == 0 || entry.MissingRanges.Count > 0 ||
-                           entry.HeaderPageCountOutdated || entry.ZeroByteFiles > 0,
+            IsIncomplete = entry.PageCount == 0 || entry.MissingRanges.Count > 0,
             HasEhviewer = entry.HasEhviewer,
             HasThumb = entry.HasThumb,
             CoverPath = entry.CoverPath,

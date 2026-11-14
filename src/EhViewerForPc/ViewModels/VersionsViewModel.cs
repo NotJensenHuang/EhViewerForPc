@@ -155,7 +155,7 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
         try
         {
             var task = await _services.ContinueLocalDownloadAsync(version.Info, _lifetime.Token);
-            if (!_lifetime.IsCancellationRequested) StatusText = "已加入补页任务 · " + task.FolderPath;
+            if (!_lifetime.IsCancellationRequested) StatusText = task is null ? "页面已完整，无需补页" : "已加入补页任务 · " + task.FolderPath;
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception error) { if (!_lifetime.IsCancellationRequested) StatusText = "无法继续下载：" + error.Message; }

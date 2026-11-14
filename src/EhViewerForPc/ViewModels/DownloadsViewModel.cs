@@ -194,7 +194,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 
     private void QueueLibraryUpdate(DownloadTask task)
     {
-        if ((!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) || !_services.Settings.Download.RefreshLibraryOnComplete || task.DownloadedPages == 0) return;
+        if ((!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) ||
+            (!_services.Settings.Download.RefreshLibraryOnComplete && !task.FillMissingOnly) || task.DownloadedPages == 0) return;
         var stamp = (task.DownloadedPages, task.FolderPath, task.State);
         if (_imported.TryGetValue(task.Id, out var previous) && previous == stamp) return;
         _libraryUpdates[task.Id] = task;
@@ -212,7 +213,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             _libraryUpdates.Clear();
             foreach (var task in pending)
             {
-                if (_disposed || !_services.Downloads.IsQueued(task)) continue;
+                if (_disposed || (!_services.Downloads.IsQueued(task) && task.State != DownloadState.Completed)) continue;
                 var stamp = (task.DownloadedPages, task.FolderPath, task.State);
                 try
                 {

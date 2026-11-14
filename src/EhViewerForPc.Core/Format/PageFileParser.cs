@@ -108,8 +108,9 @@ public static class PageFileParser
         int expected = hasExpected ? header!.Pages : 0;
         bool headerOutdated = hasExpected && maxPage > expected;
 
-        var present = grouped.Keys.ToHashSet();
-        int missingUpperBound = hasExpected ? expected : maxPage;
+        // 同页有可读候选时，遗留空文件只作诊断；只有整页为空才需要补页。
+        var present = pages.Where(p => p.State != PageState.Empty).Select(p => p.Number).ToHashSet();
+        int missingUpperBound = Math.Max(expected, maxPage);
         var missing = new List<PageRange>();
         int rangeStart = 0;
         for (int i = 1; i <= missingUpperBound; i++)

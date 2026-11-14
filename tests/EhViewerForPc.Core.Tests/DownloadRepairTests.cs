@@ -49,6 +49,25 @@ public sealed class DownloadRepairTests : IDisposable
     }
 
     [Fact]
+    public async Task AlreadyCompletedCopyMakesNoImagePageRequestsAndPreservesEmptyAlternate()
+    {
+        File.WriteAllBytes(Path.Combine(Folder, "00000002.png"), Png);
+        string alternate = Path.Combine(Folder, "00000002.jpg");
+        File.WriteAllBytes(alternate, []);
+        var before = Directory.GetFiles(Folder).ToDictionary(p => p, p => (new FileInfo(p).Length, File.GetLastWriteTimeUtc(p)));
+        var settings = Settings(); var handler = new FixtureHandler();
+        using var client = new EhClient(settings, new HttpClient(handler), new HttpClient(handler));
+        using var manager = new DownloadManager(Paths, settings, client);
+        var task = manager.EnqueueRepair(Details(), Folder, Source);
+        await WaitForAsync(() => task.State is DownloadState.Completed or DownloadState.Failed);
+        Assert.Equal(DownloadState.Completed, task.State);
+        Assert.DoesNotContain(handler.Requests, path => path.StartsWith("/s/", StringComparison.Ordinal) || path == "/page.png");
+        Assert.All(before, item => Assert.Equal(item.Value, (new FileInfo(item.Key).Length, File.GetLastWriteTimeUtc(item.Key))));
+        Assert.Equal(2, task.DownloadedPages);
+        Assert.False(PageFileParser.Scan(Folder, new SpiderHeader { HasPages = true, Pages = 2 }, out _).IsIncomplete);
+    }
+
+    [Fact]
     public void CopiesHaveIndependentPersistedKeysAndCompletedTasksCanContinue()
     {
         var settings = Settings();

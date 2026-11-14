@@ -241,13 +241,17 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
         if (!CanSearch || _input is null) return;
         CancelQuery(); int version = ++_requestVersion;
         _queryCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        _queryCancellation.CancelAfter(TimeSpan.FromSeconds(30)); var cancellation = _queryCancellation;
-        IsBusy = true; StatusText = "正在搜索本地图片…";
+        var cancellation = _queryCancellation;
+        IsBusy = true; StatusText = "正在准备本地图片搜索…";
         try
         {
             var copies = _snapshot();
             ImageCrop? crop = UseCrop ? new(CropX, CropY, CropWidth, CropHeight) : null;
-            var hits = await _services.ImageSearch.SearchAsync(_input, crop, copies, cancellation.Token);
+            var progress = new Progress<string>(message =>
+            {
+                if (!_disposed && version == _requestVersion && !cancellation.IsCancellationRequested) StatusText = message;
+            });
+            var hits = await _services.ImageSearch.SearchAsync(_input, crop, copies, progress, cancellation.Token);
             if (_disposed || version != _requestVersion || cancellation.IsCancellationRequested) return;
             Results.Clear(); foreach (var hit in hits) Results.Add(new(hit, _services));
             OnPropertyChanged(nameof(HasResults)); StatusText = hits.Length == 0 ? "未找到候选匹配，可调整裁剪或检索范围" : $"找到 {hits.Length} 个候选页";

@@ -41,6 +41,8 @@ public class PageFileParserTests : IDisposable
         Assert.Equal(".webp", result.Pages[1].Primary!.Extension);
         Assert.Equal(".jpg", result.Pages[2].Primary!.Extension);
         Assert.Empty(result.MissingRanges);
+        Assert.False(result.IsIncomplete);
+        Assert.Equal(1, result.ZeroByteFiles);
     }
 
     [Fact]
@@ -71,6 +73,20 @@ public class PageFileParserTests : IDisposable
         Assert.Equal(3, result.PageCount);
         Assert.True(result.HeaderPageCountOutdated);
         Assert.Empty(result.MissingRanges);
+        Assert.False(result.IsIncomplete);
+    }
+
+    [Fact]
+    public void EmptyOnlyPageIsMissingButEmptyAlternateDoesNotHideTheReadablePage()
+    {
+        Touch("00000001.jpg", 0);
+        Touch("00000002.jpg", 0);
+        Touch("00000002.webp", 10);
+        var result = PageFileParser.Scan(_root, new SpiderHeader { HasPages = true, Pages = 2 }, out _);
+        Assert.True(result.IsIncomplete);
+        Assert.Equal(new[] { new PageRange(1, 1) }, result.MissingRanges);
+        Assert.Equal(2, result.PageCount);
+        Assert.Equal(2, result.ZeroByteFiles);
     }
 
     [Fact]

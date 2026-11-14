@@ -36,7 +36,7 @@ public sealed partial class MainViewModel
             var result = await _services.ContinueLocalDownloadsAsync(copies, progress, _lifetime.Token);
             if (_disposed) return;
             RepairFailureDetails = string.Join(Environment.NewLine, result.Failures.Select(f => f.Folder + "：" + f.Message));
-            StatusText = $"补页：新增 {result.Added} · 继续 {result.Continued} · 已有 {result.Existing} · 失败 {result.Failures.Count}";
+            StatusText = $"补页：新增 {result.Added} · 继续 {result.Continued} · 已有 {result.Existing} · 已完整 {result.Complete} · 失败 {result.Failures.Count}";
         }
         catch (OperationCanceledException) when (_disposed) { }
         catch (Exception error) { if (!_disposed) StatusText = "无法批量补页：" + error.Message; }
@@ -79,6 +79,11 @@ public sealed partial class MainViewModel
     }
 
     internal void ApplyScannedCopy(GalleryInfo copy) => ApplyDownloadedCopies([copy], copy.FolderPath);
+
+    private void OnLocalCopyChecked(object? sender, GalleryInfo copy)
+    {
+        if (!_disposed) ApplyScannedCopy(copy);
+    }
 
     private void ApplyDownloadedCopies(IReadOnlyList<GalleryInfo> copies, string folder)
     {

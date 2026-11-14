@@ -429,60 +429,17 @@ public sealed partial class LocalImageSearchService : IDisposable
 
     /// <summary>Queries a frozen generation and filters every physical hit against current sources and files.</summary>
     public Task<LocalImageSearchHit[]> SearchAsync(byte[] input, ImageCrop? crop, IReadOnlyList<GalleryInfo> galleries, CancellationToken token)
+        => SearchAsync(input, crop, galleries, null, token);
+
+    public Task<LocalImageSearchHit[]> SearchAsync(byte[] input, ImageCrop? crop, IReadOnlyList<GalleryInfo> galleries,
+        IProgress<string>? progress, CancellationToken token)
     {
         if (!_services.Settings.ImageSearch.Enabled) throw new InvalidOperationException("请先在设置中启用以图搜图。");
-        string root = DirectoryPath; var sources = SelectedSources(); int nprobe = _services.Settings.ImageSearch.NProbe;
+        string root = DirectoryPath;
+        var sources = SelectedSources();
+        int nprobe = _services.Settings.ImageSearch.NProbe;
         var copies = galleries.DistinctBy(g => (g.SourceId, g.StableId)).ToDictionary(g => (g.SourceId, g.StableId));
-        return RunReadAsync(readToken =>
-        {
-            ImageSearchPointer pointer;
-            lock (_generationGate)
-            {
-                pointer = LoadAvailablePointer(root) ?? throw new InvalidOperationException("请先建立图片索引。");
-                _activeReaders[pointer.GenerationId] = _activeReaders.GetValueOrDefault(pointer.GenerationId) + 1;
-            }
-            try
-            {
-            string generation = Path.Combine(root, "generations", pointer.GenerationId);
-            using var backend = new ImageDatabase(Path.Combine(generation, "backend"));
-            var engine = new ImageSearchEngine(backend, allowLinkedPublication: true);
-            var results = engine.Search(GrayImage.Decode(input, crop), new() { NProbe = Math.Min(nprobe, engine.Centers) }, readToken);
-            using var manifest = OpenManifest(generation, writable: false);
-            var selected = sources.ToDictionary(s => s.Id, StringComparer.Ordinal); var hits = new List<LocalImageSearchHit>();
-            foreach (var result in results)
-            foreach (string alias in result.Aliases)
-            {
-                readToken.ThrowIfCancellationRequested();
-                using var command = manifest.CreateCommand(); command.CommandText = "SELECT source_id,stable_id,page,path,length,mtime FROM member WHERE alias=$alias AND state='indexed'";
-                command.Parameters.AddWithValue("$alias", alias); using var reader = command.ExecuteReader();
-                while (reader.Read())
-                {
-                    string sourceId = reader.GetString(0), stableId = reader.GetString(1);
-                    if (!selected.TryGetValue(sourceId, out var source) || !copies.TryGetValue((sourceId, stableId), out var gallery)) continue;
-                    string path = Path.GetFullPath(Path.Combine(source.RootPath, reader.GetString(3)));
-                    if (!IsSafeSourcePath(path, source.RootPath)) continue;
-                    var file = new FileInfo(path); long length = reader.GetInt64(4), mtime = reader.GetInt64(5);
-                    if (!file.Exists || file.Length != length || file.LastWriteTimeUtc.Ticks != mtime) continue;
-                    hits.Add(new(gallery, reader.GetInt32(2), path, length, mtime, result.Score, pointer.GenerationId));
-                }
-            }
-            return hits.GroupBy(h => (h.Gallery.SourceId, h.Gallery.StableId, h.PageNumber)).Select(g => g.MaxBy(h => h.Score)!)
-                .OrderByDescending(h => h.Score).ThenBy(h => h.Gallery.StableId, StringComparer.Ordinal).ThenBy(h => h.PageNumber).Take(30).ToArray();
-            }
-            finally
-            {
-                bool reclaim = false;
-                lock (_generationGate)
-                {
-                    if (--_activeReaders[pointer.GenerationId] == 0)
-                    {
-                        _activeReaders.Remove(pointer.GenerationId);
-                        reclaim = _retiredGenerations.Remove(pointer.GenerationId);
-                    }
-                }
-                if (reclaim) Dispatcher.UIThread.Post(() => { if (Volatile.Read(ref _disposed) == 0) _ = ReclaimRetiredAsync(); });
-            }
-        }, token);
+        return RunReadAsync(readToken => SearchCore(root, input, crop, sources, copies, nprobe, progress, readToken), token, _querySerial);
     }
 
     /// <summary>Removes owned, unused snapshots, retaining the current index, pending job and active queries.</summary>
@@ -573,15 +530,25 @@ public sealed partial class LocalImageSearchService : IDisposable
         var settings = _services.Settings;
         return settings.Sources.Where(s => s.Enabled && (settings.ImageSearch.SourceIds.Count == 0 || settings.ImageSearch.SourceIds.Contains(s.Id))).Select(s => s.Clone()).ToArray();
     }
-    private static ImageSearchPointer? ReadPointer(string root, bool backup = false)
+    private static ImageSearchPointer? ReadPointer(string root, bool backup = false, bool validateManifest = true, CancellationToken token = default)
     {
         string file = Path.Combine(root, backup ? "current.previous.json" : "current.json"); if (!File.Exists(file)) return null;
         if (new FileInfo(file).Length > 16384) throw new InvalidDataException("图片索引指针过大。");
         var pointer = JsonSerializer.Deserialize(File.ReadAllBytes(file), LocalImageSearchJsonContext.Default.ImageSearchPointer) ?? throw new InvalidDataException("图片索引指针损坏。");
         if (pointer.SchemaVersion != 1 || pointer.GenerationId is not { Length: 32 } || pointer.GenerationId.AsSpan().IndexOfAnyExcept("0123456789abcdef") >= 0 || pointer.ProfileId != new FeatureProfile().Id || pointer.Pages < 0)
             throw new InvalidDataException("图片索引版本不兼容，请重新建库。");
+        if (!validateManifest) return pointer;
         using var manifest = File.OpenRead(Path.Combine(root, "generations", pointer.GenerationId, "manifest.db"));
-        if (Convert.ToHexStringLower(SHA256.HashData(manifest)) != pointer.ManifestSha256) throw new InvalidDataException("图片索引清单校验失败。");
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] buffer = new byte[65536];
+        int count;
+        while ((count = manifest.Read(buffer)) != 0)
+        {
+            token.ThrowIfCancellationRequested();
+            hash.AppendData(buffer, 0, count);
+        }
+        token.ThrowIfCancellationRequested();
+        if (Convert.ToHexStringLower(hash.GetHashAndReset()) != pointer.ManifestSha256) throw new InvalidDataException("图片索引清单校验失败。");
         return pointer;
     }
     private ImageSearchPointer? LoadAvailablePointer(string root)
@@ -589,12 +556,12 @@ public sealed partial class LocalImageSearchService : IDisposable
         lock (_generationGate) return LoadAvailablePointerCore(root);
     }
 
-    private static ImageSearchPointer? LoadAvailablePointerCore(string root)
+    private static ImageSearchPointer? LoadAvailablePointerCore(string root, CancellationToken token = default)
     {
-        try { return ReadPointer(root) ?? ReadPointer(root, backup: true); }
+        try { return ReadPointer(root, token: token) ?? ReadPointer(root, backup: true, token: token); }
         catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException)
         {
-            try { if (ReadPointer(root, backup: true) is { } previous) return previous; }
+            try { if (ReadPointer(root, backup: true, token: token) is { } previous) return previous; }
             catch (Exception prior) when (prior is IOException or JsonException or UnauthorizedAccessException) { }
             throw new InvalidDataException("图片索引无法恢复，请重新提取重建。", error);
         }
@@ -631,6 +598,8 @@ public sealed partial class LocalImageSearchService : IDisposable
         _writer.Release();
         lock (_readGate)
             while (_pendingReads != 0) Monitor.Wait(_readGate);
+        _queryCache?.Dispose();
+        _querySerial.Dispose();
         try { _gpu?.Dispose(); }
         finally { _sourceIo.Dispose(); }
     }

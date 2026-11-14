@@ -54,6 +54,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public MainViewModel(AppServices services)
     {
         _services = services;
+        _services.LocalCopyChecked += OnLocalCopyChecked;
         _sortOptions =
         [
             new SortOption(LibrarySort.RecentlyRead, "最近阅读"),
@@ -107,7 +108,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         {
             var task = await _services.ContinueLocalDownloadAsync(item.Info, _lifetime.Token);
             if (_disposed) return;
-            StatusText = "已加入补页任务 · " + task.FolderPath;
+            StatusText = task is null ? "页面已完整，无需补页" : "已加入补页任务 · " + task.FolderPath;
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception error) { if (!_disposed) StatusText = "无法继续下载：" + error.Message; }
@@ -1056,6 +1057,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _services.LocalCopyChecked -= OnLocalCopyChecked;
         if (_disposed) return;
         _disposed = true;
         _searchTimer.Stop();

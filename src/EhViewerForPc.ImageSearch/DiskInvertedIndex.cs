@@ -1,5 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Buffers;
+using System.Buffers.Binary;
 
 namespace EhViewerForPc.ImageSearch;
 
@@ -49,7 +51,7 @@ public sealed class DiskInvertedIndex
     public static DiskInvertedIndex Open(string path, string profileId, string quantizerHash, bool allowLinkedPublication = false) => new(path, profileId, quantizerHash, allowLinkedPublication);
 
     internal static DiskInvertedIndex OpenWithProgress(string path, string profileId, string quantizerHash,
-        Action<long, long>? progress, CancellationToken token) => new(path, profileId, quantizerHash, false, progress, token);
+        Action<long, long>? progress, CancellationToken token, bool allowLinkedPublication = false) => new(path, profileId, quantizerHash, allowLinkedPublication, progress, token);
 
     /// <summary>Computes a quantizer file's identity.</summary>
     public static string HashQuantizer(string path) { using var file = File.OpenRead(path); return Convert.ToHexStringLower(SHA256.HashData(file)); }
@@ -112,15 +114,35 @@ public sealed class DiskInvertedIndex
         file.Position = info.Offset;
         using var limited = new LimitedStream(file, info.Length);
         using var deflate = new DeflateStream(limited, CompressionMode.Decompress);
-        using var reader = new BinaryReader(deflate);
         long previous = 0;
-        for (long i = 0; i < info.Count; i++)
+        // 每条记录固定 48 字节；成批解压，避免对每个 UInt64 单独进入解压器。
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(48 * 1024);
+        try
         {
-            long vectorId = reader.ReadInt64(), imageId = reader.ReadInt64();
-            if (vectorId <= previous || imageId < 1) throw new InvalidDataException("Invalid IVF vector identity.");
-            previous = vectorId; yield return new(vectorId, imageId, CheckedFile.ReadDescriptor(reader));
+            for (long i = 0; i < info.Count;)
+            {
+                int count = (int)Math.Min(1024, info.Count - i);
+                deflate.ReadExactly(buffer.AsSpan(0, count * 48));
+                for (int j = 0; j < count; j++)
+                {
+                    var vector = ReadVector(buffer, j * 48);
+                    if (vector.VectorId <= previous || vector.ImageId < 1) throw new InvalidDataException("Invalid IVF vector identity.");
+                    previous = vector.VectorId;
+                    yield return vector;
+                }
+                i += count;
+            }
+            if (deflate.ReadByte() != -1) throw new InvalidDataException("IVF decompression exceeds recorded size.");
         }
-        if (deflate.ReadByte() != -1) throw new InvalidDataException("IVF decompression exceeds recorded size.");
+        finally { ArrayPool<byte>.Shared.Return(buffer); }
+    }
+
+    private static IndexVector ReadVector(byte[] buffer, int offset)
+    {
+        ReadOnlySpan<byte> record = buffer.AsSpan(offset, 48);
+        return new(BinaryPrimitives.ReadInt64LittleEndian(record), BinaryPrimitives.ReadInt64LittleEndian(record[8..]),
+            new(BinaryPrimitives.ReadUInt64LittleEndian(record[16..]), BinaryPrimitives.ReadUInt64LittleEndian(record[24..]),
+                BinaryPrimitives.ReadUInt64LittleEndian(record[32..]), BinaryPrimitives.ReadUInt64LittleEndian(record[40..])));
     }
 
     /// <summary>Merges sorted lists with idempotent vector replay, retaining only one copy of each vector.</summary>

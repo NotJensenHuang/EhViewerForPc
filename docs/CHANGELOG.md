@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-11-14 实际索引裁剪搜索超时与缺页误分类修复
+
+- `ImageSearch/DiskInvertedIndex.cs`、`ImageSearchEngine.cs`：固定长度描述子批量解压，保留记录顺序、边界校验和既有格式；查询载入支持校验进度与取消。
+- `LocalImageSearchService.Search.cs`、`LocalImageSearchService.Reads.cs`、`ImageSearchViewModel.cs`：按冻结代复用已校验索引，串行管理查询、取消和退出；新代 / 文件变化重新校验，首次载入与检索时限分开，旧清单一次顺序匹配结果。
+- `Core/Format/PageFileParser.cs`、`GalleryPage.cs`、`LibraryCache.cs`、`LibraryScanner.cs`：整页为空计入缺页，同页非空候选和旧页数警告不误判；扫描缓存升级并自动重新生成，图片索引无需重建。
+- `AppServices.LocalDownloads.cs`、`MainViewModel*.cs`、`DownloadsViewModel.cs`、详情及版本 ViewModel：单项 / 批量补页先查磁盘，已完整更新分类并跳过；清除完成任务后仍完成库更新，补页刷新独立于普通下载自动入库开关。
+- `tests/`、双语 README、`PRODUCT.md`、`DESIGN.md`：补充空副本、完整页不请求图片、热缓存失效和真实裁剪验证；证据见 `docs/实际索引裁剪检索与补页修复-2026-11-14.md`。
+
 ## 2026-11-14 下载增量刷新、实时速度与批量补页
 
 - `MainViewModel.Downloads.cs`、`MainViewModel.cs`、`GalleryItemViewModel.cs`：落盘后仅重组受影响作品，原位维护可见集合，保持已有卡片位置、未变化封面与进度环；避免 Move 清空数据上下文造成数值归零，目录扫描及页数核对在后台完成。

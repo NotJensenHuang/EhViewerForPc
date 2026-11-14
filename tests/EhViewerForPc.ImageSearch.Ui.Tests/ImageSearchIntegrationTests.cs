@@ -25,6 +25,70 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 public sealed class ImageSearchIntegrationTests
 {
     [AvaloniaFact]
+    public async Task CompletedPagesAreRecheckedBeforeBatchOrSingleRepairAndLeaveIncompleteFilter()
+    {
+        using var scope = new Fixture(); var physical = scope.CreateCopies(named: true);
+        scope.Services.Works.Upsert(new() { WorkId = "42", Gid = 42, Token = "fixture", PageCount = 5 });
+        using var shell = new ShellViewModel(scope.Services);
+        await shell.Library.InitializeAsync();
+        shell.Library.SelectedFilter = shell.Library.FilterOptions.Single(f => f.Value == LibraryFilter.Incomplete);
+        Assert.Single(shell.Library.Galleries);
+        foreach (var copy in physical)
+        {
+            foreach (int page in new[] { 2, 4 }) File.WriteAllBytes(Path.Combine(copy.FolderPath, $"{page:D8}.png"), SyntheticImages.Create(page, 200, 280).EncodePng());
+            File.WriteAllBytes(Path.Combine(copy.FolderPath, "00000002.jpg"), []);
+        }
+        var stale = shell.Library.Galleries.Single().Info;
+        await shell.Library.FillMissingPagesCommand.ExecuteAsync(null);
+        Assert.Empty(scope.Services.Downloads.Tasks);
+        Assert.Empty(shell.Library.Galleries);
+        Assert.All(shell.Library.SnapshotAllWorks().Single().Versions, copy => Assert.False(copy.IsIncomplete));
+        Assert.False(shell.Library.CanFillMissingPages);
+        Assert.Null(await scope.Services.ContinueLocalDownloadAsync(stale, CancellationToken.None));
+        Assert.Empty(scope.Services.Downloads.Tasks);
+        await shell.Library.RefreshCommand.ExecuteAsync(null);
+        Assert.Empty(shell.Library.Galleries);
+    }
+
+    [AvaloniaFact]
+    public async Task QueriesReuseValidatedGenerationButReloadChangedFilesAndNewPublications()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None, options: new IndexBuildOptions { UseGpu = false });
+        byte[] query = File.ReadAllBytes(Path.Combine(copies[0].FolderPath, "00000001.png"));
+        var messages = new List<string>();
+        var progress = new QueryProgress(messages.Add);
+        var first = await scope.Services.ImageSearch.SearchAsync(query, null, copies, progress, CancellationToken.None);
+        Assert.NotEmpty(first);
+        Assert.Contains(messages, m => m.Contains("校验"));
+        messages.Clear();
+        var repeat = await scope.Services.ImageSearch.SearchAsync(query, null, copies, progress, CancellationToken.None);
+        Assert.Equal(first, repeat);
+        Assert.DoesNotContain(messages, m => m.Contains("校验"));
+        string current = Path.Combine(scope.Services.ImageSearch.DirectoryPath, "generations", first[0].GenerationId);
+        string index = Path.Combine(current, "backend", "invlists.bin");
+        File.SetLastWriteTimeUtc(index, File.GetLastWriteTimeUtc(index).AddSeconds(1));
+        await scope.Services.ImageSearch.SearchAsync(query, null, copies, progress, CancellationToken.None);
+        Assert.Contains(messages, m => m.Contains("校验"));
+        messages.Clear();
+        await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None, rebuild: true, options: new IndexBuildOptions { UseGpu = false });
+        var next = await scope.Services.ImageSearch.SearchAsync(query, null, copies, progress, CancellationToken.None);
+        Assert.NotEqual(first[0].GenerationId, next[0].GenerationId);
+        Assert.Contains(messages, m => m.Contains("校验"));
+        // 热缓存不能掩盖被改写的索引校验错误。
+        string nextIndex = Path.Combine(scope.Services.ImageSearch.DirectoryPath, "generations", next[0].GenerationId, "backend", "invlists.bin");
+        using (var file = new FileStream(nextIndex, FileMode.Open, FileAccess.Write)) file.WriteByte(0);
+        await Assert.ThrowsAsync<InvalidDataException>(() => scope.Services.ImageSearch.SearchAsync(query, null, copies, CancellationToken.None));
+    }
+
+    private sealed class QueryProgress(Action<string> report) : IProgress<string>
+    {
+        public void Report(string value) => report(value);
+    }
+
+    [AvaloniaFact]
     public async Task BatchRepairUsesAllCopiesReusesQueuedTasksAndReportsMissingLinks()
     {
         using var scope = new Fixture(); scope.CreateCopies(named: true);
@@ -520,7 +584,7 @@ public sealed class ImageSearchIntegrationTests
         string root = scope.Services.ImageSearch.DirectoryPath;
         byte[] image = File.ReadAllBytes(Path.Combine(copies[0].FolderPath, "00000001.png"));
         var reads = Enumerable.Range(0, 24).Select(_ => (Task)scope.Services.ImageSearch.GetStatusAsync()).ToList();
-        reads.Add(scope.Services.ImageSearch.SearchAsync(image, null, copies, CancellationToken.None));
+        reads.AddRange(Enumerable.Range(0, 3).Select(_ => (Task)scope.Services.ImageSearch.SearchAsync(image, null, copies, CancellationToken.None)));
         scope.Services.ImageSearch.Dispose();
         // 不等待调用方 continuation，文件句柄此时就必须全部释放。
         Directory.Move(root, root + "-retired");

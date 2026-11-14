@@ -31,7 +31,7 @@ public sealed partial class LocalGalleryDetailsViewModel : ObservableObject, IDi
         try
         {
             var task = await _services.ContinueLocalDownloadAsync(Item.Info, _lifetime.Token);
-            if (!_lifetime.IsCancellationRequested) DownloadStatus = "已加入补页任务 · " + task.FolderPath;
+            if (!_lifetime.IsCancellationRequested) DownloadStatus = task is null ? "页面已完整，无需补页" : "已加入补页任务 · " + task.FolderPath;
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception error) { if (!_lifetime.IsCancellationRequested) DownloadStatus = "无法继续下载：" + error.Message; }

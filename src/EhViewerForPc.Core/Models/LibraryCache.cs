@@ -2,7 +2,7 @@ namespace EhViewerForPc.Core.Models;
 
 public sealed class LibraryCache
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public string? RootPath { get; set; }
