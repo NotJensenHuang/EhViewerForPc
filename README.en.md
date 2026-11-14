@@ -78,7 +78,8 @@ Online browsing is available on first launch. To use the local library, point "L
 - 🔍 **Local Image Search (optional, off by default)**
   - Enable it under "Settings → Local Library" and save, then open it from the library toolbar and build the index manually; no index is created and no extra page scans run by default
   - Index builds and updates continue in the application background after leaving or closing the search page; reopening shows progress and allows explicit cancellation. Application exit saves processed progress; after an interruption, the next launch resumes from the last committed batch; explicit cancellation preserves progress until manually continued
-  - CPU extraction defaults to logical processor count minus 2 (1–32 workers). The index workspace scales with CPU count and the GC memory limit from 128 to 1024 MiB, with separate index and reader quotas in the shared memory service. Training and bucket assignment also use bounded parallelism, while writes retain source order (10 pages per batch). Unchanged updates skip snapshots and extraction. Grayscale and blur use SIMD with scalar fallback, including in default AOT builds
+  - The CPU index pipeline defaults to logical processor count minus 2 (1–32 workers), with a 128–1024 MiB workspace and separate reader/index quotas. On Windows, the app automatically tries ComputeSharp / DirectX 12 for FAST scores and large training Hamming-distance assignments, falling back to CPU if unavailable or failed. Grayscale and blur retain SIMD. CPU and GPU share the original extraction identity; existing indexes do not need rebuilding
+  - Page tasks and completion states are persisted in batches. New jobs resume directly from their pending queue; training/building resumes do not first fall back to a full source-page scan. Before publication, source changes are checked in a separate, checkpointed stage. Source-image reads are serialized and synchronous I/O uses Windows background priority, while decoding and computation remain bounded and parallel. Unchanged updates skip snapshots and extraction
   - Features are stored once per content hash and extraction profile in `features.db`; incremental updates share immutable index files and reclaim unused snapshots after publication. Legacy `generations` are migrated without retaining duplicate feature databases
   - Accepts a file picker, drag and drop, clipboard images and rectangle cropping; results show the matched page, source copy and original page number, and "Read from this page" overrides history restoration while the query survives navigation back
   - The backend is pure C#, reusing SkiaSharp and SQLite with no additional runtime; a separate windowless host exists for build and verification. Source galleries are never written to
@@ -250,7 +251,7 @@ logs/                    Runtime logs (no tokens or page content)
 
 The **download root** defaults to `Documents\EhViewerDownloads` (configurable) and is separate from the data directory. Imported libraries are opened with `FileAccess.Read` only and no write APIs are used; `--self-test` compares path, size and modification-time snapshots before and after.
 
-Inside the image-index directory, `features.db` stores deduplicated features and `build-job.json` stores a pending job. `generations/` contains published snapshots and work in progress; `current.json` and `current.previous.json` are primary / backup pointers to the same current snapshot after publication cleanup. Once publication completes and old queries finish, only the current snapshot remains; builds and merges still require temporary space. Recovery, updates or cleanup migrate legacy features before reclaiming unused directories. Do not manually delete an unfinished job directory.
+Inside the image-index directory, `features.db` stores deduplicated features and `build-job.json` stores a pending job and its phase. The job directory’s `build-plan.db` stores candidates, signatures and pending/completed page states, and is reclaimed after publication. `generations/` contains published snapshots and work in progress; `current.json` and `current.previous.json` are primary / backup pointers to the same current snapshot after publication cleanup. Once publication completes and old queries finish, only the current snapshot remains; builds and merges still require temporary space. Recovery, updates or cleanup migrate legacy features before reclaiming unused directories. Do not manually delete an unfinished job directory. A legacy unfinished job requires one enumeration to prepare its page plan on the first resume; extracted features remain reusable, and subsequent resumes read the persisted queue.
 
 ## 🧪 Tests and Verification
 
@@ -269,7 +270,14 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 
 For the index CPU / SIMD implementation, see the [implementation report](docs/索引CPU并行与SIMD验证-2026-11-14.md). Later concurrency changes, larger-page benchmarks and validation boundaries are in the [parallel scaling report](docs/索引并行扩容与阶段加速-2026-11-14.md).
 
-Cross-vendor GPU acceleration and large-library recovery are still at the design stage. See the [GPU and fast-recovery proposal](docs/ComputeSharp与索引快速恢复方案-2026-11-14.md) for the C# / AOT ComputeSharp feasibility probe and recovery diagnosis.
+ComputeSharp GPU computation and persistent pending-job recovery are integrated into the app. See the [implementation and validation report](docs/ComputeSharp与持久化恢复实现-2026-11-14.md) for measurements, compatibility and device coverage. A hardware DirectX 12 compute device is required; only NVIDIA was tested locally, with AMD / Intel hardware still unverified. GPU handles part of the computation and does not guarantee faster processing for every image or batch. The standalone Host CLI still defaults to CPU.
+
+Explicitly run hardware GPU regressions (hardware cases are skipped by default on CI without a device):
+
+```powershell
+$env:EHVIEWER_GPU_TESTS = '1'
+dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
+```
 
 Test projects referencing the main application must run sequentially because Avalonia XAML compilation shares output files. The backend also provides `tools/imsearch/Build-Backend.ps1` and `Test-Backend.ps1`, each verification run using its own isolated directory.
 
@@ -299,6 +307,7 @@ The online parser is covered by fixtures captured from fixed page structures; `-
 | CommunityToolkit.Mvvm | MVVM source generators | MIT |
 | Avalonia.Skia / SkiaSharp / Avalonia.HarfBuzz | Rendering, image decoding and text shaping | MIT |
 | Microsoft.Data.Sqlite | Image-search index and bookmark file I/O | MIT |
+| ComputeSharp | FAST / training compute on Windows DirectX 12 | MIT |
 | xunit / Avalonia.Headless.XUnit | Unit tests and windowless UI regression | See upstream release notes |
 
 Package versions are managed centrally in `Directory.Packages.props`; each component follows its upstream license.

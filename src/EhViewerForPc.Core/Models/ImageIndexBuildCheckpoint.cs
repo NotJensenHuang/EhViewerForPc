@@ -12,9 +12,13 @@ public sealed class ImageIndexBuildCheckpoint
     public bool ResumeOnStartup { get; set; } = true;
     public ImageIndexBuildPhase Phase { get; set; }
     public int TotalPages { get; set; }
+    public bool PlanPrepared { get; set; }
+    public bool FeaturesMigrated { get; set; }
+    public bool BackendPrepared { get; set; }
+    public bool SourcesVerified { get; set; }
     public ImageIndexGalleryCheckpoint[] Galleries { get; set; } = [];
 }
 
-public enum ImageIndexBuildPhase { Preparing, Extracting, Training, Building }
+public enum ImageIndexBuildPhase { Preparing, Extracting, Training, Building, CheckingSources }
 
 public sealed record ImageIndexGalleryCheckpoint(string SourceId, string StableId, string WorkId, string Folder);

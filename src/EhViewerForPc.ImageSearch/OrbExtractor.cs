@@ -1,5 +1,7 @@
 // Managed port of imsearch/orb.rs and ORB-SLAM3/ORBextractor.cc (GPL-3.0).
 // Original copyright and BSD notices: tools/imsearch/ORB-SLAM3-LICENSE.txt.
+using System.Buffers;
+
 namespace EhViewerForPc.ImageSearch;
 
 /// <summary>Stores a detected feature and its oriented binary descriptor.</summary>
@@ -10,13 +12,14 @@ public sealed class OrbExtractor
 {
     private readonly FeatureProfile _profile;
     private readonly bool _useSimd;
+    private readonly IImageComputeAccelerator? _accelerator;
     private static readonly (int X, int Y)[] Circle = [(0,-3),(1,-3),(2,-2),(3,-1),(3,0),(3,1),(2,2),(1,3),(0,3),(-1,3),(-2,2),(-3,1),(-3,0),(-3,-1),(-2,-2),(-1,-3)];
     private readonly record struct Corner(int X, int Y, int Score);
     private sealed record Region(int X0, int Y0, int X1, int Y1, List<Corner> Points);
     private static readonly int[] UMax = MakeUMax();
 
     /// <summary>Initializes an extractor using a validated, immutable profile.</summary>
-    public OrbExtractor(FeatureProfile? profile = null, bool useSimd = true) { _profile = profile ?? new(); _profile.Validate(); _useSimd = useSimd; }
+    public OrbExtractor(FeatureProfile? profile = null, bool useSimd = true, IImageComputeAccelerator? accelerator = null) { _profile = profile ?? new(); _profile.Validate(); _useSimd = useSimd; _accelerator = accelerator; }
 
     /// <summary>Extracts features without retaining image or pyramid buffers.</summary>
     public OrbFeature[] Extract(GrayImage input, CancellationToken cancellationToken = default)
@@ -57,24 +60,54 @@ public sealed class OrbExtractor
 
     private List<Corner> DetectCells(GrayImage image, CancellationToken ct)
     {
-        const int border = 16;
-        int width = image.Width - 2 * border, height = image.Height - 2 * border;
-        int columns = Math.Max(1, width / 35), rows = Math.Max(1, height / 35);
-        int cellWidth = (int)Math.Ceiling((double)width / columns), cellHeight = (int)Math.Ceiling((double)height / rows);
-        var points = new Dictionary<(int, int), Corner>();
-        for (int row = 0; row < rows; row++)
+        int[]? rented = _accelerator is null ? null : ArrayPool<int>.Shared.Rent(image.Pixels.Length);
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            for (int column = 0; column < columns; column++)
+            int[]? scores = rented is not null && _accelerator!.TryGetFastScores(image, _profile.MinFastThreshold, rented, ct) ? rented : null;
+            const int border = 16;
+            int width = image.Width - 2 * border, height = image.Height - 2 * border;
+            int columns = Math.Max(1, width / 35), rows = Math.Max(1, height / 35);
+            int cellWidth = (int)Math.Ceiling((double)width / columns), cellHeight = (int)Math.Ceiling((double)height / rows);
+            var points = new Dictionary<(int, int), Corner>();
+            for (int row = 0; row < rows; row++)
             {
-                int x0 = border + column * cellWidth, y0 = border + row * cellHeight;
-                int x1 = Math.Min(image.Width - border, x0 + cellWidth + 6), y1 = Math.Min(image.Height - border, y0 + cellHeight + 6);
-                var cell = Fast(image, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.FastThreshold);
-                if (cell.Count == 0) cell = Fast(image, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.MinFastThreshold);
-                foreach (var point in cell) points[(point.X, point.Y)] = point;
+                ct.ThrowIfCancellationRequested();
+                for (int column = 0; column < columns; column++)
+                {
+                    int x0 = border + column * cellWidth, y0 = border + row * cellHeight;
+                    int x1 = Math.Min(image.Width - border, x0 + cellWidth + 6), y1 = Math.Min(image.Height - border, y0 + cellHeight + 6);
+                    var cell = scores is null ? Fast(image, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.FastThreshold)
+                        : FastFromScores(image.Width, scores, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.FastThreshold);
+                    if (cell.Count == 0) cell = scores is null ? Fast(image, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.MinFastThreshold)
+                        : FastFromScores(image.Width, scores, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.MinFastThreshold);
+                    foreach (var point in cell) points[(point.X, point.Y)] = point;
+                }
             }
+            return points.Values.ToList();
         }
-        return points.Values.ToList();
+        finally { if (rented is not null) ArrayPool<int>.Shared.Return(rented); }
+    }
+
+    private static List<Corner> FastFromScores(int width, int[] scores, int x0, int y0, int x1, int y1, int threshold)
+    {
+        var output = new List<Corner>();
+        for (int y = y0; y < y1; y++)
+        for (int x = x0; x < x1; x++)
+        {
+            int score = scores[y * width + x];
+            if (score < threshold) continue;
+            bool maximum = true;
+            for (int dy = -1; dy <= 1 && maximum; dy++)
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int nx = x + dx, ny = y + dy;
+                // 原实现的非极大值抑制只比较同一 cell 的候选，不比较跨 cell 像素。
+                if ((dx != 0 || dy != 0) && nx >= x0 && nx < x1 && ny >= y0 && ny < y1 && scores[ny * width + nx] >= score)
+                { maximum = false; break; }
+            }
+            if (maximum) output.Add(new(x, y, score));
+        }
+        return output;
     }
 
     private static List<Corner> Fast(GrayImage image, int x0, int y0, int x1, int y1, int threshold)

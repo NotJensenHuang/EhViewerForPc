@@ -78,7 +78,8 @@ dotnet run --project src/EhViewerForPc -c Release
 - 🔍 **本地以图搜图（可选，默认关闭）**
   - 在「设置 → 本地库」启用并保存后，从本地库工具栏进入并手动建立索引；默认不创建索引，也不额外遍历页图
   - 建立 / 更新索引在应用后台持续执行，离开或关闭搜索页面不停止；重新进入可查看进度并主动取消；正常退出保存已处理进度，异常中断后再次启动从最近已提交批次接续，主动取消则保留进度等待手动继续
-  - CPU 提取默认按逻辑处理器数减 2 选择并行度（1–32 个 worker），索引工作区按核心数与 GC 内存上限自动选择 128–1024 MiB，由统一内存服务与阅读器分别限额；训练与分桶也使用有界并行，按原顺序批量写入（默认 10 页一批）。无变化更新跳过快照和提取；灰度与模糊使用 SIMD，保留标量回退，默认 AOT 也可用
+  - 索引 CPU 管线默认按逻辑处理器数减 2 使用 1–32 个 worker，工作区为 128–1024 MiB，并与阅读器分别限额。Windows 自动尝试 ComputeSharp / DirectX 12 加速 FAST 评分与大批量训练的哈明距离，设备不可用或失败时回退 CPU；灰度 / 模糊保留 SIMD。GPU 与 CPU 共用原提取身份，已有索引无需重建
+  - 页任务与完成状态批量持久化；新任务恢复时直接读取待办队列，训练 / 构建阶段不先回退为全量页扫描。发布前单独分块核对源目录变更，核对中断后接续已提交分块。源图读取限为一路，同步 I/O 使用 Windows 后台优先级，解码与计算保持有界并行；无变化更新跳过快照与提取
   - 特征按内容哈希与提取配置存入单份 `features.db`；增量更新共享不可变索引文件，发布后回收未使用旧快照。兼容迁移旧 `generations`，不重复保存整份特征库
   - 支持选择文件、拖入、剪贴板图片与矩形裁剪；结果展示命中页、来源副本与原始页号，「从此页阅读」会覆盖历史恢复位置，返回保留查询与结果
   - 后端为纯 C# 实现，复用 SkiaSharp 与 SQLite，无需额外运行时；独立的无窗口 Host 用于构建与验证，原图库始终只读
@@ -250,7 +251,7 @@ logs/                    运行日志（不含 token 与页面内容）
 
 **下载根目录**默认为 `文档\EhViewerDownloads`（可配置），与数据目录分离。导入的资料库仅以 `FileAccess.Read` 打开，不使用写入 API；`--self-test` 会对资料库做路径、大小与修改时间的前后快照比对。
 
-图片索引目录中，`features.db` 保存去重特征，`build-job.json` 保存未完成任务；`generations/` 保存发布快照与在途任务，`current.json` / `current.previous.json` 在发布清理后为指向同一当前快照的主 / 备指针。正常完成且旧查询结束后只保留当前快照，建库及合并时仍需临时空间。旧缓存会在恢复 / 更新或清理时先迁移特征，再回收未使用目录；不要手动删除未完成任务目录。
+图片索引目录中，`features.db` 保存去重特征，`build-job.json` 保存未完成任务与阶段，任务目录中的 `build-plan.db` 保存页候选 / 签名、待办和完成状态，发布后回收；`generations/` 保存发布快照与在途任务，`current.json` / `current.previous.json` 在发布清理后为指向同一当前快照的主 / 备指针。正常完成且旧查询结束后只保留当前快照，建库及合并时仍需临时空间。旧缓存会在恢复 / 更新或清理时先迁移特征，再回收未使用目录；不要手动删除未完成任务目录。旧版未完成任务首次接续需要一次枚举以补齐页计划，已提取特征仍可复用，后续接续读取持久化待办。
 
 ## 🧪 测试与验证
 
@@ -269,7 +270,14 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 
 索引 CPU / SIMD 的实现见[实施记录](docs/索引CPU并行与SIMD验证-2026-11-14.md)，后续并行扩容、较大页面性能对照及验证边界见[并行扩容记录](docs/索引并行扩容与阶段加速-2026-11-14.md)。
 
-跨厂商 GPU 加速与大库断点恢复仍处于方案阶段，ComputeSharp 的 C# / AOT 小原型及恢复入口诊断见[GPU 与快速恢复方案](docs/ComputeSharp与索引快速恢复方案-2026-11-14.md)。
+ComputeSharp GPU 与持久化待办恢复已接入应用，实测、兼容性与设备验证边界见[实施与验证报告](docs/ComputeSharp与持久化恢复实现-2026-11-14.md)。需要支持计算的硬件 DirectX 12 设备；本机只验证 NVIDIA，AMD / Intel 尚未实机验证。GPU 只接管部分计算，不能保证所有页图与批次都更快；独立 Host CLI 默认仍使用 CPU。
+
+显式运行硬件 GPU 回归（无设备的 CI 默认跳过硬件用例）：
+
+```powershell
+$env:EHVIEWER_GPU_TESTS = '1'
+dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
+```
 
 引用主程序的测试工程需串行运行（Avalonia XAML 编译共享输出文件）。后端另提供 `tools/imsearch/Build-Backend.ps1` 与 `Test-Backend.ps1`，每次验证使用独立的隔离目录。
 
@@ -299,6 +307,7 @@ dotnet test tests/EhViewerForPc.ImageSearch.Ui.Tests -c Debug -p:PublishAot=fals
 | CommunityToolkit.Mvvm | MVVM 源生成 | MIT |
 | Avalonia.Skia / SkiaSharp / Avalonia.HarfBuzz | 图像渲染、解码与文本整形 | MIT |
 | Microsoft.Data.Sqlite | 以图搜图索引与书签文件读写 | MIT |
+| ComputeSharp | Windows DirectX 12 的 FAST / 训练计算 | MIT |
 | xunit / Avalonia.Headless.XUnit | 单元测试与无窗口界面回归 | 见各上游发行说明 |
 
 包版本由 `Directory.Packages.props` 集中管理；各组件遵循其上游许可证。

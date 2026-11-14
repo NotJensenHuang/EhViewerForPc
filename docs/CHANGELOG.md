@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-11-14 持久化待办恢复并接入 ComputeSharp
+- `Services/LocalImageSearchService.Plan.cs`、`LocalImageSearchService.cs`、`Core/Models/ImageIndexBuildCheckpoint.cs`：将候选页、签名与完成状态保存在独立任务表，恢复直接读取待办，训练 / 构建不回退全量页扫描；源目录核对按画廊块提交接续，旧任务首次补建计划并复用既有特征。
+- `Services/LocalImageSearchService.Pipeline.cs`、`BackgroundIoScope.cs`、`ImageSearch/GrayImage.cs`：页状态与清单同一事务提交，恢复重试失败页，空计划允许重新发现后续页图；磁盘读取与 CPU 解码分离、限一路读源图，同步源 I/O 与检查点提交使用 Windows 后台优先级。
+- `ImageSearch/ComputeSharpAccelerator.cs`、`IImageComputeAccelerator.cs`、`OrbExtractor.cs`、`BinaryKModes.cs`：使用 C# shader / DirectX 12 加速 FAST 评分与大批量哈明距离，保留 cell 抑制边界、平票规则、CPU 分布 / 描述子 / HNSW 逻辑，设备失败完整回退 CPU。
+- `Services/LocalImageSearchService.Compute.cs`、`Directory.Packages.props`：由应用服务延迟持有 ComputeSharp 3.2.0，GPU 命令有界串行、等待完成后回收池化缓冲；主机工作区统一记账，任务收尾释放，CPU 前后处理仍有界并行。
+- `tests/`：覆盖恢复首批不扫描源目录、训练 / 构建阶段保持、核对分块接续、相同元数据失败重试、GPU / CPU 特征与发布文件一致、失败回退、取消和共享设备释放。
+- `README.md`、`README.en.md`、`PRODUCT.md`、`tools/imsearch/README.md`：同步 Windows GPU、兼容迁移和任务数据库说明；实测与设备覆盖边界见 ComputeSharp 实施报告。
+
 ## 2026-11-14 收敛 Windows 支持范围并记录 GPU 与恢复方案
 - `README.md`、`README.en.md`、`PRODUCT.md`、`AGENTS.md`：按最新需求仅面向 Windows 10 / 11 x64，移除其他平台支持承诺与发布命令，中英文命令同步为 PowerShell。
 - `docs/ComputeSharp与索引快速恢复方案-2026-11-14.md`：记录真实任务规模、恢复重枚举复现、纯 C# ComputeSharp AOT 小原型与分阶段实施方案；GPU 方案尚未接入主程序，未宣称实际建库提速。

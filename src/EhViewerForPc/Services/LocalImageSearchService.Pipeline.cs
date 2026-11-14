@@ -11,7 +11,7 @@ namespace EhViewerForPc.Services;
 public sealed record LocalIndexBuildStatistics(int Workers, int BatchSize, long WorkingSetLimit, long PeakWorkspaceBytes,
     int DecodedPages, int ExtractedPages, int CommittedBatches, double DecodeMilliseconds, double ExtractMilliseconds,
     double WriteMilliseconds, bool Unchanged = false, double HashMilliseconds = 0, double TrainingMilliseconds = 0, double IndexMilliseconds = 0,
-    int PeakParallelPages = 0, double MemoryWaitMilliseconds = 0);
+    int PeakParallelPages = 0, double MemoryWaitMilliseconds = 0, string Accelerator = "CPU", long GpuScoreDispatches = 0, long GpuAssignmentDispatches = 0);
 
 public sealed partial class LocalImageSearchService
 {
@@ -43,9 +43,9 @@ public sealed partial class LocalImageSearchService
         internal readonly OrbExtractor Extractor;
         internal readonly SharedFeatureCache? Cache;
         internal readonly string ProfileId;
-        internal ExtractionWorker(FeatureProfile profile, string root, bool rebuild, bool useSimd)
+        internal ExtractionWorker(FeatureProfile profile, string root, bool rebuild, bool useSimd, IImageComputeAccelerator? accelerator)
         {
-            Extractor = new(profile, useSimd);
+            Extractor = new(profile, useSimd, accelerator);
             ProfileId = profile.Id;
             if (!rebuild) Cache = new SharedFeatureCache(SharedFeaturesPath(root), writable: false);
         }
@@ -86,7 +86,7 @@ public sealed partial class LocalImageSearchService
     }
 
     private IEnumerable<IndexPageWork> PreparePageWork(string generation, string? previous,
-        List<(ImageSearchGallery Gallery, GalleryPage Page)> pages, Dictionary<string, LibrarySource> sources, CancellationToken token)
+        IEnumerable<(ImageSearchGallery Gallery, GalleryPage Page)> pages, Dictionary<string, LibrarySource> sources, CancellationToken token)
     {
         using var saved = new ManifestLookup(generation);
         using var old = previous is null ? null : new ManifestLookup(previous);
@@ -108,13 +108,13 @@ public sealed partial class LocalImageSearchService
     }
 
     private static LocalImageSearchStatus? TryReuseUnchangedIndex(string previous,
-        List<(ImageSearchGallery Gallery, GalleryPage Page)> pages, Dictionary<string, LibrarySource> sources, CancellationToken token)
+        IEnumerable<(ImageSearchGallery Gallery, GalleryPage Page)> pages, int total, Dictionary<string, LibrarySource> sources, CancellationToken token)
     {
         using (var manifest = OpenManifest(previous, writable: false))
         using (var command = manifest.CreateCommand())
         {
             command.CommandText = "SELECT count(*) FROM member";
-            if ((long)command.ExecuteScalar()! != pages.Count) return null;
+            if ((long)command.ExecuteScalar()! != total) return null;
         }
         using var lookup = new ManifestLookup(previous);
         int indexed = 0, skipped = 0;
@@ -133,8 +133,8 @@ public sealed partial class LocalImageSearchService
             if (match is not { } cached) return null;
             if (cached.State == "indexed") indexed++; else skipped++;
         }
-        return new($"索引无变化 · 已索引 {indexed:N0} 页 · 复用 {pages.Count:N0} 页", pages.Count, pages.Count,
-            indexed, skipped, Reused: pages.Count);
+        return new($"索引无变化 · 已索引 {indexed:N0} 页 · 复用 {total:N0} 页", total, total,
+            indexed, skipped, Reused: total);
     }
 
     private static bool IsUnchangedCandidate(IndexCandidate candidate)
@@ -147,7 +147,7 @@ public sealed partial class LocalImageSearchService
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return false; }
     }
 
-    private static async ValueTask<IndexPageResult> ExtractPageAsync(ExtractionWorker worker, IndexPageWork work,
+    private async ValueTask<IndexPageResult> ExtractPageAsync(ExtractionWorker worker, IndexPageWork work,
         FeatureProfile profile, IndexBuildOptions options, ImageWorkBudget budget, ExtractionCounters counters, CancellationToken token)
     {
         foreach (var candidate in work.Candidates)
@@ -164,7 +164,9 @@ public sealed partial class LocalImageSearchService
                 using (await budget.ReserveAsync(Math.Min(52L * 1024 * 1024, file.Length + 2L * 1024 * 1024), token).ConfigureAwait(false))
                 {
                     Interlocked.Add(ref counters.MemoryWaitTicks, Stopwatch.GetTimestamp() - waitStarted);
-                    estimate = GrayImage.EstimateWorkingSet(file.FullName, profile);
+                    await _sourceIo.WaitAsync(token).ConfigureAwait(false);
+                    try { using var backgroundIo = BackgroundIoScope.Enter(); estimate = GrayImage.EstimateWorkingSet(file.FullName, profile, gpuScores: _jobAccelerator is not null); }
+                    finally { _sourceIo.Release(); }
                 }
                 waitStarted = Stopwatch.GetTimestamp();
                 using var memory = await budget.ReserveAsync(estimate, token).ConfigureAwait(false);
@@ -173,7 +175,11 @@ public sealed partial class LocalImageSearchService
                 try
                 {
                     long started = Stopwatch.GetTimestamp();
-                    var image = GrayImage.ReadFile(file.FullName, useSimd: options.UseSimd);
+                    byte[] encoded;
+                    await _sourceIo.WaitAsync(token).ConfigureAwait(false);
+                    try { using var backgroundIo = BackgroundIoScope.Enter(); encoded = GrayImage.ReadEncodedFile(file.FullName); }
+                    finally { _sourceIo.Release(); }
+                    var image = GrayImage.Decode(encoded, useSimd: options.UseSimd);
                     Interlocked.Add(ref counters.DecodeTicks, Stopwatch.GetTimestamp() - started);
                     started = Stopwatch.GetTimestamp();
                     byte[] canonical = image.EncodePng();
@@ -207,18 +213,18 @@ public sealed partial class LocalImageSearchService
     }
 
     private async Task<ExtractionResult> ExtractPagesAsync(string root, string generation, string? previous, ImageDatabase backend,
-        SqliteConnection manifest, List<(ImageSearchGallery Gallery, GalleryPage Page)> pages, Dictionary<string, LibrarySource> sources,
+        SqliteConnection manifest, int total, Dictionary<string, LibrarySource> sources,
         bool rebuild, IndexBuildOptions options, IProgress<LocalImageSearchStatus>? progress, CancellationToken token)
     {
         long overhead = (16L + 2 * options.Workers) * 1024 * 1024;
-        long workspace = Math.Min(options.WorkingSetBytes, ImageMemoryBudget.IndexLimitBytes - overhead);
+        long workspace = Math.Min(options.WorkingSetBytes, ImageMemoryBudget.IndexLimitBytes - overhead - (_jobAccelerator is null ? 0 : GpuHostReservation));
         long reserved = workspace + overhead;
         IDisposable? reservation;
         bool waiting = false;
         while (!ImageMemoryBudget.TryReserveIndex(reserved, out reservation))
         {
             token.ThrowIfCancellationRequested();
-            if (!waiting) { progress?.Report(new("正在等待可用图像内存…", Total: pages.Count)); waiting = true; }
+            if (!waiting) { progress?.Report(new("正在等待可用图像内存…", Total: total)); waiting = true; }
             await Task.Delay(50, token).ConfigureAwait(false);
         }
         using var imageMemory = reservation;
@@ -235,12 +241,15 @@ public sealed partial class LocalImageSearchService
         delete.Parameters.Add("$source", SqliteType.Text); delete.Parameters.Add("$stable", SqliteType.Text); delete.Parameters.Add("$page", SqliteType.Integer);
         delete.Prepare();
         SqliteTransaction? transaction = null;
-        int processed = 0, indexed = 0, skipped = 0, failed = 0, reused = 0, buffered = 0, commits = 0;
+        var restored = ReadPlanResult(manifest);
+        int processed = restored.Processed, indexed = restored.Indexed, skipped = restored.Skipped,
+            failed = restored.Failed, reused = restored.Reused, buffered = 0, commits = 0;
         bool needsBuild = false, writeFailed = false;
         long writeTicks = 0;
         void Flush()
         {
             if (buffered == 0) return;
+            using var backgroundIo = BackgroundIoScope.Enter();
             long start = Stopwatch.GetTimestamp();
             writer.Commit();
             transaction?.Commit();
@@ -255,6 +264,7 @@ public sealed partial class LocalImageSearchService
             try
             {
                 long start = Stopwatch.GetTimestamp();
+                bool committedPage = false;
                 if (result.Candidate is not { } candidate || !IsUnchangedCandidate(candidate))
                 {
                     transaction ??= manifest.BeginTransaction(); delete.Transaction = transaction;
@@ -266,6 +276,7 @@ public sealed partial class LocalImageSearchService
                 }
                 else
                 {
+                    committedPage = true;
                     if (result.Descriptors is { } descriptors)
                         needsBuild |= writer.Add(result.Alias, result.Hash!, descriptors).Status == "added";
                     if (!candidate.Saved)
@@ -284,20 +295,31 @@ public sealed partial class LocalImageSearchService
                     if (result.State == "indexed") indexed++; else skipped++;
                     if (result.Reused) reused++;
                 }
+                transaction ??= manifest.BeginTransaction();
+                using (var finish = manifest.CreateCommand())
+                {
+                    finish.Transaction = transaction;
+                    finish.CommandText = "UPDATE build.plan_page SET done=$done WHERE source=$source AND stable=$stable AND page=$page";
+                    finish.Parameters.AddWithValue("$done", committedPage ? 1 : 2);
+                    finish.Parameters.AddWithValue("$source", result.Gallery.SourceId);
+                    finish.Parameters.AddWithValue("$stable", result.Gallery.StableId);
+                    finish.Parameters.AddWithValue("$page", result.Page);
+                    finish.ExecuteNonQuery();
+                }
                 processed++;
                 buffered++;
                 writeTicks += Stopwatch.GetTimestamp() - start;
-                if (buffered >= options.BatchSize || processed % 10 == 0 || processed == pages.Count) Flush();
-                if (processed % 10 == 0 || processed == pages.Count)
-                    progress?.Report(new($"正在提取页图 {processed:N0} / {pages.Count:N0} · {options.Workers} 并行", processed, pages.Count, indexed, skipped, failed, reused));
+                if (buffered >= options.BatchSize || processed % 10 == 0 || processed == total) Flush();
+                if (processed % 10 == 0 || processed == total)
+                    progress?.Report(new($"正在提取页图 {processed:N0} / {total:N0} · {options.Workers} 并行 · {(_jobAccelerator?.IsAvailable == true ? "GPU" : "CPU")}", processed, total, indexed, skipped, failed, reused));
             }
             catch { writeFailed = true; throw; }
         }
         try
         {
-            progress?.Report(new($"正在提取页图…（{options.Workers} 并行，{workspace / 1024 / 1024} MiB 工作区）", Total: pages.Count));
-            await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, pages, sources, token),
-                () => new ExtractionWorker(backend.Profile, root, rebuild, options.UseSimd),
+            progress?.Report(new($"正在提取页图…（{_jobAccelerator?.DeviceName ?? "CPU"}，{options.Workers} 并行）", Processed: processed, Total: total, Indexed: indexed, Skipped: skipped, Failed: failed, Reused: reused));
+            await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, ReadPlannedPages(generation, sources, pendingOnly: true, token), sources, token),
+                () => new ExtractionWorker(backend.Profile, root, rebuild, options.UseSimd, _jobAccelerator),
                 (worker, work, ct) => ExtractPageAsync(worker, work, backend.Profile, options, budget, counters, ct),
                 CommitPage, options.Workers, options.Workers * 2, token).ConfigureAwait(false);
             Flush();

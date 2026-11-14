@@ -160,6 +160,8 @@ public sealed partial class LocalImageSearchService : IDisposable
         }
         finally
         {
+            try { FinishComputeJob(); }
+            catch (Exception error) { _services.Log.Warn("GPU working set cleanup: " + error.GetType().Name); }
             lock (_jobGate) _activeJob = null;
             job?.Dispose();
             _writer.Release();
@@ -221,10 +223,9 @@ public sealed partial class LocalImageSearchService : IDisposable
             };
         }
         var job = checkpoint!;
-        // 准备阶段尚无已完成页；中断的快照留待清理，在新目录重新准备，避免修改不完整快照。
-        if (job.Phase == ImageIndexBuildPhase.Preparing && Directory.Exists(Path.Combine(root, "generations", job.GenerationId, "backend")))
-            job.GenerationId = Guid.NewGuid().ToString("N");
-        job.Galleries = galleries.Select(g => new ImageIndexGalleryCheckpoint(g.SourceId, g.StableId, g.WorkId, g.Folder)).ToArray();
+        var requestedGalleries = galleries.Select(g => new ImageIndexGalleryCheckpoint(g.SourceId, g.StableId, g.WorkId, g.Folder)).ToArray();
+        if (resumed && !job.Galleries.SequenceEqual(requestedGalleries)) job.PlanPrepared = false;
+        job.Galleries = requestedGalleries;
         job.ResumeOnStartup = Volatile.Read(ref _resumeAfterInterruption) != 0;
         SaveBuildCheckpoint(root, job);
         string id = job.GenerationId, generation = Path.Combine(root, "generations", id);
@@ -238,85 +239,155 @@ public sealed partial class LocalImageSearchService : IDisposable
         bool published = false;
         try
         {
-            progress?.Report(new("正在整理共享特征库…"));
+            Volatile.Write(ref _planStatistics, new(0, 0, job.Phase));
             RemoveInterruptedTemporaryFiles(generation, token);
-            MigrateOwnedFeatureCaches(root, allSources, token);
-            progress?.Report(new(resumed ? "正在恢复索引，核对已完成页面…" : "正在枚举本地页图…"));
-            var pages = new List<(ImageSearchGallery Gallery, GalleryPage Page)>();
-            foreach (var gallery in galleries.DistinctBy(g => (g.SourceId, g.StableId)))
+            if (!job.FeaturesMigrated)
             {
-                token.ThrowIfCancellationRequested();
-                if (!selected.TryGetValue(gallery.SourceId, out var source) || !IsSafeSourcePath(gallery.Folder, source.RootPath)) continue;
-                var scan = PageFileParser.Scan(gallery.Folder, null, out string? error);
-                if (error is not null) throw new IOException("图库目录暂时无法读取，当前索引已保留。");
-                pages.AddRange(scan.Pages.Select(p => (gallery, p)));
+                progress?.Report(new("正在整理共享特征库…"));
+                MigrateOwnedFeatureCaches(root, allSources, token);
+                job.FeaturesMigrated = true;
+                SaveBuildCheckpoint(root, job);
             }
-            if (pages.Count == 0) throw new InvalidOperationException("选中的本地库中没有可索引页图。");
             var previous = job.Rebuild ? null : current;
             string? previousDirectory = previous is null ? null : Path.Combine(root, "generations", previous.GenerationId);
-            using var previousManifest = previousDirectory is null ? null : OpenManifest(previousDirectory, writable: false);
-            if (!resumed && previousDirectory is not null && TryReuseUnchangedIndex(previousDirectory, pages, selected, token) is { } unchanged)
+            using var manifest = OpenManifest(generation, writable: true);
+            Execute(manifest, "CREATE TABLE IF NOT EXISTS member(alias TEXT NOT NULL,source_id TEXT NOT NULL,stable_id TEXT NOT NULL,page INTEGER NOT NULL,path TEXT NOT NULL,length INTEGER NOT NULL,mtime INTEGER NOT NULL,state TEXT NOT NULL,PRIMARY KEY(source_id,stable_id,page)); CREATE INDEX IF NOT EXISTS member_state ON member(state); PRAGMA user_version=1;");
+            AttachBuildPlan(manifest, generation);
+            progress?.Report(new(resumed ? "正在读取未完成索引任务…" : "正在枚举本地页图…"));
+            if (!job.PlanPrepared)
+            {
+                ReconcilePlanMembership(manifest, galleries, token);
+                PrepareBuildPlan(manifest, galleries, selected, verify: false, token,
+                    (done, total) => progress?.Report(new($"正在枚举本地页图 {done:N0} / {total:N0}")));
+                Execute(manifest, "DELETE FROM member WHERE NOT EXISTS(SELECT 1 FROM build.plan_page p WHERE p.source=member.source_id AND p.stable=member.stable_id AND p.page=member.page)");
+                job.PlanPrepared = true;
+                SaveBuildCheckpoint(root, job);
+            }
+            job.TotalPages = PlanCount(manifest);
+            if (job.TotalPages == 0)
+            {
+                // 空目录以后可能重新出现页图；下次继续需要重新发现，不能固定在空计划。
+                Execute(manifest, "DELETE FROM build.plan_gallery");
+                job.PlanPrepared = false;
+                throw new InvalidOperationException("选中的本地库中没有可索引页图。");
+            }
+            if (!resumed && previousDirectory is not null && TryReuseUnchangedIndex(previousDirectory,
+                ReadPlannedPages(generation, selected, pendingOnly: false, token), job.TotalPages, selected, token) is { } unchanged)
             {
                 token.ThrowIfCancellationRequested();
-                published = true;
+                manifest.Close(); published = true;
                 CompleteBuildCheckpoint(root);
-                previousManifest?.Dispose();
                 try { PruneUnusedGenerations(root); }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException)
                 { _services.Log.Warn("Image index cleanup: " + error.GetType().Name); }
                 Volatile.Write(ref _statistics, new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Unchanged: true));
                 return unchanged;
             }
-            if (previousDirectory is not null && job.Phase == ImageIndexBuildPhase.Preparing)
+            string backendPath = Path.Combine(generation, "backend");
+            if (!job.BackendPrepared && job.Phase != ImageIndexBuildPhase.Preparing && File.Exists(Path.Combine(backendPath, "images.db")))
+                job.BackendPrepared = true; // 兼容旧版：离开准备阶段前已完成后端快照。
+            if (!job.BackendPrepared)
             {
-                progress?.Report(new("正在准备增量索引快照…"));
-                using var original = new ImageDatabase(Path.Combine(previousDirectory, "backend"));
-                original.CopySnapshotTo(Path.Combine(generation, "backend"), token, shareImmutableFiles: true);
+                if (Directory.Exists(backendPath))
+                {
+                    // 只重置本应用标记目录中的未完成快照，保留独立的页任务计划。
+                    string target = Path.GetFullPath(backendPath);
+                    if (!PathIdentity.IsDescendantOf(target, Path.GetFullPath(generation)) || ContainsReparsePoint(target))
+                        throw new IOException("未完成索引快照路径无效。");
+                    Directory.Delete(target, recursive: true);
+                }
+                if (previousDirectory is not null)
+                {
+                    progress?.Report(new("正在准备增量索引快照…"));
+                    using var original = new ImageDatabase(Path.Combine(previousDirectory, "backend"));
+                    original.CopySnapshotTo(backendPath, token, shareImmutableFiles: true);
+                }
             }
-            using var backend = new ImageDatabase(Path.Combine(generation, "backend"), writable: true);
+            using var backend = new ImageDatabase(backendPath, writable: true);
             backend.UseSharedFeatureCache(SharedFeaturesPath(root));
-            using var manifest = OpenManifest(generation, writable: true);
-            Execute(manifest, "CREATE TABLE IF NOT EXISTS member(alias TEXT NOT NULL,source_id TEXT NOT NULL,stable_id TEXT NOT NULL,page INTEGER NOT NULL,path TEXT NOT NULL,length INTEGER NOT NULL,mtime INTEGER NOT NULL,state TEXT NOT NULL,PRIMARY KEY(source_id,stable_id,page)); PRAGMA user_version=1;");
-            job.Phase = ImageIndexBuildPhase.Extracting;
-            job.TotalPages = pages.Count;
-            SaveBuildCheckpoint(root, job);
-            var extraction = await ExtractPagesAsync(root, generation, previousDirectory, backend, manifest, pages, selected,
-                job.Rebuild, options, progress, token).ConfigureAwait(false);
-            int processed = extraction.Processed, indexed = extraction.Indexed, skipped = extraction.Skipped,
-                failed = extraction.Failed, reused = extraction.Reused;
-            bool needsBuild = previous is null || extraction.NeedsBuild;
-            var seenPages = new HashSet<(string Source, string Stable, int Page)>();
-            foreach (var (gallery, page) in pages) seenPages.Add((gallery.SourceId, gallery.StableId, page.Number));
-            RemoveUnscannedCheckpointPages(manifest, seenPages);
-            var liveAliases = new HashSet<string>(StringComparer.Ordinal);
-            using (var aliases = manifest.CreateCommand())
+            job.BackendPrepared = true;
+            if (resumed) Execute(manifest, "UPDATE build.plan_page SET done=0 WHERE done=2");
+            if (resumed && (job.Phase != ImageIndexBuildPhase.CheckingSources || job.SourcesVerified))
             {
-                aliases.CommandText = "SELECT DISTINCT alias FROM member";
-                using var reader = aliases.ExecuteReader();
-                while (reader.Read()) liveAliases.Add(reader.GetString(0));
+                job.SourcesVerified = false;
+                Execute(manifest, "UPDATE build.plan_gallery SET verified=0");
             }
-            needsBuild |= backend.RetainAliases(liveAliases) > 0;
-            if (previous is null && !File.Exists(Path.Combine(generation, "backend", "quantizer.bin")))
+            SaveBuildCheckpoint(root, job);
+            var extraction = ReadPlanResult(manifest);
+            Volatile.Write(ref _planStatistics, PlanStatistics! with { RestoredPages = extraction.Reused });
+            Volatile.Write(ref _statistics, new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0));
+            PrepareComputeJob(options, token);
+            bool needsBuild = previous is null && !File.Exists(Path.Combine(backendPath, "invlists.bin"));
+            bool resumeBuild = resumed && job.Phase == ImageIndexBuildPhase.Building;
+            void VerifySources()
             {
-                job.Phase = ImageIndexBuildPhase.Training;
+                job.Phase = ImageIndexBuildPhase.CheckingSources;
                 SaveBuildCheckpoint(root, job);
-                int trainingDescriptors = backend.ReadCached(limit: 3000).Sum(c => c.Descriptors.Length);
-                if (trainingDescriptors < 30) throw new InvalidOperationException("有效特征不足，原有索引已保留。");
-                int centers = Math.Min(4096, Math.Max(1, Math.Min(trainingDescriptors / 30, (int)(4 * Math.Sqrt(trainingDescriptors)))));
-                progress?.Report(new("正在训练图片索引…", processed, pages.Count, indexed, skipped, failed));
-                long started = System.Diagnostics.Stopwatch.GetTimestamp();
-                ImageSearchEngine.Train(backend, centers, 3000, cancellationToken: token, workers: options.Workers);
-                if (BuildStatistics is { } statistics)
-                    Volatile.Write(ref _statistics, statistics with { TrainingMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds });
+                progress?.Report(new("正在核对源目录变更…", extraction.Processed, job.TotalPages, extraction.Indexed, extraction.Skipped, extraction.Failed, extraction.Reused));
+                PrepareBuildPlan(manifest, galleries, selected, verify: true, token,
+                    (done, total) => progress?.Report(new($"正在核对源目录变更 {done:N0} / {total:N0}", extraction.Processed, job.TotalPages, extraction.Indexed, extraction.Skipped, extraction.Failed, extraction.Reused)));
+                job.TotalPages = PlanCount(manifest);
+                job.SourcesVerified = true;
+                SaveBuildCheckpoint(root, job);
             }
-            job.Phase = ImageIndexBuildPhase.Building;
-            SaveBuildCheckpoint(root, job);
-            progress?.Report(new("正在构建图片索引…", processed, pages.Count, indexed, skipped, failed));
-            long buildStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-            if (needsBuild || resumed || backend.HasPendingImages)
-                ImageSearchEngine.Build(backend, cancellationToken: token, allowedImageIds: backend.AliasedImageIds(), workers: options.Workers);
-            if (BuildStatistics is { } builtStatistics)
-                Volatile.Write(ref _statistics, builtStatistics with { IndexMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(buildStarted).TotalMilliseconds });
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                if (PlanCount(manifest, "done=0") > 0)
+                {
+                    job.Phase = ImageIndexBuildPhase.Extracting;
+                    SaveBuildCheckpoint(root, job);
+                    extraction = await ExtractPagesAsync(root, generation, previousDirectory, backend, manifest, job.TotalPages, selected,
+                        job.Rebuild, options, progress, token).ConfigureAwait(false);
+                    needsBuild |= extraction.NeedsBuild;
+                }
+                else
+                {
+                    var counts = ReadPlanResult(manifest);
+                    extraction = counts with { Reused = Math.Min(extraction.Reused, counts.Indexed + counts.Skipped) };
+                }
+                var liveAliases = new HashSet<string>(StringComparer.Ordinal);
+                using (var aliases = manifest.CreateCommand())
+                {
+                    aliases.CommandText = "SELECT DISTINCT alias FROM member";
+                    using var reader = aliases.ExecuteReader();
+                    while (reader.Read()) liveAliases.Add(reader.GetString(0));
+                }
+                needsBuild |= backend.RetainAliases(liveAliases) > 0;
+                if (!File.Exists(Path.Combine(backendPath, "quantizer.bin")))
+                {
+                    int trainingDescriptors = backend.ReadCached(limit: 3000).Sum(c => c.Descriptors.Length);
+                    if (trainingDescriptors < 30)
+                    {
+                        if (!job.SourcesVerified) { VerifySources(); continue; }
+                        job.Phase = ImageIndexBuildPhase.Training;
+                        SaveBuildCheckpoint(root, job);
+                        throw new InvalidOperationException("有效特征不足，原有索引已保留。");
+                    }
+                    job.Phase = ImageIndexBuildPhase.Training;
+                    SaveBuildCheckpoint(root, job);
+                    int centers = Math.Min(4096, Math.Max(1, Math.Min(trainingDescriptors / 30, (int)(4 * Math.Sqrt(trainingDescriptors)))));
+                    progress?.Report(new("正在训练图片索引…", extraction.Processed, job.TotalPages, extraction.Indexed, extraction.Skipped, extraction.Failed));
+                    long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                    ImageSearchEngine.Train(backend, centers, 3000, cancellationToken: token, workers: options.Workers, accelerator: _jobAccelerator);
+                    if (BuildStatistics is { } statistics)
+                        Volatile.Write(ref _statistics, statistics with { TrainingMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds });
+                }
+                if (needsBuild || resumeBuild || backend.HasPendingImages)
+                {
+                    job.Phase = ImageIndexBuildPhase.Building;
+                    SaveBuildCheckpoint(root, job);
+                    progress?.Report(new("正在构建图片索引…", extraction.Processed, job.TotalPages, extraction.Indexed, extraction.Skipped, extraction.Failed));
+                    long started = System.Diagnostics.Stopwatch.GetTimestamp();
+                    ImageSearchEngine.Build(backend, cancellationToken: token, allowedImageIds: backend.AliasedImageIds(), workers: options.Workers);
+                    if (BuildStatistics is { } statistics)
+                        Volatile.Write(ref _statistics, statistics with { IndexMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds });
+                    needsBuild = resumeBuild = false;
+                }
+                if (!job.SourcesVerified) { VerifySources(); continue; }
+                break;
+            }
+            int processed = extraction.Processed, indexed = extraction.Indexed, skipped = extraction.Skipped, failed = extraction.Failed, reused = extraction.Reused;
             var validated = new ImageSearchEngine(backend, allowLinkedPublication: true);
             if (validated.IndexedImages == 0) throw new InvalidDataException("索引中没有可搜索图片。");
             manifest.Close();
@@ -331,11 +402,12 @@ public sealed partial class LocalImageSearchService : IDisposable
                 if (File.Exists(pointerPath)) File.Replace(next, pointerPath, Path.Combine(root, "current.previous.json")); else File.Move(next, pointerPath);
             }
             published = true;
-            previousManifest?.Dispose();
             CompleteBuildCheckpoint(root);
+            try { File.Delete(Path.Combine(generation, "build-plan.db")); }
+            catch (IOException error) { _services.Log.Warn("Completed index plan cleanup: " + error.GetType().Name); }
             try { PruneUnusedGenerations(root); }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or SqliteException) { _services.Log.Warn("Image index cleanup: " + error.GetType().Name); }
-            return new($"已索引 {indexed:N0} / {pages.Count:N0} 页 · 复用 {reused:N0} · 低特征 {skipped:N0} · 失败 {failed:N0}", processed, pages.Count, indexed, skipped, failed, reused);
+            return new($"已索引 {indexed:N0} / {job.TotalPages:N0} 页 · 复用 {reused:N0} · 低特征 {skipped:N0} · 失败 {failed:N0}", processed, job.TotalPages, indexed, skipped, failed, reused);
         }
         finally
         {
@@ -553,6 +625,8 @@ public sealed partial class LocalImageSearchService : IDisposable
         _writer.Release();
         lock (_readGate)
             while (_pendingReads != 0) Monitor.Wait(_readGate);
+        try { _gpu?.Dispose(); }
+        finally { _sourceIo.Dispose(); }
     }
 }
 

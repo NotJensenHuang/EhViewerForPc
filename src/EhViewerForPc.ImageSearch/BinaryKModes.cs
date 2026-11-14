@@ -13,16 +13,16 @@ public static class BinaryKModes
 {
     /// <summary>Trains a deterministic binary KModes model.</summary>
     public static KModesResult Train(BinaryDescriptor[] data, int centers, int iterations = 20, bool plusPlus = false,
-        bool twoLevel = true, int seed = 20261112, CancellationToken cancellationToken = default, int workers = 1)
+        bool twoLevel = true, int seed = 20261112, CancellationToken cancellationToken = default, int workers = 1, IImageComputeAccelerator? accelerator = null)
     {
         if (centers < 1 || centers > data.Length || iterations is < 1 or > 1000 || workers is < 1 or > IndexBuildOptions.MaximumWorkers)
             throw new ArgumentOutOfRangeException(nameof(centers));
-        if (!twoLevel) return Single(data, centers, iterations, plusPlus, new Random(seed), cancellationToken, workers);
+        if (!twoLevel) return Single(data, centers, iterations, plusPlus, new Random(seed), cancellationToken, workers, accelerator);
         if (data.Length < 30L * centers) throw new InvalidOperationException("InsufficientFeatures: two-level training requires D >= 30*K.");
         int firstCount = (int)Math.Sqrt(centers);
         var rng = new Random(seed);
-        var first = Single(data.Take(Math.Min(data.Length, firstCount * 1024)).ToArray(), firstCount, iterations, plusPlus, rng, cancellationToken, workers);
-        var assignment = Assign(data, first.Centers, cancellationToken, workers);
+        var first = Single(data.Take(Math.Min(data.Length, firstCount * 1024)).ToArray(), firstCount, iterations, plusPlus, rng, cancellationToken, workers, accelerator);
+        var assignment = Assign(data, first.Centers, cancellationToken, workers, accelerator);
         var groups = Enumerable.Range(0, firstCount).Select(_ => new List<BinaryDescriptor>()).ToArray();
         for (int i = 0; i < data.Length; i++) groups[assignment.Ids[i]].Add(data[i]);
         var output = new List<BinaryDescriptor>(centers);
@@ -35,14 +35,14 @@ public static class BinaryKModes
             int target = (int)(cumulative * centers / data.Length);
             int k = target - allocated; allocated = target;
             if (k == 0) continue;
-            var trained = Single(group.ToArray(), k, iterations, plusPlus, rng, cancellationToken, workers);
+            var trained = Single(group.ToArray(), k, iterations, plusPlus, rng, cancellationToken, workers, accelerator);
             output.AddRange(trained.Centers); frequencies.AddRange(trained.Frequencies); distance += trained.Distance;
         }
         if (output.Count != centers) throw new InvalidOperationException("Invalid two-level allocation.");
         return new(output.ToArray(), frequencies.ToArray(), distance);
     }
 
-    private static KModesResult Single(BinaryDescriptor[] data, int k, int iterations, bool plusPlus, Random random, CancellationToken ct, int workers)
+    private static KModesResult Single(BinaryDescriptor[] data, int k, int iterations, bool plusPlus, Random random, CancellationToken ct, int workers, IImageComputeAccelerator? accelerator)
     {
         var centers = new BinaryDescriptor[k];
         if (plusPlus)
@@ -68,7 +68,7 @@ public static class BinaryKModes
         long previous = long.MaxValue;
         for (int iteration = 0; iteration < iterations; iteration++)
         {
-            var assigned = Assign(data, centers, ct, workers);
+            var assigned = Assign(data, centers, ct, workers, accelerator);
             if (assigned.Distance >= previous) break;
             previous = assigned.Distance;
             int[] counts = new int[k];
@@ -87,7 +87,7 @@ public static class BinaryKModes
                 Parallel.For(0, k, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = ct },
                     () => new int[256], (c, _, bits) => { UpdateCenter(c, bits, data, ordered, starts, counts, centers, ct); return bits; }, _ => { });
         }
-        var final = Assign(data, centers, ct, workers);
+        var final = Assign(data, centers, ct, workers, accelerator);
         var histogram = new int[k]; foreach (int id in final.Ids) histogram[id]++;
         return new(centers, histogram, final.Distance);
     }
@@ -116,9 +116,12 @@ public static class BinaryKModes
         centers[c] = new(words[0], words[1], words[2], words[3]);
     }
 
-    private static (int[] Ids, long Distance) Assign(BinaryDescriptor[] data, BinaryDescriptor[] centers, CancellationToken ct, int workers)
+    private static (int[] Ids, long Distance) Assign(BinaryDescriptor[] data, BinaryDescriptor[] centers, CancellationToken ct, int workers, IImageComputeAccelerator? accelerator)
     {
         var ids = new int[data.Length];
+        // 小分组的上传 / fence 开销高于有界 CPU 分配，仅将百万级比较交给 GPU。
+        if ((long)data.Length * centers.Length >= 1024 * 1024 && accelerator is not null && accelerator.TryAssign(data, centers, ids, out long gpuDistance, ct))
+            return (ids, gpuDistance);
         int partitions = Math.Min(workers, Math.Max(1, data.Length / 1024));
         var distances = new long[partitions];
         void AssignRange(int partition)

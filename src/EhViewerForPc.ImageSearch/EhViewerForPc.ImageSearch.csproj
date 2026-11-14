@@ -5,8 +5,10 @@
     <Nullable>enable</Nullable>
     <Platforms>AnyCPU;x64</Platforms>
     <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="ComputeSharp" />
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
   </ItemGroup>

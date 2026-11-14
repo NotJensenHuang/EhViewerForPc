@@ -12,6 +12,8 @@ public sealed record IndexBuildOptions
     public int Workers { get; init; } = DefaultWorkers;
     public int BatchSize { get; init; } = 10;
     public long WorkingSetBytes { get; init; } = DefaultWorkingSetBytes;
+    /// <summary>自动尝试兼容 GPU；设备不可用或计算失败时保留原 CPU 路径。</summary>
+    public bool UseGpu { get; init; } = true;
     public bool UseSimd { get; init; } = true;
 
     /// <summary>依据 GC 可用内存上限缩小工作区；未取得快照时保守回退，不把它当作实时空闲内存。</summary>

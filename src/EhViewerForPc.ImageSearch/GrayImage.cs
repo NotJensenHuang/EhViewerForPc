@@ -33,7 +33,7 @@ public sealed class GrayImage
     public byte[] Pixels { get; }
 
     /// <summary>只读解析尺寸，在像素分配前估算解码、规范化和特征工作区。</summary>
-    public static long EstimateWorkingSet(string path, FeatureProfile profile)
+    public static long EstimateWorkingSet(string path, FeatureProfile profile, bool gpuScores = false)
     {
         using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         long length = file.Length;
@@ -53,7 +53,7 @@ public sealed class GrayImage
         double extraction = Math.Min(1, Math.Max((double)profile.MaxWidth / normalizedWidth, (double)profile.MaxHeight / normalizedHeight));
         long orbPixels = (long)Math.Max(1, (int)Math.Round(normalizedWidth * extraction)) * Math.Max(1, (int)Math.Round(normalizedHeight * extraction));
         // 包含金字塔、池化横向 float 缓冲的桶容量、角点 / 区域集合及规范化编码。
-        return Math.Max(decoding, 8L * 1024 * 1024 + 3L * normalizedWidth * normalizedHeight + 40 * orbPixels);
+        return Math.Max(decoding, 8L * 1024 * 1024 + 3L * normalizedWidth * normalizedHeight + (gpuScores ? 48 : 40) * orbPixels);
     }
 
     /// <summary>Decodes a bounded first frame, applies EXIF orientation and an optional crop, and normalizes its size.</summary>
@@ -107,19 +107,29 @@ public sealed class GrayImage
         return scale >= 1 ? image : image.Resize(Math.Max(1, (int)Math.Round(image.Width * scale)), Math.Max(1, (int)Math.Round(image.Height * scale)));
     }
 
-    /// <summary>Reads an image without changing its source, and rejects a concurrent replacement.</summary>
-    public static GrayImage ReadFile(string path, ImageCrop? crop = null, bool useSimd = true)
+    /// <summary>只读获取编码数据，允许调用方将磁盘读取与 CPU 解码分别调度。</summary>
+    public static byte[] ReadEncodedFile(string path)
     {
         var before = new FileInfo(path);
         long length = before.Length, stamp = before.LastWriteTimeUtc.Ticks;
-        if (length > 50 * 1024 * 1024) throw new InvalidDataException("InputTooLarge.");
+        if (length is < 1 or > 50 * 1024 * 1024) throw new InvalidDataException("InputTooLarge.");
         byte[] bytes;
         using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             if (file.Length != length) throw new IOException("SourceChanging.");
             bytes = new byte[checked((int)length)]; file.ReadExactly(bytes);
         }
-        var image = Decode(bytes, crop, useSimd);
+        before.Refresh();
+        if (!before.Exists || before.Length != length || before.LastWriteTimeUtc.Ticks != stamp) throw new IOException("SourceChanging.");
+        return bytes;
+    }
+
+    /// <summary>Reads an image without changing its source, and rejects a concurrent replacement.</summary>
+    public static GrayImage ReadFile(string path, ImageCrop? crop = null, bool useSimd = true)
+    {
+        var before = new FileInfo(path);
+        long length = before.Length, stamp = before.LastWriteTimeUtc.Ticks;
+        var image = Decode(ReadEncodedFile(path), crop, useSimd);
         before.Refresh();
         if (!before.Exists || before.Length != length || before.LastWriteTimeUtc.Ticks != stamp) throw new IOException("SourceChanging.");
         return image;

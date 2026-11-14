@@ -35,7 +35,7 @@ public sealed class ImageSearchEngine
 
     /// <summary>Trains and saves a new quantizer, refusing to invalidate existing index segments.</summary>
     public static KModesResult Train(ImageDatabase database, int centers, int images, int iterations = 20, bool plusPlus = false,
-        bool twoLevel = true, int seed = 20261112, CancellationToken cancellationToken = default, int trainingVectorLimit = 4_000_000, int workers = 1)
+        bool twoLevel = true, int seed = 20261112, CancellationToken cancellationToken = default, int trainingVectorLimit = 4_000_000, int workers = 1, IImageComputeAccelerator? accelerator = null)
     {
         database.RequireWriter();
         if (images < 1 || trainingVectorLimit is < 1 or > 64_000_000 || workers is < 1 or > IndexBuildOptions.MaximumWorkers)
@@ -51,7 +51,7 @@ public sealed class ImageSearchEngine
                 throw new InvalidOperationException("TrainingBudgetExceeded: reduce training images or train in a separately budgeted job.");
             data.AddRange(image.Descriptors);
         }
-        var trained = BinaryKModes.Train(data.ToArray(), centers, iterations, plusPlus, twoLevel, seed, cancellationToken, workers);
+        var trained = BinaryKModes.Train(data.ToArray(), centers, iterations, plusPlus, twoLevel, seed, cancellationToken, workers, accelerator);
         var graph = new BinaryHnsw(seed: seed);
         foreach (var center in trained.Centers) graph.Add(center, cancellationToken);
         graph.Save(Path.Combine(database.DirectoryPath, "quantizer.bin"), database.Profile.Id);

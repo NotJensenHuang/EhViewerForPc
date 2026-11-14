@@ -57,24 +57,6 @@ public sealed partial class LocalImageSearchService
         }
     }
 
-    private static void RemoveUnscannedCheckpointPages(SqliteConnection manifest, HashSet<(string Source, string Stable, int Page)> scanned)
-    {
-        var stale = new List<(string Source, string Stable, int Page)>();
-        using (var command = manifest.CreateCommand())
-        {
-            command.CommandText = "SELECT source_id,stable_id,page FROM member";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                var key = (reader.GetString(0), reader.GetString(1), reader.GetInt32(2));
-                if (!scanned.Contains(key)) stale.Add(key);
-            }
-        }
-        foreach (var key in stale)
-            Execute(manifest, "DELETE FROM member WHERE source_id=$source AND stable_id=$stable AND page=$page",
-                ("$source", key.Source), ("$stable", key.Stable), ("$page", key.Page));
-    }
-
     private static int CountCheckpointPages(string root, ImageIndexBuildCheckpoint job)
     {
         string generation = Path.Combine(root, "generations", job.GenerationId);

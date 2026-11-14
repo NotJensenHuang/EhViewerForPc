@@ -25,6 +25,180 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 public sealed class ImageSearchIntegrationTests
 {
     [AvaloniaFact]
+    public async Task CpuAndAutomaticGpuPublishIdenticalIndexesAndReleaseMemory()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var galleries = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        await scope.Services.ImageSearch.BuildAsync(galleries, null, CancellationToken.None, options: new IndexBuildOptions { UseGpu = false });
+        byte[][] before = IndexFiles();
+        long memory = ImageMemoryBudget.UsedBytes;
+        await scope.Services.ImageSearch.BuildAsync(galleries, null, CancellationToken.None, rebuild: true);
+        var after = IndexFiles();
+        Assert.Equal(before[0], after[0]); Assert.Equal(before[1], after[1]);
+        Assert.Equal(memory, ImageMemoryBudget.UsedBytes);
+        var hits = await scope.Services.ImageSearch.SearchAsync(File.ReadAllBytes(Path.Combine(copies[0].FolderPath, "00000001.png")), null, copies, CancellationToken.None);
+        Assert.NotEmpty(hits);
+        byte[][] IndexFiles()
+        {
+            string generation = Assert.Single(Directory.GetDirectories(Path.Combine(scope.Services.ImageSearch.DirectoryPath, "generations")));
+            return new[] { "quantizer.bin", "invlists.bin" }.Select(name => File.ReadAllBytes(Path.Combine(generation, "backend", name))).ToArray();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task RecoveryReportsCommittedPagesBeforeStartingOnlyTheRemainingQueue()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        foreach (int page in new[] { 2, 4, 6, 7, 8 })
+            File.WriteAllBytes(Path.Combine(copies[0].FolderPath, $"{page:D8}.png"), SyntheticImages.Create(42 + page, 200, 280).EncodePng());
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        using var interrupted = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(snapshot,
+            new InlineIndexProgress(p => { if (p.Processed == 10) interrupted.Cancel(); }), interrupted.Token));
+        using var canceled = new CancellationTokenSource();
+        LocalImageSearchStatus? first = null;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(snapshot,
+            new InlineIndexProgress(p =>
+            {
+                if (!p.Message.StartsWith("正在提取页图…", StringComparison.Ordinal)) return;
+                Assert.Equal(0, scope.Services.ImageSearch.PlanStatistics!.EnumeratedGalleries);
+                first = p; canceled.Cancel();
+            }), canceled.Token));
+        Assert.NotNull(first);
+        Assert.Equal(10, first.Processed);
+        Assert.Equal(10, first.Reused);
+    }
+
+    [AvaloniaFact]
+    public async Task ResumeRetriesFailedPagesEvenWhenTheirMetadataDidNotChange()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        foreach (int page in new[] { 2, 4, 6, 7, 8 })
+            File.WriteAllBytes(Path.Combine(copies[0].FolderPath, $"{page:D8}.png"), SyntheticImages.Create(42 + page, 200, 280).EncodePng());
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        string path = Path.Combine(copies[0].FolderPath, "00000001.png");
+        byte[] valid = File.ReadAllBytes(path);
+        DateTime mtime = File.GetLastWriteTimeUtc(path);
+        File.WriteAllBytes(path, new byte[valid.Length]);
+        File.SetLastWriteTimeUtc(path, mtime);
+        var galleries = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        using var interrupted = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(galleries,
+            new InlineIndexProgress(p => { if (p.Processed == 10) interrupted.Cancel(); }), interrupted.Token));
+        File.WriteAllBytes(path, valid);
+        File.SetLastWriteTimeUtc(path, mtime);
+        var result = await scope.Services.ImageSearch.BuildAsync(galleries, null, CancellationToken.None);
+        Assert.Equal(11, result.Indexed);
+        Assert.Equal(0, result.Failed);
+    }
+
+    [AvaloniaFact]
+    public async Task ManualContinueReconcilesGalleryMembershipWithoutScanningRetainedGalleries()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var galleries = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        using var interrupted = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(galleries,
+            new InlineIndexProgress(p => { if (p.Message == "正在训练图片索引…") interrupted.Cancel(); }), interrupted.Token));
+        var result = await scope.Services.ImageSearch.BuildAsync(galleries.Take(1).ToArray(), new InlineIndexProgress(p =>
+        {
+            if (p.Message == "正在训练图片索引…") Assert.Equal(0, scope.Services.ImageSearch.PlanStatistics!.EnumeratedGalleries);
+        }), CancellationToken.None);
+        Assert.Equal(3, result.Total);
+        Assert.Equal(3, result.Indexed);
+    }
+
+    [AvaloniaFact]
+    public async Task EmptyPlanCanContinueAfterPagesBecomeAvailable()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var gallery = copies[0];
+        foreach (string file in Directory.GetFiles(gallery.FolderPath)) File.Delete(file);
+        var snapshot = new[] { new ImageSearchGallery(gallery.SourceId, gallery.StableId, gallery.WorkId, gallery.FolderPath) };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None));
+        File.WriteAllBytes(Path.Combine(gallery.FolderPath, "00000001.png"), SyntheticImages.Create(42, 200, 280).EncodePng());
+        var result = await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None);
+        Assert.Equal(1, result.Indexed);
+        Assert.False(scope.Services.ImageSearch.IsBuilding);
+    }
+
+    [AvaloniaFact]
+    public async Task TrainingResumeDoesNotReturnToPageExtraction()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        using var interrupted = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(snapshot,
+            new InlineIndexProgress(p => { if (p.Message == "正在训练图片索引…") interrupted.Cancel(); }), interrupted.Token));
+        bool extracted = false;
+        var result = await scope.Services.ImageSearch.BuildAsync(snapshot, new InlineIndexProgress(p =>
+            extracted |= p.Message.StartsWith("正在提取页图", StringComparison.Ordinal)), CancellationToken.None);
+        Assert.False(extracted);
+        Assert.Equal(6, result.Indexed);
+    }
+
+    [AvaloniaFact]
+    public async Task InterruptedSourceVerificationContinuesAfterItsCommittedGalleryChunk()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var first = copies[0];
+        var galleries = Enumerable.Range(0, 35).Select(i => new ImageSearchGallery(first.SourceId, "chunk-" + i, "work-" + i, first.FolderPath)).ToArray();
+        using var interrupted = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(galleries,
+            new InlineIndexProgress(p => { if (p.Message == "正在核对源目录变更 16 / 35") interrupted.Cancel(); }), interrupted.Token));
+        Assert.Equal(ImageIndexBuildPhase.CheckingSources, ReadCheckpoint(scope).Phase);
+        var result = await scope.Services.ImageSearch.BuildAsync(galleries, new InlineIndexProgress(p =>
+        {
+            Assert.False(p.Message.StartsWith("正在提取页图", StringComparison.Ordinal));
+            Assert.NotEqual("正在训练图片索引…", p.Message);
+            Assert.NotEqual("正在构建图片索引…", p.Message);
+        }), CancellationToken.None);
+        Assert.Equal(19, scope.Services.ImageSearch.PlanStatistics!.EnumeratedGalleries);
+        Assert.Equal(105, result.Indexed);
+    }
+
+    private static ImageIndexBuildCheckpoint ReadCheckpoint(Fixture scope) => JsonFileStore.LoadOrDefault(
+        Path.Combine(scope.Services.ImageSearch.DirectoryPath, "build-job.json"), StorageJsonContext.Default.ImageIndexBuildCheckpoint,
+        () => new ImageIndexBuildCheckpoint(), out _);
+
+    [AvaloniaFact]
+    public async Task BuildingResumeKeepsItsQuantizerAndStartsBeforeSourceVerification()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var galleries = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        using var interrupted = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(galleries,
+            new InlineIndexProgress(p => { if (p.Message == "正在构建图片索引…") interrupted.Cancel(); }), interrupted.Token));
+        string root = scope.Services.ImageSearch.DirectoryPath;
+        string generation = Assert.Single(Directory.GetDirectories(Path.Combine(root, "generations")));
+        byte[] quantizer = File.ReadAllBytes(Path.Combine(generation, "backend", "quantizer.bin"));
+        bool built = false, verified = false;
+        var result = await scope.Services.ImageSearch.BuildAsync(galleries, new InlineIndexProgress(p =>
+        {
+            Assert.False(p.Message.StartsWith("正在提取页图", StringComparison.Ordinal));
+            Assert.NotEqual("正在训练图片索引…", p.Message);
+            if (p.Message == "正在构建图片索引…")
+            {
+                Assert.False(verified);
+                Assert.Equal(0, scope.Services.ImageSearch.PlanStatistics!.EnumeratedGalleries);
+                built = true;
+            }
+            verified |= p.Message == "正在核对源目录变更…";
+        }), CancellationToken.None);
+        Assert.True(built); Assert.True(verified);
+        Assert.Equal(ImageIndexBuildPhase.Building, scope.Services.ImageSearch.PlanStatistics!.ResumedPhase);
+        Assert.Equal(quantizer, File.ReadAllBytes(Path.Combine(generation, "backend", "quantizer.bin")));
+        Assert.Equal(6, result.Indexed);
+    }
+
+    [AvaloniaFact]
     public async Task ParallelBuildReportsCorruptPageAndCanContinueWithRemainingPages()
     {
         using var scope = new Fixture(); var copies = scope.CreateCopies();
@@ -52,7 +226,7 @@ public sealed class ImageSearchIntegrationTests
         var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
         long before = ImageMemoryBudget.UsedBytes;
         var built = await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None,
-            options: new IndexBuildOptions { Workers = workers, BatchSize = 5, WorkingSetBytes = 64L * 1024 * 1024 });
+            options: new IndexBuildOptions { Workers = workers, BatchSize = 5, WorkingSetBytes = 64L * 1024 * 1024, UseGpu = false });
         Assert.Equal(6, built.Indexed);
         var statistics = scope.Services.ImageSearch.BuildStatistics!;
         Assert.Equal(workers, statistics.Workers);
