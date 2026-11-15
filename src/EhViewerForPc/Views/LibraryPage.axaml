@@ -54,6 +54,7 @@
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
+      <controls:LocalCopyDeletionView DataContext="{Binding Deletion}" />
       <Expander Header="查看补页失败明细" IsVisible="{Binding HasRepairFailures}" HorizontalAlignment="Stretch">
         <ScrollViewer MaxHeight="140" HorizontalScrollBarVisibility="Disabled">
           <SelectableTextBlock Text="{Binding RepairFailureDetails}" TextWrapping="Wrap" />

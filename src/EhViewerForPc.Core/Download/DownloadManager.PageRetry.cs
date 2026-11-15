@@ -31,15 +31,18 @@ public sealed partial class DownloadManager
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
+                if (IsLocalCopyDeleting(folder)) throw new IOException("该副本正在删除。");
                 if (_relocating) throw new IOException("下载目录正在迁移，请稍后重试。");
                 if (!_pageRetries.TryGetValue(folder, out operation!))
                 {
                     var tasks = _tasks.Where(t => PathIdentity.Comparer.Equals(t.FolderPath, folder)).ToArray();
-                    if (tasks.Any(t => t.Gid != details.Gid)) throw new IOException("原目录与下载任务的画廊不一致。");
-                    var writers = tasks
-                        .Select(t => _running.GetValueOrDefault(t.Id)).OfType<Task>().ToArray();
-                    ImageQuality quality = tasks.FirstOrDefault()?.Quality ?? _settings.ImageQuality;
-                    int width = tasks.FirstOrDefault()?.ResampledWidth ?? _settings.ResampledWidth;
+                    var active = _running.Values.Where(writer => FoldersOverlap(writer.Download.FolderPath, folder)).ToArray();
+                    if (tasks.Any(t => t.Gid != details.Gid) || active.Any(writer => writer.Download.Gid != details.Gid))
+                        throw new IOException("原目录与下载任务的画廊不一致。");
+                    var writers = active.Select(writer => writer.Work).ToArray();
+                    var original = tasks.FirstOrDefault() ?? active.FirstOrDefault().Download;
+                    ImageQuality quality = original?.Quality ?? _settings.ImageQuality;
+                    int width = original?.ResampledWidth ?? _settings.ResampledWidth;
                     operation = new(pageNumber, Task.Run(() => RunPageRetryAsync(details, pageNumber, folder, sourceRoot, existingPath, quality, width, writers)));
                     _pageRetries.Add(folder, operation);
                 }

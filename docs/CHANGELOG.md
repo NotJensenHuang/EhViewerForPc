@@ -1,5 +1,14 @@
 # 变更记录
 
+## 2026-11-15 批量复用索引清单与本地副本删除
+
+- `LocalImageSearchService.Reuse.cs`、`Pipeline.cs`：最多 4096 条窗口批量匹配旧清单，只将新增、变更和失败页送入提取；失败元数据不再每 10 页强制刷盘，进度显示失败数。
+- `LocalImageSearchService.Plan.cs`：目录枚举核对大小、mtime 与链接属性，发布前仍处理变更与删除，保留现有索引和未完成任务兼容。
+- `DownloadsViewModel.cs`：完成任务只在「已完成」归档展示，处理迟到进度及页面重建。
+- `DownloadManager.LocalDelete.cs`、`AppServices.LocalDelete.cs`、`WindowsRecycleBin.cs`：选定副本回收前阻止新写入并等待下载收尾；同步队列、缓存与本地匹配表，保留其他版本及作品级状态；已移出队列的活跃写入仍受跟踪，最后一个副本删除后显示空状态。
+- `LocalCopyDeletionView*`、`LibraryPage*`、`VersionsPage*`：卡片右键及版本行新增删除入口，共用完整路径行内二次确认，失败保留重试。
+- 验证与测量边界见 `docs/索引批量复用与本地删除-2026-11-15.md`。
+
 ## 2026-11-15 补齐托盘平台注册、设置入口与增量复用批次
 
 - `DesktopTrayController.cs`：托盘加入 Application 的 `TrayIcons` 才启动原生创建，释放时移除自身；失去注册后不再隐藏主窗。

@@ -27,6 +27,10 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
     public VersionsViewModel(GalleryItemViewModel item, AppServices services, Action<GalleryInfo>? copyRefreshed = null)
     {
         _services = services;
+        Deletion = new(services);
+        Deletion.PropertyChanged += OnDeletionChanged;
+        _services.LocalCopyDeleted += OnLocalCopyDeleted;
+        _services.LocalDeletionPreparing += PrepareLocalDeletionAsync;
         _copyRefreshed = copyRefreshed;
         Item = item;
         Title = item.Title;
@@ -40,6 +44,19 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
     }
 
     public GalleryItemViewModel Item { get; }
+    public LocalCopyDeletionViewModel Deletion { get; }
+    private async Task PrepareLocalDeletionAsync(CancellationToken token)
+    {
+        while (!_disposed && IsChecking) await Task.Delay(20, token);
+        token.ThrowIfCancellationRequested();
+    }
+    private void OnLocalCopyDeleted(object? sender, string folder)
+    {
+        if (_disposed) return;
+        Versions = Versions.Where(v => !PathIdentity.Comparer.Equals(v.FolderPath, folder) && !PathIdentity.IsDescendantOf(v.FolderPath, folder)).ToArray();
+        OnPropertyChanged(nameof(Versions));
+        RefreshHints();
+    }
     public string Title { get; }
     public string GidText { get; }
     public string SummaryText { get; private set; }
@@ -50,11 +67,17 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
     public GalleryInfo? ReadVersion { get; set; }
     public GalleryInfo? DefaultVersion { get; set; }
 
-    public bool CanCheckPages => !_disposed && !IsChecking;
+    public bool CanCheckPages => !_disposed && !IsChecking && !Deletion.IsBusy;
+    private void OnDeletionChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(LocalCopyDeletionViewModel.IsBusy)) return;
+        foreach (var version in Versions) version.CanCheckPages = CanCheckPages;
+        CheckPagesCommand.NotifyCanExecuteChanged();
+    }
 
     partial void OnIsCheckingChanged(bool value)
     {
-        foreach (var version in Versions) version.CanCheckPages = !value && !_disposed;
+        foreach (var version in Versions) version.CanCheckPages = CanCheckPages;
     }
 
     [RelayCommand(CanExecute = nameof(CanCheckPages))]
@@ -129,7 +152,7 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
             var row = previous.FirstOrDefault(v => PathIdentity.Comparer.Equals(v.FolderPath, info.FolderPath))
                 ?? new GalleryVersionViewModel(info, false);
             row.ApplyInfo(info, PathIdentity.Comparer.Equals(Item.FolderPath, info.FolderPath));
-            row.CanCheckPages = !IsChecking;
+            row.CanCheckPages = CanCheckPages;
             return row;
         }).ToArray();
         if (!previous.SequenceEqual(Versions)) OnPropertyChanged(nameof(Versions));
@@ -138,8 +161,17 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
 
     private void RefreshHints()
     {
-        SummaryText = $"{Versions.Count} 个版本 · {Item.SourceCount} 个数据源";
+        SummaryText = $"{Versions.Count} 个版本 · {Versions.Select(v => v.Info.SourceId).Distinct(StringComparer.Ordinal).Count()} 个数据源";
         DefaultHint = "默认打开：" + Item.SourceName + (Item.IsPrimaryVersionPreferred ? "（已手动指定）" : "（自动选择）");
+        if (Versions.Count == 0)
+        {
+            DefaultHint = "本地副本已删除";
+            DifferHint = string.Empty;
+            OnPropertyChanged(nameof(SummaryText));
+            OnPropertyChanged(nameof(DefaultHint));
+            OnPropertyChanged(nameof(DifferHint));
+            return;
+        }
         int best = Versions.Max(v => v.Info.PageCount), least = Versions.Min(v => v.Info.PageCount);
         DifferHint = best == least ? "各版本页数一致；阅读进度与收藏按作品共享。" : $"页数不一致：最多 {best} 页，最少 {least} 页；阅读进度按作品共享。";
         OnPropertyChanged(nameof(SummaryText));
@@ -166,6 +198,10 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
         if (_disposed) return;
         _disposed = true;
         Item.PropertyChanged -= OnItemChanged;
+        _services.LocalCopyDeleted -= OnLocalCopyDeleted;
+        _services.LocalDeletionPreparing -= PrepareLocalDeletionAsync;
+        Deletion.PropertyChanged -= OnDeletionChanged;
+        Deletion.Dispose();
         _lifetime.Cancel();
         _lifetime.Dispose();
     }

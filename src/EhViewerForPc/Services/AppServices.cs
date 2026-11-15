@@ -18,8 +18,9 @@ public sealed partial class AppServices : IDisposable
     private readonly object _settingsSaveGate = new();
     private long _settingsRevision;
 
-    private AppServices(AppPaths paths, AppSettings settings, Func<AppSettings, EhClient>? createOnline = null)
+    private AppServices(AppPaths paths, AppSettings settings, Func<AppSettings, EhClient>? createOnline = null, Action<string>? recycleDirectory = null)
     {
+        _recycleDirectory = recycleDirectory ?? WindowsRecycleBin.MoveDirectory;
         Paths = paths;
         Settings = settings;
         Log = new LogService(paths.LogDirectory);
@@ -78,15 +79,15 @@ public sealed partial class AppServices : IDisposable
     public static AppServices Initialize(AppPaths? paths = null)
         => InitializeCore(paths ?? new AppPaths(), null);
 
-    internal static AppServices Initialize(AppPaths paths, Func<AppSettings, EhClient> createOnline)
-        => InitializeCore(paths, createOnline);
+    internal static AppServices Initialize(AppPaths paths, Func<AppSettings, EhClient> createOnline, Action<string>? recycleDirectory = null)
+        => InitializeCore(paths, createOnline, recycleDirectory);
 
-    private static AppServices InitializeCore(AppPaths paths, Func<AppSettings, EhClient>? createOnline)
+    private static AppServices InitializeCore(AppPaths paths, Func<AppSettings, EhClient>? createOnline, Action<string>? recycleDirectory = null)
     {
         paths.EnsureCreated();
         var store = new SettingsStore(paths);
         AppSettings settings = store.Load(out string? error);
-        var services = new AppServices(paths, settings, createOnline);
+        var services = new AppServices(paths, settings, createOnline, recycleDirectory);
         if (error is not null)
         {
             services.Log.Warn("Settings load failed: " + error);

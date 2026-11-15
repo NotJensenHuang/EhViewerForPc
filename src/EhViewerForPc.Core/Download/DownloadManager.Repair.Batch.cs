@@ -84,6 +84,7 @@ public sealed partial class DownloadManager
 
     private (DownloadTask Task, RepairUndo? Undo) PrepareRepairLocked(DownloadRepairRequest request, Dictionary<string, DownloadTask>? byFolder = null)
     {
+        if (IsLocalCopyDeleting(request.Folder)) throw new IOException("该副本正在删除。");
         var details = request.Details;
         var task = byFolder is null ? _tasks.FirstOrDefault(t => PathIdentity.Comparer.Equals(t.FolderPath, request.Folder)) : byFolder.GetValueOrDefault(request.Folder);
         bool added = task is null;

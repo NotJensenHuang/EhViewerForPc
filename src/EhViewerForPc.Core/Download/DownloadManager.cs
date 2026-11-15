@@ -26,7 +26,7 @@ public sealed partial class DownloadManager : IDisposable
     private readonly List<DownloadTask> _tasks = [];
     private readonly List<DownloadArchiveEntry> _archive = [];
     private readonly Dictionary<string, CancellationTokenSource> _cancellations = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Task> _running = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (DownloadTask Download, Task Work)> _running = new(StringComparer.Ordinal);
     private readonly HashSet<string> _deleteAfterCancel = new(StringComparer.Ordinal);
 
     private bool _disposed;
@@ -119,7 +119,7 @@ public sealed partial class DownloadManager : IDisposable
     {
         lock (_gate)
         {
-            if (_relocating) throw new IOException("下载目录正在迁移，请完成后再下载归档");
+            if (_relocating || _localDeletes.Count != 0) throw new IOException("目录操作进行中，请完成后再下载归档");
             _archiveWriters++;
             return new ArchiveWriteLease(this);
         }
@@ -142,10 +142,11 @@ public sealed partial class DownloadManager : IDisposable
         {
             if (_relocating) throw new IOException("下载目录正在迁移");
             if (_archiveWriters != 0) throw new IOException("有归档正在下载，请等待归档完成后再迁移目录");
+            if (_localDeletes.Count != 0) throw new IOException("本地副本正在删除，请完成后再迁移目录。");
             if (_pageRetries.Count != 0) throw new IOException("正在重新下载阅读页，请等待完成后再迁移目录");
             _relocating = true;
             resume = _tasks.Where(t => t.State is DownloadState.Running or DownloadState.Pending).Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
-            workers = _running.Values.ToArray();
+            workers = _running.Values.Select(writer => writer.Work).ToArray();
             foreach (var cts in _cancellations.Values) cts.Cancel();
         }
         RaiseChanged();
@@ -333,6 +334,7 @@ public sealed partial class DownloadManager : IDisposable
             DownloadTask? existing = _tasks.FirstOrDefault(t => t.Gid == details.Gid);
             if (existing is not null)
             {
+                if (IsLocalCopyDeleting(existing.FolderPath)) throw new IOException("该副本正在删除，无法加入下载。");
                 if (existing.State is DownloadState.Completed or DownloadState.Running or DownloadState.Pending)
                 {
                     return existing;
@@ -362,6 +364,7 @@ public sealed partial class DownloadManager : IDisposable
 
                 task.DestinationRoot = RootPath;
                 task.FolderPath = BuildFolderPath(task, RootPath);
+                if (IsLocalCopyDeleting(task.FolderPath)) throw new IOException("该副本正在删除，无法加入下载。");
                 _tasks.Insert(0, task);
                 changed = true;
             }
@@ -398,6 +401,7 @@ public sealed partial class DownloadManager : IDisposable
     {
         lock (_gate)
         {
+            if (IsLocalCopyDeleting(task.FolderPath)) throw new IOException("该副本正在删除，无法继续下载。");
             if (!_tasks.Contains(task) || task.State is DownloadState.Completed or DownloadState.Running or DownloadState.Pending) return;
             task.State = DownloadState.Pending;
             task.Message = "等待中";
@@ -418,6 +422,7 @@ public sealed partial class DownloadManager : IDisposable
         bool deleteNow;
         lock (_gate)
         {
+            if (deleteFiles && IsLocalCopyDeleting(task.FolderPath)) throw new IOException("该副本正在删除。");
             if (deleteFiles && _pageRetries.ContainsKey(task.FolderPath)) throw new IOException("正在重新下载阅读页，请等待写入完成后再删除。");
             if (_relocating) return;
             _tasks.Remove(task);
@@ -518,6 +523,15 @@ public sealed partial class DownloadManager : IDisposable
 
     // ------------------------------------------------------------------ pump
 
+    private bool CanStartDownloadLocked(DownloadTask task)
+    {
+        if (task.State != DownloadState.Pending || _cancellations.ContainsKey(task.Id) ||
+            _pageRetries.ContainsKey(task.FolderPath) || IsLocalCopyDeleting(task.FolderPath)) return false;
+        foreach (var writer in _running.Values)
+            if (FoldersOverlap(writer.Download.FolderPath, task.FolderPath)) return false;
+        return true;
+    }
+
     private void SchedulePump()
     {
         bool started = false;
@@ -529,7 +543,7 @@ public sealed partial class DownloadManager : IDisposable
             int limit = Math.Clamp(_settings.Download.MaxConcurrentTasks, 1, 8);
             while (_activeTasks < limit)
             {
-                DownloadTask? next = _tasks.FirstOrDefault(t => t.State == DownloadState.Pending && !_cancellations.ContainsKey(t.Id) && !_pageRetries.ContainsKey(t.FolderPath));
+                DownloadTask? next = _tasks.FirstOrDefault(CanStartDownloadLocked);
                 if (next is null) break;
                 var cts = new CancellationTokenSource();
                 _cancellations.Add(next.Id, cts);
@@ -537,7 +551,7 @@ public sealed partial class DownloadManager : IDisposable
                 next.State = DownloadState.Running;
                 next.Message = "准备中";
                 // Reserve both the slot and cancellation before the worker can run.
-                _running[next.Id] = Task.Run(() => RunTaskAsync(next, cts));
+                _running[next.Id] = (next, Task.Run(() => RunTaskAsync(next, cts)));
                 started = true;
             }
         }
@@ -1023,7 +1037,7 @@ public sealed partial class DownloadManager : IDisposable
 
         // Workers own their cancellation sources until they have released all I/O.
         Task[] pending;
-        lock (_gate) pending = _running.Values.Concat(_pageRetries.Values.Select(p => p.Work)).Append(_repairProgressTask).ToArray();
+        lock (_gate) pending = _running.Values.Select(writer => writer.Work).Concat(_pageRetries.Values.Select(p => p.Work)).Concat(_localDeletes.Values.Select(d => d.Task)).Append(_repairProgressTask).ToArray();
         try { Task.WhenAll(pending).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
         finally
         {

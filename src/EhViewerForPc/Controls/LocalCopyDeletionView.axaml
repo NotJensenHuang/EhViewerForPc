@@ -1,0 +1,16 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:EhViewerForPc.ViewModels"
+             x:Class="EhViewerForPc.Controls.LocalCopyDeletionView" x:DataType="vm:LocalCopyDeletionViewModel" IsVisible="{Binding IsVisible}">
+  <Border BorderBrush="{DynamicResource AppWarningBrush}" BorderThickness="1" CornerRadius="6" Padding="12">
+    <StackPanel Spacing="8">
+      <SelectableTextBlock Text="删除此本地副本？" FontWeight="SemiBold" IsVisible="{Binding HasConfirmation}" />
+      <ScrollViewer MaxHeight="76" IsVisible="{Binding HasConfirmation}"><SelectableTextBlock Text="{Binding FolderPath}" TextWrapping="Wrap" AutomationProperties.AutomationId="LocalDelete.Path" /></ScrollViewer>
+      <SelectableTextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+      <WrapPanel Classes="actions" IsVisible="{Binding HasConfirmation}">
+        <Button Content="移入回收站" Command="{Binding ConfirmCommand}" AutomationProperties.AutomationId="LocalDelete.Confirm" />
+        <Button Content="取消" Command="{Binding CancelCommand}" AutomationProperties.AutomationId="LocalDelete.Cancel" />
+      </WrapPanel>
+    </StackPanel>
+  </Border>
+</UserControl>

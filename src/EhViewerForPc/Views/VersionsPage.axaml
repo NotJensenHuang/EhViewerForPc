@@ -19,6 +19,7 @@
                                Margin="0,0,10,0" />
           <SelectableTextBlock Text="{Binding SummaryText}" Classes="caption" />
         </WrapPanel>
+        <controls:LocalCopyDeletionView DataContext="{Binding Deletion}" />
         <Button Content="检测所有版本缺页" Command="{Binding CheckPagesCommand}" HorizontalAlignment="Left"
                 AutomationProperties.AutomationId="Versions.CheckAll" />
       </StackPanel>
@@ -63,6 +64,8 @@
                   <Button Content="继续下载" FontSize="12" Padding="10,3" MinHeight="26" Tag="{Binding}"
                           IsVisible="{Binding IsIncomplete}" IsEnabled="{Binding CanContinueDownload}"
                           Click="OnContinueDownload" ToolTip.Tip="{Binding FolderPath}" AutomationProperties.AutomationId="Versions.ContinueDownload" />
+                  <Button Content="删除此副本…" FontSize="12" Padding="10,3" MinHeight="26" Tag="{Binding}"
+                          Click="OnDeleteCopy" IsEnabled="{Binding CanCheckPages}" AutomationProperties.AutomationId="Versions.DeleteCopy" />
                   <Button Content="检测缺页" FontSize="12" Padding="10,3" MinHeight="26" Tag="{Binding}"
                           IsEnabled="{Binding CanCheckPages}" Click="OnCheckPages" AutomationProperties.AutomationId="Versions.CheckPages" />
                 </WrapPanel>

@@ -69,5 +69,11 @@ public partial class VersionsPage : DocumentPage
         }
     }
 
+    private void OnDeleteCopy(object? sender, RoutedEventArgs e)
+    {
+        if (_viewModel is not null && sender is Button { Tag: GalleryVersionViewModel version })
+            _viewModel.Deletion.Request(version.Info);
+    }
+
     private void OnClose(object? sender, RoutedEventArgs e) => Close();
 }

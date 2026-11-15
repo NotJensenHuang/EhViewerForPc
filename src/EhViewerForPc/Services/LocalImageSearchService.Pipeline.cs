@@ -11,7 +11,12 @@ namespace EhViewerForPc.Services;
 public sealed record LocalIndexBuildStatistics(int Workers, int BatchSize, long WorkingSetLimit, long PeakWorkspaceBytes,
     int DecodedPages, int ExtractedPages, int CommittedBatches, double DecodeMilliseconds, double ExtractMilliseconds,
     double WriteMilliseconds, bool Unchanged = false, double HashMilliseconds = 0, double TrainingMilliseconds = 0, double IndexMilliseconds = 0,
-    int PeakParallelPages = 0, double MemoryWaitMilliseconds = 0, string Accelerator = "CPU", long GpuScoreDispatches = 0, long GpuAssignmentDispatches = 0);
+    int PeakParallelPages = 0, double MemoryWaitMilliseconds = 0, string Accelerator = "CPU", long GpuScoreDispatches = 0, long GpuAssignmentDispatches = 0)
+{
+    public int BulkReusedPages { get; init; }
+    public int ReuseBatches { get; init; }
+    public double ReuseMilliseconds { get; init; }
+}
 
 public sealed partial class LocalImageSearchService
 {
@@ -124,7 +129,8 @@ public sealed partial class LocalImageSearchService
             CachedPage? match = null;
             foreach (var file in page.Candidates)
             {
-                if (!IsSafeSourcePath(file.FilePath, sources[gallery.SourceId].RootPath)) continue;
+                // 此快捷分支只消费本轮新枚举的计划：目录安全及链接属性已在计划阶段核对。
+                // 不再为每页重复访问同一组源目录属性；此处只比较完整元数据签名。
                 string relative = Path.GetRelativePath(sources[gallery.SourceId].RootPath, file.FilePath);
                 match = lookup.Find(gallery, page.Number, file, relative);
                 // 新增的更优候选必须先尝试解码，不能因后面的旧候选匹配就跳过更新。
@@ -216,6 +222,23 @@ public sealed partial class LocalImageSearchService
         SqliteConnection manifest, int total, Dictionary<string, LibrarySource> sources,
         bool rebuild, IndexBuildOptions options, IProgress<LocalImageSearchStatus>? progress, CancellationToken token)
     {
+        var restored = ReadPlanResult(manifest);
+        int bulkReused = 0, reuseBatches = 0;
+        long reuseStarted = Stopwatch.GetTimestamp();
+        if (previous is not null)
+        {
+            reuseBatches = ReusePlannedPages(manifest, previous, token, (indexed, skipped) =>
+            {
+                bulkReused += indexed + skipped;
+                restored = restored with { Processed = restored.Processed + indexed + skipped,
+                    Indexed = restored.Indexed + indexed, Skipped = restored.Skipped + skipped,
+                    Reused = restored.Reused + indexed + skipped };
+                progress?.Report(new($"正在复用未变页 {restored.Processed:N0} / {total:N0} · 复用 {restored.Reused:N0} · 失败 {restored.Failed:N0}",
+                    restored.Processed, total, restored.Indexed, restored.Skipped, restored.Failed, restored.Reused)
+                    { Phase = ImageIndexBuildPhase.Extracting });
+            });
+        }
+        double reuseMilliseconds = Stopwatch.GetElapsedTime(reuseStarted).TotalMilliseconds;
         long overhead = (16L + 2 * options.Workers) * 1024 * 1024;
         long workspace = Math.Min(options.WorkingSetBytes, ImageMemoryBudget.IndexLimitBytes - overhead - (_jobAccelerator is null ? 0 : GpuHostReservation));
         long reserved = workspace + overhead;
@@ -241,7 +264,6 @@ public sealed partial class LocalImageSearchService
         delete.Parameters.Add("$source", SqliteType.Text); delete.Parameters.Add("$stable", SqliteType.Text); delete.Parameters.Add("$page", SqliteType.Integer);
         delete.Prepare();
         SqliteTransaction? transaction = null;
-        var restored = ReadPlanResult(manifest);
         int processed = restored.Processed, indexed = restored.Indexed, skipped = restored.Skipped,
             failed = restored.Failed, reused = restored.Reused, buffered = 0, extractionPages = 0, commits = 0;
         bool needsBuild = false, writeFailed = false;
@@ -250,7 +272,7 @@ public sealed partial class LocalImageSearchService
         string phase = previous is null ? "正在提取新页图" : "正在更新页图索引";
         void ReportProgress()
         {
-            progress?.Report(new($"{phase} {processed:N0} / {total:N0} · 复用 {reused:N0} · 新提取 {Volatile.Read(ref counters.Extracted):N0} · {options.Workers} 并行",
+            progress?.Report(new($"{phase} {processed:N0} / {total:N0} · 复用 {reused:N0} · 新提取 {Volatile.Read(ref counters.Extracted):N0} · 失败 {failed:N0} · {options.Workers} 并行",
                 processed, total, indexed, skipped, failed, reused) { Phase = ImageIndexBuildPhase.Extracting });
             lastProgress = Environment.TickCount64;
         }
@@ -319,7 +341,7 @@ public sealed partial class LocalImageSearchService
                 }
                 processed++;
                 buffered++;
-                if (!committedPage || !result.Reused || result.Descriptors is not null) extractionPages++;
+                if (result.Descriptors is not null) extractionPages++;
                 writeTicks += Stopwatch.GetTimestamp() - start;
                 // 复用记录不持有描述子缓冲，允许批量写入元数据；新特征仍按原有内存上限提交。
                 bool flush = extractionPages >= options.BatchSize || buffered >= 1024 || processed == total;
@@ -331,7 +353,7 @@ public sealed partial class LocalImageSearchService
         try
         {
             ReportProgress();
-            await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, ReadPlannedPages(generation, sources, pendingOnly: true, token), sources, token),
+            if (processed < total) await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, ReadPlannedPages(generation, sources, pendingOnly: true, token), sources, token),
                 () => new ExtractionWorker(backend.Profile, root, rebuild, options.UseSimd, _jobAccelerator),
                 (worker, work, ct) => ExtractPageAsync(worker, work, backend.Profile, options, budget, counters, ct),
                 CommitPage, options.Workers, options.Workers * 2, token).ConfigureAwait(false);
@@ -352,7 +374,8 @@ public sealed partial class LocalImageSearchService
                     counters.Decoded, counters.Extracted, commits, counters.DecodeTicks * 1000d / Stopwatch.Frequency,
                     counters.ExtractTicks * 1000d / Stopwatch.Frequency, writeTicks * 1000d / Stopwatch.Frequency,
                     HashMilliseconds: counters.HashTicks * 1000d / Stopwatch.Frequency,
-                    PeakParallelPages: counters.Peak, MemoryWaitMilliseconds: counters.MemoryWaitTicks * 1000d / Stopwatch.Frequency));
+                    PeakParallelPages: counters.Peak, MemoryWaitMilliseconds: counters.MemoryWaitTicks * 1000d / Stopwatch.Frequency)
+                    { BulkReusedPages = bulkReused, ReuseBatches = reuseBatches, ReuseMilliseconds = reuseMilliseconds });
             }
         }
     }

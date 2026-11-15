@@ -219,6 +219,9 @@ public partial class LibraryPage : UserControl
         menu.Items.Add(CreateMenuItem("清除进度", () => _viewModel.ClearProgressCommand.Execute(item)));
         menu.Items.Add(new Separator());
         menu.Items.Add(CreateMenuItem("打开文件夹", () => _viewModel.OpenFolderCommand.Execute(item)));
+        var delete = CreateMenuItem("删除此副本…", () => _viewModel.Deletion.Request(item.Info));
+        delete.IsEnabled = !_viewModel.Deletion.IsBusy;
+        menu.Items.Add(delete);
 
         control.ContextMenu = menu;
         menu.Open(control);

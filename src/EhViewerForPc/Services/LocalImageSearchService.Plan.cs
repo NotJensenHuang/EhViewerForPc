@@ -77,6 +77,28 @@ public sealed partial class LocalImageSearchService
         return command.ExecuteScalar() is not null;
     }
 
+    private static PageScanResult ScanIndexPages(string folder, out string? error)
+    {
+        var files = new List<PageCandidate>();
+        error = null;
+        try
+        {
+            foreach (var file in new DirectoryInfo(folder).EnumerateFiles())
+            {
+                string extension = file.Extension.ToLowerInvariant();
+                if (!PageFileParser.IsSupportedExtension(extension) || (file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                files.Add(new() { FilePath = file.FullName, FileName = file.Name, Extension = extension,
+                    Length = file.Length, MtimeTicks = file.LastWriteTimeUtc.Ticks });
+            }
+        }
+        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
+        {
+            error = failure.GetType().Name;
+        }
+        var header = SpiderInfoParser.TryParseFile(Path.Combine(folder, ".ehviewer"), out _);
+        return PageFileParser.Scan(files, header, out _);
+    }
+
     private bool PrepareBuildPlan(SqliteConnection manifest, ImageSearchGallery[] galleries, Dictionary<string, LibrarySource> sources,
         bool verify, CancellationToken token, Action<int, int>? galleryProgress = null)
     {
@@ -101,7 +123,7 @@ public sealed partial class LocalImageSearchService
                     if (checkedGallery.ExecuteScalar() is long value && value == 1) continue;
                 }
                 if (!IsSafeSourcePath(gallery.Folder, source.RootPath)) throw new IOException("图库路径已变化，当前索引已保留。");
-                var scan = PageFileParser.Scan(gallery.Folder, null, out string? error);
+                var scan = ScanIndexPages(gallery.Folder, out string? error);
                 if (error is not null) throw new IOException("图库目录暂时无法读取，当前索引已保留。");
                 if (PlanStatistics is { } statistics) Volatile.Write(ref _planStatistics, statistics with { EnumeratedGalleries = statistics.EnumeratedGalleries + 1 });
                 var signatureText = new StringBuilder();

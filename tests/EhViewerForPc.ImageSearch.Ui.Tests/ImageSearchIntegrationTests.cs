@@ -405,7 +405,7 @@ public sealed class ImageSearchIntegrationTests
         var galleries = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
         using var interrupted = new CancellationTokenSource();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(galleries,
-            new InlineIndexProgress(p => { if (p.Processed == 10) interrupted.Cancel(); }), interrupted.Token));
+            new InlineIndexProgress(p => { if (p.Processed >= 10) interrupted.Cancel(); }), interrupted.Token));
         File.WriteAllBytes(path, valid);
         File.SetLastWriteTimeUtc(path, mtime);
         var result = await scope.Services.ImageSearch.BuildAsync(galleries, null, CancellationToken.None);
@@ -578,10 +578,52 @@ public sealed class ImageSearchIntegrationTests
         var updated = await scope.Services.ImageSearch.BuildAsync(snapshot, new InlineIndexProgress(statuses.Add), CancellationToken.None, options: options);
         var statistics = scope.Services.ImageSearch.BuildStatistics!;
         Assert.Equal(143, updated.Reused);
+        Assert.Equal(143, statistics.BulkReusedPages);
+        Assert.Equal(1, statistics.ReuseBatches);
         Assert.Equal(1, statistics.DecodedPages);
         Assert.Equal(1, statistics.ExtractedPages);
         Assert.Equal(1, statistics.CommittedBatches);
         Assert.Contains(statuses, s => s.Message.Contains("复用") && s.Message.Contains("新提取"));
+    }
+
+    [AvaloniaFact]
+    public async Task FailedPagesUseMetadataBatchesAndProgressReportsFailures()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        for (int page = 6; page <= 115; page++)
+            File.WriteAllBytes(Path.Combine(copies[0].FolderPath, $"{page:D8}.png"), [1, 2, 3]);
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        var statuses = new List<LocalImageSearchStatus>();
+        var result = await scope.Services.ImageSearch.BuildAsync(snapshot, new InlineIndexProgress(statuses.Add), CancellationToken.None,
+            options: new IndexBuildOptions { Workers = 4, UseGpu = false });
+        Assert.Equal(110, result.Failed);
+        Assert.Equal(1, scope.Services.ImageSearch.BuildStatistics!.CommittedBatches);
+        Assert.Contains(statuses, s => s.Phase == ImageIndexBuildPhase.Extracting && s.Message.Contains("失败 110"));
+    }
+
+    [AvaloniaFact]
+    public async Task BulkReusedPagesAreRecheckedForChangesBeforePublication()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        var options = new IndexBuildOptions { Workers = 2, UseGpu = false };
+        await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None, options: options);
+        File.WriteAllBytes(Path.Combine(copies[0].FolderPath, "00000006.png"), SyntheticImages.Create(96, 200, 280).EncodePng());
+        bool changed = false;
+        string path = Path.Combine(copies[0].FolderPath, "00000001.png");
+        var result = await scope.Services.ImageSearch.BuildAsync(snapshot, new InlineIndexProgress(status =>
+        {
+            if (changed || !status.Message.StartsWith("正在复用未变页")) return;
+            changed = true;
+            File.WriteAllBytes(path, SyntheticImages.Create(185, 200, 280).EncodePng());
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddSeconds(2));
+        }), CancellationToken.None, options: options);
+        Assert.True(changed);
+        Assert.Equal(7, result.Indexed);
+        var hits = await scope.Services.ImageSearch.SearchAsync(File.ReadAllBytes(path), null, copies, CancellationToken.None);
+        Assert.Contains(hits, hit => hit.FilePath == path && hit.MtimeTicks == File.GetLastWriteTimeUtc(path).Ticks);
     }
 
     [AvaloniaFact]

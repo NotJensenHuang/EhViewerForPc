@@ -54,6 +54,21 @@ public sealed class LibraryCacheStore
         }
     }
 
+    public void RemoveFolder(string sourceId, string root, string folder)
+    {
+        lock (_gate)
+        {
+            var cache = Load(sourceId, root, out _);
+            var removed = cache.Entries.Keys.Where(key =>
+            {
+                string path = Path.GetFullPath(Path.Combine(root, key));
+                return PathIdentity.Comparer.Equals(path, folder) || PathIdentity.IsDescendantOf(path, folder);
+            }).ToArray();
+            foreach (string key in removed) cache.Entries.Remove(key);
+            if (removed.Length > 0) Save(sourceId, cache, out _);
+        }
+    }
+
     public void Delete(string sourceId)
     {
         lock (_gate)

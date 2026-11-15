@@ -200,10 +200,10 @@ public sealed class ReaderRetryIntegrationTests
         internal AppServices Services { get; }
         internal RetryHandler Handler { get; } = new();
         internal GalleryInfo Info { get; }
-        internal Fixture()
+        internal Fixture(Action<string>? recycleDirectory = null)
         {
             string sourceRoot = Path.Combine(_root, "library");
-            Folder = Path.Combine(sourceRoot, "42-fixture"); Directory.CreateDirectory(Folder);
+            Folder = Path.GetFullPath(Path.Combine(sourceRoot, "42-fixture")); Directory.CreateDirectory(Folder);
             foreach (int page in new[] { 1, 4 }) File.WriteAllBytes(Path.Combine(Folder, $"{page:D8}.png"), SyntheticImages.Create(page, 200, 280).EncodePng());
             File.WriteAllText(Path.Combine(Folder, ".ehviewer"), "VERSION2\n0\n42\n0123456789\n0\n0\n0\n4\n");
             var paths = new AppPaths(Path.Combine(_root, "data")); paths.EnsureCreated();
@@ -212,7 +212,7 @@ public sealed class ReaderRetryIntegrationTests
             settings.Network.ProxyMode = ProxyMode.None;
             var source = settings.AddSource(sourceRoot);
             new SettingsStore(paths).Save(settings, out _);
-            Services = AppServices.Initialize(paths, s => new EhClient(s, new HttpClient(Handler), new HttpClient(Handler)));
+            Services = AppServices.Initialize(paths, s => new EhClient(s, new HttpClient(Handler), new HttpClient(Handler)), recycleDirectory);
             Info = Services.Scanner.Scan(sourceRoot, null, sourceId: source.Id, sourceName: source.DisplayName).Galleries.Single();
         }
         internal string[] Snapshot(string? exclude = null) => Directory.GetFiles(Folder).Where(p => Path.GetFileName(p) != exclude)
@@ -226,14 +226,14 @@ public sealed class ReaderRetryIntegrationTests
         internal readonly System.Collections.Concurrent.ConcurrentQueue<string> Requests = new();
         internal readonly TaskCompletionSource ImageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool FailImage, BlockImage;
+        internal bool FailImage, BlockImage, IgnoreImageCancellation;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             string path = request.RequestUri!.AbsolutePath; Requests.Enqueue(path);
             if (path.EndsWith(".png"))
             {
                 ImageStarted.TrySetResult();
-                if (BlockImage) await Release.Task.WaitAsync(cancellationToken);
+                if (BlockImage) await Release.Task.WaitAsync(IgnoreImageCancellation ? CancellationToken.None : cancellationToken);
                 return new(FailImage ? HttpStatusCode.InternalServerError : HttpStatusCode.OK) { Content = new ByteArrayContent(Image) };
             }
             string html = path.StartsWith("/s/")

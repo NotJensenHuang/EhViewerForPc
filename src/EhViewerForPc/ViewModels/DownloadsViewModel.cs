@@ -118,6 +118,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         foreach (DownloadTask task in _services.Downloads.Tasks)
         {
             QueueLibraryUpdate(task);
+            if (task.State == DownloadState.Completed) continue;
             ids.Add(task.Id);
             if (_byId.TryGetValue(task.Id, out DownloadTaskViewModel? existing))
             {
@@ -163,6 +164,12 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
                 foreach (var pair in _dirtyTasks.ToArray())
                 {
                     if (!_dirtyTasks.TryRemove(pair.Key, out var changed) || !_services.Downloads.IsQueued(changed)) continue;
+                    if (changed.State == DownloadState.Completed)
+                    {
+                        if (_byId.Remove(changed.Id, out var finished)) Tasks.Remove(finished);
+                        QueueLibraryUpdate(changed);
+                        continue;
+                    }
                     if (_byId.TryGetValue(changed.Id, out var vm)) vm.Refresh();
                     else { vm = new DownloadTaskViewModel(changed, this); _byId[changed.Id] = vm; Tasks.Insert(0, vm); }
                     QueueLibraryUpdate(changed);
@@ -248,7 +255,11 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 
     public Task PauseTask(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Pause(item.Task));
 
-    public Task ResumeTask(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Resume(item.Task));
+    public async Task ResumeTask(DownloadTaskViewModel item)
+    {
+        try { await Task.Run(() => _services.Downloads.Resume(item.Task)); }
+        catch (IOException error) { NotifyRequested?.Invoke(this, error.Message); }
+    }
 
     public Task RemoveTask(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Remove(item.Task, deleteFiles: false));
 

@@ -54,6 +54,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public MainViewModel(AppServices services)
     {
         _services = services;
+        Deletion = new(services);
+        _services.LocalDeletionPreparing += PrepareLocalDeletionAsync;
+        _services.LocalCopyDeleted += OnLocalCopyDeleted;
         _services.LocalCopyChecked += OnLocalCopyChecked;
         _sortOptions =
         [
@@ -98,6 +101,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public event EventHandler? LocalIndexChanged;
 
     public AppServices Services => _services;
+    public LocalCopyDeletionViewModel Deletion { get; }
+
+    private async Task PrepareLocalDeletionAsync(CancellationToken token)
+    {
+        CancelScanNow();
+        while (IsScanning) await Task.Delay(20, token);
+        token.ThrowIfCancellationRequested();
+    }
+
+    private void OnLocalCopyDeleted(object? sender, string folder)
+    {
+        if (_disposed) return;
+        var paths = _all.SelectMany(item => item.Versions).Select(copy => copy.FolderPath)
+            .Where(path => PathIdentity.Comparer.Equals(path, folder) || PathIdentity.IsDescendantOf(path, folder))
+            .Distinct(PathIdentity.Comparer).ToArray();
+        foreach (string path in paths) ApplyDownloadedCopies([], path);
+        if (_all.Count == 0) StatusText = "本地库暂无作品";
+    }
+
 
     [RelayCommand]
     private async Task ContinueDownloadAsync(GalleryItemViewModel? item)
@@ -469,6 +491,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 if (cacheError is not null) _services.Log.Warn("Cache save failed: " + cacheError);
             }
 
+            token.ThrowIfCancellationRequested();
             ApplyGalleries(galleries, fromCache: false);
             _services.Settings.LastScanCompletedUtc = DateTime.UtcNow.ToString("O");
             _services.TrySaveSettings(out _);
@@ -1058,6 +1081,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _services.LocalCopyChecked -= OnLocalCopyChecked;
+        _services.LocalDeletionPreparing -= PrepareLocalDeletionAsync;
+        _services.LocalCopyDeleted -= OnLocalCopyDeleted;
+        Deletion.Dispose();
         if (_disposed) return;
         _disposed = true;
         _searchTimer.Stop();
