@@ -185,8 +185,9 @@ public static class UiSmokeService
                 independentWindows = window.OwnedWindows.Count };
             reader.ToggleImmersive();
             await Task.Delay(300);
-            succeeded &= reader.IsImmersive && !navigation.IsPaneVisible;
-            report["immersive"] = new { reader.IsImmersive, railHidden = !navigation.IsPaneVisible };
+            bool accountHiddenInImmersive = !window.IsAccountAreaVisible;
+            succeeded &= reader.IsImmersive && !navigation.IsPaneVisible && accountHiddenInImmersive;
+            report["immersive"] = new { reader.IsImmersive, railHidden = !navigation.IsPaneVisible, accountHidden = accountHiddenInImmersive };
             SaveScreenshot(window, Path.Combine(output, "reader-immersive.png"));
             reader.ToggleImmersive();
 

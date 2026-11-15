@@ -1329,6 +1329,34 @@ public sealed class ImageSearchIntegrationTests
         finally { window.Close(); }
     }
 
+    [AvaloniaFact]
+    public async Task ImmersiveHidesTheCompactAccountButtonOverTheReader()
+    {
+        using var scope = new Fixture();
+        var gallery = scope.CreateCopies()[0];
+        using var shell = new ShellViewModel(scope.Services);
+        var window = new MainWindow(shell) { Width = 1200, Height = 800 };
+        using var reader = new ReaderPage(new ReaderViewModel(scope.Services, gallery, initialPageNumber: 2));
+        try
+        {
+            window.Show(); window.ShowDiagnosticPage(reader);
+            await Task.Delay(150); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+            // Closed pane + wide window is the compact-rail case: the account
+            // icon used to stay pinned to the client bottom in immersive mode.
+            window.SetPaneOpenForAudit(false);
+            reader.ToggleImmersive();
+            await Task.Delay(100); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+
+            Assert.True(reader.IsImmersive);
+            Assert.False(window.IsAccountAreaVisible);
+
+            reader.ToggleImmersive();
+            await Task.Delay(100); Dispatcher.UIThread.RunJobs(); window.UpdateLayout();
+            Assert.True(window.IsAccountAreaVisible);
+        }
+        finally { window.Close(); }
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../.qa/progress-repair-20261114/ui-" + Guid.NewGuid().ToString("N")));

@@ -85,6 +85,9 @@ public partial class MainWindow : Window
     /// <summary>Exposed for the layout audit: the bottom account bar.</summary>
     public Control AccountLineControl => AccountBar;
 
+    /// <summary>True when either account entry point occupies the pane area.</summary>
+    internal bool IsAccountAreaVisible => AccountBar.IsVisible || AccountCompactButton.IsVisible;
+
     /// <summary>Exposed for the layout audit: whether the navigation pane is open.</summary>
     public bool IsPaneOpenForAudit => Navigation.IsPaneOpen;
 
@@ -695,7 +698,9 @@ public partial class MainWindow : Window
         AccountBar.Width = open ? Navigation.OpenPaneLength : Navigation.CompactPaneLength;
         AccountRow.IsVisible = open;
         AccountCompactButton.Width = Navigation.CompactPaneLength;
-        AccountCompactButton.IsVisible = !open && !minimal;
+        // Both forms must respect immersive: the pane is off-canvas, so the
+        // compact button would otherwise float over the reader's bottom bar.
+        AccountCompactButton.IsVisible = !immersive && !open && !minimal;
         AccountBar.IsVisible = !immersive && (open || !minimal);
     }
 }

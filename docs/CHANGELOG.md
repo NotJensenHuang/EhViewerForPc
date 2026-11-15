@@ -1,12 +1,17 @@
 # 变更记录
 
+## 2026-11-15 沉浸模式隐藏左下角账号按钮
+
+- `Views/MainWindow.axaml.cs`：紧凑态账号按钮的可见性补上 `!immersive` 条件。此前只判断了面板展开态，面板收起时（窄栏或手动收起），该按钮在沉浸模式下仍固定于客户区左下角，压在阅读器底部的「上一页」按钮上。展开态的账号栏原本已隐藏，现在两种形态在沉浸时都不再显示，退出沉浸后按面板状态恢复。
+- `Services/UiSmokeService.cs`：沉浸截图检查新增账号区域隐藏断言；`tests/EhViewerForPc.ImageSearch.Ui.Tests/ImageSearchIntegrationTests.cs` 增加回归测试，覆盖「收起面板 → 进入沉浸 → 账号消失 → 退出沉浸 → 账号恢复」。
+
 ## 2026-11-15 修复 MSIX 任务栏图标黑边
 
-- `packaging/EhViewerForPc.Msix/Assets/Square44x44Logo.targetsize-*_altform-unplated.png`、`..._altform-lightunplated.png`：补齐 16 / 20 / 24 / 30 / 32 / 36 / 40 / 48 / 60 / 64 / 72 / 80 / 96 / 256 两套无底板 AppList 图标。此前包内只有带底板 PNG，任务栏与开始菜单会回退到带底板图标，并用清单 `BackgroundColor="#0B0D10"` 绘制方形底板，形成图标外圈黑边。
+- `packaging/EhViewerForPc.Msix/Assets/Square44x44Logo.targetsize-*_altform-unplated.png`、`..._altform-lightunplated.png`：补齐 16 / 20 / 24 / 30 / 32 / 36 / 40 / 48 / 60 / 64 / 72 / 80 / 96 / 256 两套无底板 AppList 图标。此前包内只有带底板 PNG，任务栏与开始菜单会回退到带底板图标，并用清单 `BackgroundColor="#0B0D10"` 绘制方形底板，形成图标外圈黑边。生成时按主图实际边缘裁切（512 图中 460×460 @ 26,26），只保留抗锯齿边缘，不再沿用主图四周约 5% 的透明留白，图标在任务栏中更贴近边缘。
 - `packaging/EhViewerForPc.Msix/Package.appxmanifest`：`BackgroundColor` 改为 `transparent`；即使主题对比度判定使系统回退到带底板图标，也不会再出现深色方形底板。图标自身的深色圆角底板保留。
 - `packaging/EhViewerForPc.Msix/EhViewerForPc.Msix.wapproj`：注明 `Assets\*.png` 通配必须保留，新增无底板资源随包自动收集。
 - `src/EhViewerForPc/Assets/icon.ico`：9 个尺寸帧的 AND 透明掩码此前全为 0，按 alpha=0 的像素重建为 1；像素数据、帧尺寸与文件大小不变，避免走掩码的旧渲染路径把透明区画成黑色。窗口与 Alt+Tab 使用该 ICO，任务栏优先使用包内 AppList 资源。
-- 验证：新增 28 个 PNG 均为 8 位 RGBA、尺寸与 targetsize 一致、四角 alpha=0、中心不透明；以 `makepri new` 重建资源索引并 dump，确认 28 个候选按 `TargetSize-16…256 + AlternateForm-UNPLATED / LIGHTUNPLATED` 登记。需在 VS 中重新生成 MSIX 并重装后观察任务栏（旧图标可能被 Shell 缓存，必要时取消固定后重新固定或重启资源管理器）。
+- 验证：新增 28 个 PNG 均为 8 位 RGBA、尺寸与 targetsize 一致、四角 alpha=0、中部左右边缘 alpha=255（贴边且未裁掉圆角）、中心不透明；以 `makepri new` 重建资源索引并 dump，确认 28 个候选按 `TargetSize-16…256 + AlternateForm-UNPLATED / LIGHTUNPLATED` 登记；`makeappx pack` / `unpack` 成功，包内 34 个 Assets（14 个 unplated、14 个 lightunplated）。需在 VS 中重新生成 MSIX 并重装后观察任务栏（旧图标可能被 Shell 缓存，必要时取消固定后重新固定或重启资源管理器）。
 
 ## 2026-11-15 画廊不可用下载任务单独归档
 
