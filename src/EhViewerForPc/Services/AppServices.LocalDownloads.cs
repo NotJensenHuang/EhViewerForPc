@@ -81,7 +81,7 @@ public sealed partial class AppServices
                         copy.MissingRanges = scan.MissingRanges;
                         copy.HasHeaderPageCountOutdated = scan.HeaderPageCountOutdated;
                     }
-                    checkedCopies.Add(copy);
+                    if (!SameLocalPageState(info, copy)) checkedCopies.Add(copy);
                     if (!copy.IsIncomplete) { complete++; continue; }
                     if (candidate.Request is null) throw new IOException(candidate.Error);
                     requests.Add(candidate.Request);
@@ -90,7 +90,8 @@ public sealed partial class AppServices
                 catch (Exception error) { failures.Add(new(candidate.Info.FolderPath, error.Message)); }
                 progress?.Report(new(i + 1, candidates.Count));
             }
-            var result = Downloads.EnqueueRepairs(requests, new RepairBatchProgress(progress, requests.Count), token);
+            var result = requests.Count == 0 ? new DownloadRepairBatchResult(0, 0, 0, [])
+                : Downloads.EnqueueRepairs(requests, new RepairBatchProgress(progress, requests.Count), token);
             failures.AddRange(result.Failures.Select(f => new LocalRepairFailure(f.Folder, f.Message)));
             return new LocalRepairResult(result.Added, result.Continued, existing + result.Existing, failures) { Complete = complete };
         }, token);
@@ -99,6 +100,42 @@ public sealed partial class AppServices
             foreach (var copy in checkedCopies) LocalCopyChecked?.Invoke(this, copy);
         });
         return summary;
+    }
+
+    private static bool SameLocalPageState(GalleryInfo before, GalleryInfo after) =>
+        before.PageCount == after.PageCount && before.MaxPageNumber == after.MaxPageNumber &&
+        before.ExpectedPages == after.ExpectedPages && before.IsIncomplete == after.IsIncomplete &&
+        before.ZeroByteFiles == after.ZeroByteFiles && before.HasHeaderPageCountOutdated == after.HasHeaderPageCountOutdated &&
+        before.HasNaturalPageNames == after.HasNaturalPageNames && before.LastWriteUtc == after.LastWriteUtc &&
+        before.HeaderError == after.HeaderError && before.MissingRanges.SequenceEqual(after.MissingRanges);
+
+    internal async Task RetryLocalPageAsync(GalleryInfo info, GalleryPage page, CancellationToken token)
+    {
+        var task = Downloads.Tasks.FirstOrDefault(t => PathIdentity.Comparer.Equals(t.FolderPath, info.FolderPath));
+        string? root = Settings.Sources.FirstOrDefault(s => s.Id == info.SourceId && s.Enabled)?.RootPath ?? task?.DestinationRoot;
+        string galleryToken = info.Token;
+        if (galleryToken.Length == 0) galleryToken = Works.Get(info.WorkId)?.Token ?? string.Empty;
+        if (galleryToken.Length == 0) galleryToken = task?.Token ?? string.Empty;
+        if (info.Gid is not > 0 || info.HasGidConflict || info.HasNaturalPageNames || string.IsNullOrEmpty(root) || string.IsNullOrEmpty(galleryToken))
+            throw new IOException("此副本缺少可用的原画廊链接或原始页号，只能重新载入本地文件。");
+        var details = new EhGalleryDetails { Gid = info.Gid.Value, Token = galleryToken, Pages = info.ExpectedPages ?? 0, Title = info.Title };
+        await Downloads.RedownloadPageAsync(details, page.Number, info.FolderPath, root, page.Primary?.FilePath, token);
+        var source = Settings.Sources.FirstOrDefault(s => s.Id == info.SourceId && s.Enabled)?.Clone();
+        if (source is null) return;
+        bool qualify = Settings.ActiveSources.Count > 1;
+        var copy = await Task.Run(() => Scanner.Scan(source.RootPath, null, true, null, token, source.Id,
+            source.DisplayName, qualify, info.FolderPath).Galleries.Single(), token);
+        copy.StableId = info.StableId;
+        // 无头信息的旧下载也继续保留已知尾页，不能因只下载一页而丢失剩余缺页。
+        if (info.ExpectedPages is > 0 && copy.ExpectedPages != info.ExpectedPages)
+        {
+            var pages = await Task.Run(() => PageFileParser.Scan(info.FolderPath,
+                new SpiderHeader { HasPages = true, Pages = info.ExpectedPages.Value }, out _), token);
+            copy.ExpectedPages = info.ExpectedPages;
+            copy.IsIncomplete = pages.IsIncomplete;
+            copy.MissingRanges = pages.MissingRanges;
+        }
+        await Dispatcher.UIThread.InvokeAsync(() => LocalCopyChecked?.Invoke(this, copy));
     }
 
     private DownloadRepairRequest CreateRepairRequest(GalleryInfo info)

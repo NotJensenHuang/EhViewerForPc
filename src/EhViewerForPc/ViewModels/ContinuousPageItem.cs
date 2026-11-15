@@ -31,7 +31,7 @@ public sealed class ContinuousPageItem : ObservableObject
         Known = known;
     }
 
-    public GalleryPage Page { get; }
+    public GalleryPage Page { get; private set; }
 
     public IImageRequest Request
     {
@@ -42,6 +42,13 @@ public sealed class ContinuousPageItem : ObservableObject
     /// <summary>Swaps the request so a failed page can retry without rebuilding
     /// the whole strip (which would move the scroll position).</summary>
     public void UpdateRequest(IImageRequest request) => Request = request;
+    public void UpdatePage(GalleryPage page, IImageRequest request)
+    {
+        Page = page;
+        OnPropertyChanged(nameof(Page));
+        OnPropertyChanged(nameof(IsMissing));
+        Request = request;
+    }
     public int OriginalWidth => _originalWidth;
     public int OriginalHeight => _originalHeight;
     public bool Known { get; private set; }

@@ -226,7 +226,6 @@ public partial class ReaderPage : DocumentPage
 
     internal void ToggleBackground() => _viewModel.ToggleBackground();
 
-    internal void RetryCurrentPage() => _viewModel.RetryCurrentCommand.Execute(null);
 
     internal void ToggleFullscreen() => SetFullscreen(WindowState != WindowState.FullScreen);
 

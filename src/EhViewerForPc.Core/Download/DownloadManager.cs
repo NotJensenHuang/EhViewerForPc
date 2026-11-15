@@ -142,6 +142,7 @@ public sealed partial class DownloadManager : IDisposable
         {
             if (_relocating) throw new IOException("下载目录正在迁移");
             if (_archiveWriters != 0) throw new IOException("有归档正在下载，请等待归档完成后再迁移目录");
+            if (_pageRetries.Count != 0) throw new IOException("正在重新下载阅读页，请等待完成后再迁移目录");
             _relocating = true;
             resume = _tasks.Where(t => t.State is DownloadState.Running or DownloadState.Pending).Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
             workers = _running.Values.ToArray();
@@ -417,6 +418,7 @@ public sealed partial class DownloadManager : IDisposable
         bool deleteNow;
         lock (_gate)
         {
+            if (deleteFiles && _pageRetries.ContainsKey(task.FolderPath)) throw new IOException("正在重新下载阅读页，请等待写入完成后再删除。");
             if (_relocating) return;
             _tasks.Remove(task);
             bool active = _cancellations.TryGetValue(task.Id, out var cts);
@@ -518,13 +520,16 @@ public sealed partial class DownloadManager : IDisposable
 
     private void SchedulePump()
     {
+        bool started = false;
         lock (_gate)
         {
             if (_disposed || _relocating) return;
+            foreach (var task in _tasks)
+                if (task.State == DownloadState.Pending && _pageRetries.TryGetValue(task.FolderPath, out var retry)) retry.ResumeQueue = true;
             int limit = Math.Clamp(_settings.Download.MaxConcurrentTasks, 1, 8);
             while (_activeTasks < limit)
             {
-                DownloadTask? next = _tasks.FirstOrDefault(t => t.State == DownloadState.Pending && !_cancellations.ContainsKey(t.Id));
+                DownloadTask? next = _tasks.FirstOrDefault(t => t.State == DownloadState.Pending && !_cancellations.ContainsKey(t.Id) && !_pageRetries.ContainsKey(t.FolderPath));
                 if (next is null) break;
                 var cts = new CancellationTokenSource();
                 _cancellations.Add(next.Id, cts);
@@ -533,9 +538,10 @@ public sealed partial class DownloadManager : IDisposable
                 next.Message = "准备中";
                 // Reserve both the slot and cancellation before the worker can run.
                 _running[next.Id] = Task.Run(() => RunTaskAsync(next, cts));
+                started = true;
             }
         }
-        RaiseChanged();
+        if (started) RaiseChanged();
     }
 
     private async Task RunTaskAsync(DownloadTask task, CancellationTokenSource cts)
@@ -997,6 +1003,7 @@ public sealed partial class DownloadManager : IDisposable
         if (_disposed) return;
         _disposed = true;
         _repairProgressStop.Cancel();
+        _pageRetryStop.Cancel();
         lock (_gate)
         {
             foreach (CancellationTokenSource cts in _cancellations.Values)
@@ -1016,8 +1023,12 @@ public sealed partial class DownloadManager : IDisposable
 
         // Workers own their cancellation sources until they have released all I/O.
         Task[] pending;
-        lock (_gate) pending = _running.Values.Append(_repairProgressTask).ToArray();
+        lock (_gate) pending = _running.Values.Concat(_pageRetries.Values.Select(p => p.Work)).Append(_repairProgressTask).ToArray();
         try { Task.WhenAll(pending).GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
-        finally { _repairProgressStop.Dispose(); }
+        finally
+        {
+            _repairProgressStop.Dispose();
+            _pageRetryStop.Dispose();
+        }
     }
 }

@@ -56,6 +56,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - The More menu lists both left-to-right and right-to-left options, controlling horizontal continuous layout only and disabled in other modes. Arrow keys, the wheel and single-page click zones keep fixed directions
   - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
   - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
+  - Local "Retry this page" downloads only the selected page to the original copy folder and refreshes its placeholder and dimensions. Failed transfers preserve the original file; active writers in the same folder finish first. Ordinary folders without an original gallery link/page number reload local files and show the reason; "Continue download" handles the other missing pages
   - The reader opens inside the main window only; immersive mode hides the sidebar and title, and Esc exits it
   - An image memory budget covers raw decode buffers, the current bitmap, prefetch and animation canvases; the online disk cache has configurable size and retention limits with LRU eviction
 
@@ -64,6 +65,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - Configurable download root and subdirectory rules; with "register download directory as source" and automatic updates enabled, a gallery is indexed as soon as its first image lands, without rescanning other sources
   - Incomplete copies remain readable and reaching the current last page does not mark the whole work as finished; gallery concurrency 1–8, per-gallery page concurrency 1–8, with serialized throttling on pagination requests
   - Local cards, details and version rows offer "Continue download" for the selected copy's exact original folder without changing the global download root; a GID and token are required. Conflicting original files are preserved and reported as failed pages. Repair tasks can be removed from the queue, but cannot delete the original folder
+  - Repeated repair requests reuse existing tasks. Unchanged page checks do not rebuild the local lookup or trigger image-index maintenance; pause/running transitions do not rescan unchanged folders
   - "Fill missing pages" rechecks incomplete copies in the current list against their original folders before enqueueing. Complete copies leave the incomplete category and are skipped; original paths are deduplicated, queued tasks are reused and paused/failed tasks continue. The batch saves once and exposes failures. Empty alternate files beside nonempty pages and outdated page-count warnings no longer classify a copy as missing pages
   - Download rows and local cards show current network speed, with an aggregate on the download page. A roughly two-second moving average updates every 500 ms, excluding cache hits and local file copies; paused and finished tasks report zero
   - Repair tasks include existing valid-page counts immediately: a copy missing only two pages shows `51/53` while waiting. Older zero-progress tasks are reconciled in the background at startup without changing pause state or starting extra downloads
@@ -94,6 +96,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - The backend is pure C#, reusing SkiaSharp and SQLite with no additional runtime; a separate windowless host exists for build and verification. Source galleries are never written to
   - Validated quantizers and bucket tables are reused per immutable generation; file changes or a new publication trigger validation again. Initial loading shows checksum progress before the 30-second search budget starts. Descriptors are decompressed in batches and hit aliases are matched in one pass over legacy manifests, preserving existing index compatibility
   - Queries use CPU block reads and distance comparisons with up to eight readers by default, bounded by logical processor count. Buckets are visited in order, avoiding per-vector iteration, timing and atomic counters. GPU retrieval is omitted by user choice; existing GPU acceleration for index building remains
+  - File and clipboard query previews preserve colour and EXIF orientation. The preview is limited to 2048 pixels on its longest edge, while cropping uses original-image coordinates; grayscale conversion is used only for retrieval
   - Five center-cropped images from a real library have found their original pages using the existing 435,605-page index. Samples, timings and limits are in the [search and repair validation report](docs/实际索引裁剪检索与补页修复-2026-11-14.md); this is not a full-library recall measurement
 
 - ⚙️ **Account, Network and Settings**
@@ -103,6 +106,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - Settings are grouped into categories and take effect on "Save settings"; saving uses an incremental merge so cached startup values cannot overwrite sources added at runtime
 
 - 🪟 **Interface and Navigation**
+  - The Windows tray offers "Show window / Exit". Closing the window keeps downloads and image indexing running by default and restores the same reader. Disable this under Settings → Interface → Keep running after closing the window; tray Exit releases application services
   - FluentAvaloniaUI `FANavigationView` + `FAFrame` history with back, forward and Alt+← / Alt+→
   - System / light / dark themes; the sidebar can collapse and remembers its state, collapses automatically in narrow windows, and list and scroll positions are preserved
   - Online and local details share `GalleryDetailsView`; descriptive text in Settings, details and the status bar can be selected and copied

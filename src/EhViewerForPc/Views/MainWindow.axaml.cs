@@ -97,6 +97,7 @@ public partial class MainWindow : Window
     /// <summary>Exposed for the UI smoke test (web login window, when open).</summary>
     public DocumentPage? LoginWindow => _loginPage;
     public ReaderPage? ActiveReader => ContentHost.Content as ReaderPage;
+    internal Func<WindowClosingEventArgs, bool>? BackgroundCloseHandler { get; set; }
     internal FAFrame NavigationFrame => ContentHost;
 
     public void Attach(ShellViewModel shell)
@@ -208,22 +209,31 @@ public partial class MainWindow : Window
 
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
     {
-        if (_shell?.Settings.IsSaving == true) { e.Cancel = true; _shell.Notify("请等待目录迁移完成，或在设置页取消迁移后退出"); return; }
+        if (BackgroundCloseHandler?.Invoke(e) == true)
+        {
+            SaveWindowState();
+            return;
+        }
+        if (e.CloseReason != WindowCloseReason.OSShutdown && _shell?.Settings.IsSaving == true) { e.Cancel = true; _shell.Notify("请等待目录迁移完成，或在设置页取消迁移后退出"); return; }
         _closing = true;
+        SaveWindowState();
+        _lifetime.Cancel();
+        ClearDocuments();
+    }
+
+    private void SaveWindowState()
+    {
         if (_shell is null) return;
 
         AppSettings settings = AppServices.Current.Settings;
         settings.WindowWidth = Width;
         settings.WindowHeight = Height;
-        settings.WindowMaximized = WindowState == WindowState.Maximized;
+        if (WindowState != WindowState.Minimized) settings.WindowMaximized = WindowState == WindowState.Maximized;
         // The pane preference only means something in the wide (rail-capable)
         // layout; closing a narrow window must not overwrite it.
         if (Width >= 920) settings.SidebarCollapsed = !Navigation.IsPaneOpen;
         AppServices.Current.TrySaveSettings(out _);
         AppServices.Current.Progress.Save(out _);
-
-        _lifetime.Cancel();
-        ClearDocuments();
     }
 
     private void OnNavigationItemInvoked(object? sender, FANavigationViewItemInvokedEventArgs e)
@@ -630,7 +640,6 @@ public partial class MainWindow : Window
     private void OnReaderLeftToRight(object? sender, RoutedEventArgs e) => ActiveReader?.SetDirection(false);
     private void OnReaderRightToLeft(object? sender, RoutedEventArgs e) => ActiveReader?.SetDirection(true);
     private void OnReaderBackground(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleBackground();
-    private void OnReaderRetry(object? sender, RoutedEventArgs e) => ActiveReader?.RetryCurrentPage();
     private void OnReaderHelp(object? sender, RoutedEventArgs e) => ActiveReader?.ShowHelpFlyout();
     private void OnReaderClose(object? sender, RoutedEventArgs e) => ActiveReader?.Close();
 

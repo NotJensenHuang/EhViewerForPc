@@ -6,7 +6,6 @@ using CommunityToolkit.Mvvm.Input;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.ImageSearch;
 using EhViewerForPc.Services;
-using SkiaSharp;
 
 namespace EhViewerForPc.ViewModels;
 
@@ -175,13 +174,7 @@ public sealed partial class ImageSearchViewModel : ObservableObject, IDisposable
         CancelQuery(); int version = ++_requestVersion;
         try
         {
-            var prepared = await Task.Run(() =>
-            {
-                var gray = GrayImage.Decode(bytes);
-                using var data = SKData.CreateCopy(bytes); using var codec = SKCodec.Create(data)!;
-                bool swap = (int)codec.EncodedOrigin >= 5;
-                return (Png: gray.EncodePng(), Width: swap ? codec.Info.Height : codec.Info.Width, Height: swap ? codec.Info.Width : codec.Info.Height);
-            }, _lifetime.Token);
+            var prepared = await Task.Run(() => QueryImagePreview.Prepare(bytes), _lifetime.Token);
             if (_disposed || version != _requestVersion) return;
             Bitmap? old = QueryPreview;
             using var previewStream = new MemoryStream(prepared.Png);

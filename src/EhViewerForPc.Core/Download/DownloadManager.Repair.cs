@@ -13,20 +13,25 @@ public sealed partial class DownloadManager
     {
         var request = ValidateRepairRequest(new(details, folder, sourceRoot));
         DownloadTask task;
+        bool changed;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_relocating) throw new IOException("下载目录正在迁移，请稍后继续。");
             (task, var undo) = PrepareRepairLocked(request);
+            changed = undo is not null;
             if (undo is not null && !SaveLocked())
             {
                 undo.Restore(_tasks);
                 throw new IOException("无法保存补页任务。");
             }
         }
-        RaiseChanged();
-        RaiseTask(task);
-        if (startImmediately) SchedulePump();
+        if (changed)
+        {
+            RaiseChanged();
+            RaiseTask(task);
+            if (startImmediately) SchedulePump();
+        }
         return task;
     }
 

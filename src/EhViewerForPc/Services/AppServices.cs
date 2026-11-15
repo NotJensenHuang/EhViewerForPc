@@ -18,7 +18,7 @@ public sealed partial class AppServices : IDisposable
     private readonly object _settingsSaveGate = new();
     private long _settingsRevision;
 
-    private AppServices(AppPaths paths, AppSettings settings)
+    private AppServices(AppPaths paths, AppSettings settings, Func<AppSettings, EhClient>? createOnline = null)
     {
         Paths = paths;
         Settings = settings;
@@ -33,7 +33,7 @@ public sealed partial class AppServices : IDisposable
         Images = new ImageLoader(Decoder, Log);
         Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
-        Online = new EhClient(settings, message => Log.Warn(message));
+        Online = createOnline?.Invoke(settings) ?? new EhClient(settings, message => Log.Warn(message));
         PageImages = new GalleryImageStore(paths, Online);
         OnlineImages = new OnlineImageService(paths, Online, Images, Log, settings, PageImages);
         TagTranslation = new TagTranslationService(paths, settings, Online, Log);
@@ -76,12 +76,17 @@ public sealed partial class AppServices : IDisposable
     public LocalImageSearchService ImageSearch { get; }
 
     public static AppServices Initialize(AppPaths? paths = null)
+        => InitializeCore(paths ?? new AppPaths(), null);
+
+    internal static AppServices Initialize(AppPaths paths, Func<AppSettings, EhClient> createOnline)
+        => InitializeCore(paths, createOnline);
+
+    private static AppServices InitializeCore(AppPaths paths, Func<AppSettings, EhClient>? createOnline)
     {
-        paths ??= new AppPaths();
         paths.EnsureCreated();
         var store = new SettingsStore(paths);
         AppSettings settings = store.Load(out string? error);
-        var services = new AppServices(paths, settings);
+        var services = new AppServices(paths, settings, createOnline);
         if (error is not null)
         {
             services.Log.Warn("Settings load failed: " + error);

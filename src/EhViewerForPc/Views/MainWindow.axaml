@@ -71,22 +71,45 @@
                              FontSize="13" FontWeight="Normal" OverflowButtonVisibility="Collapsed"
                              IsDynamicOverflowEnabled="False" HorizontalAlignment="Right"
                              VerticalAlignment="Center">
+              <ui:FACommandBar.Resources>
+                <!-- 使用原生模板的尺寸资源，底板与内容一起对齐，保留原生状态色。 -->
+                <x:Double x:Key="AppBarThemeCompactHeight">32</x:Double>
+                <x:Double x:Key="AppBarThemeMinHeight">32</x:Double>
+                <x:Double x:Key="AppBarButtonContentHeight">32</x:Double>
+                <Thickness x:Key="AppBarButtonInnerBorderMargin">2,0</Thickness>
+                <Thickness x:Key="AppBarButtonInnerBorderCompactMargin">2,0</Thickness>
+                <Thickness x:Key="AppBarButtonContentViewboxMargin">8,0,0,0</Thickness>
+                <Thickness x:Key="AppBarButtonContentViewboxCompactMargin">0</Thickness>
+                <Thickness x:Key="AppBarButtonContentViewboxCollapsedMargin">0</Thickness>
+                <Thickness x:Key="AppBarButtonTextLabelOnRightMargin">8,0,8,0</Thickness>
+                <Thickness x:Key="AppBarToggleButtonTextLabelOnRightMargin">8,0,8,0</Thickness>
+              </ui:FACommandBar.Resources>
+              <ui:FACommandBar.Styles>
+                <Style Selector="ui|FACommandBarToggleButton /template/ Viewbox#ContentViewbox, ui|FACommandBarButton /template/ Viewbox#ContentViewbox">
+                  <Setter Property="Width" Value="20" />
+                  <Setter Property="Height" Value="20" />
+                  <Setter Property="VerticalAlignment" Value="Center" />
+                </Style>
+                <Style Selector="ui|FACommandBarToggleButton /template/ TextBlock#TextLabel, ui|FACommandBarButton /template/ TextBlock#TextLabel">
+                  <Setter Property="VerticalAlignment" Value="Center" />
+                </Style>
+              </ui:FACommandBar.Styles>
               <ui:FACommandBar.PrimaryCommands>
-                <ui:FACommandBarToggleButton Label="单页" Click="OnReaderSingleMode"
+                <ui:FACommandBarToggleButton Label="单页" Height="32" MinHeight="32" Click="OnReaderSingleMode"
                                              IsChecked="{Binding IsSingleMode, Mode=OneWay}"
                                              ToolTip.Tip="单页模式（M）">
                   <ui:FACommandBarToggleButton.IconSource>
                     <ui:FASymbolIconSource Symbol="Page" />
                   </ui:FACommandBarToggleButton.IconSource>
                 </ui:FACommandBarToggleButton>
-                <ui:FACommandBarToggleButton Label="连续" Click="OnReaderContinuousMode"
+                <ui:FACommandBarToggleButton Label="连续" Height="32" MinHeight="32" Click="OnReaderContinuousMode"
                                              IsChecked="{Binding IsContinuousMode, Mode=OneWay}"
                                              ToolTip.Tip="纵向连续模式（M 循环切换）">
                   <ui:FACommandBarToggleButton.IconSource>
                     <ui:FASymbolIconSource Symbol="Library" />
                   </ui:FACommandBarToggleButton.IconSource>
                 </ui:FACommandBarToggleButton>
-                <ui:FACommandBarToggleButton Label="横向" Click="OnReaderHorizontalMode"
+                <ui:FACommandBarToggleButton Label="横向" Height="32" MinHeight="32" Click="OnReaderHorizontalMode"
                                              IsChecked="{Binding IsHorizontalMode, Mode=OneWay}"
                                              ToolTip.Tip="横向连续阅读">
                   <ui:FACommandBarToggleButton.IconSource>
@@ -94,7 +117,7 @@
                   </ui:FACommandBarToggleButton.IconSource>
                 </ui:FACommandBarToggleButton>
                 <ui:FACommandBarElementContainer>
-                  <ComboBox Width="128" FontSize="13" FontWeight="Normal" MinHeight="32" VerticalAlignment="Center"
+                  <ComboBox Width="128" FontSize="13" FontWeight="Normal" Height="32" MinHeight="32" VerticalAlignment="Center"
                             AutomationProperties.AutomationId="Reader.FitMode" ItemsSource="{Binding FitOptions}"
                             SelectedItem="{Binding SelectedFit}" ToolTip.Tip="适应方式"
                             AutomationProperties.Name="适应方式">
@@ -105,19 +128,19 @@
                     </ComboBox.ItemTemplate>
                   </ComboBox>
                 </ui:FACommandBarElementContainer>
-                <ui:FACommandBarButton Label="沉浸" Click="OnReaderImmersive" ToolTip.Tip="隐藏导航与页头，Esc 退出">
+                <ui:FACommandBarButton Label="沉浸" Height="32" MinHeight="32" Click="OnReaderImmersive" ToolTip.Tip="隐藏导航与页头，Esc 退出">
                   <ui:FACommandBarButton.IconSource>
                     <ui:FASymbolIconSource Symbol="FullScreen" />
                   </ui:FACommandBarButton.IconSource>
                 </ui:FACommandBarButton>
-                <ui:FACommandBarButton Label="全屏" Click="OnReaderFullscreen" ToolTip.Tip="全屏（F11）">
+                <ui:FACommandBarButton Label="全屏" Height="32" MinHeight="32" Click="OnReaderFullscreen" ToolTip.Tip="全屏（F11）">
                   <ui:FACommandBarButton.IconSource>
                     <ui:FASymbolIconSource Symbol="FullScreenMaximize" />
                   </ui:FACommandBarButton.IconSource>
                 </ui:FACommandBarButton>
               </ui:FACommandBar.PrimaryCommands>
             </ui:FACommandBar>
-            <Button Grid.Column="1" x:Name="ReaderMoreButton" Width="36" Height="36" Padding="0"
+            <Button Grid.Column="1" x:Name="ReaderMoreButton" Width="36" Height="32" MinHeight="32" Padding="0"
                     VerticalAlignment="Center" FontSize="13" FontWeight="Normal"
                     AutomationProperties.AutomationId="Reader.More" AutomationProperties.Name="更多阅读选项" ToolTip.Tip="更多阅读选项">
               <ui:FASymbolIcon Symbol="More" FontSize="16" />
@@ -131,7 +154,8 @@
                             AutomationProperties.AutomationId="Reader.Direction.RightToLeft" ToolTip.Tip="横向连续模式的页面排列" />
                   <MenuItem Header="背景色" Click="OnReaderBackground" />
                   <Separator />
-                  <MenuItem Header="重试本页" Click="OnReaderRetry" />
+                  <MenuItem Header="重试本页" Command="{Binding RetryCurrentCommand}"
+                            AutomationProperties.AutomationId="Reader.Retry" />
                   <MenuItem Header="快捷键帮助" Click="OnReaderHelp" />
                   <Separator />
                   <MenuItem Header="关闭阅读器" Click="OnReaderClose" />

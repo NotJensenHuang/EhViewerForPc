@@ -151,6 +151,7 @@ public sealed class AppSettings
     public double WindowHeight { get; set; } = 700;
     public bool SidebarCollapsed { get; set; }
     public bool WindowMaximized { get; set; }
+    public bool CloseToTray { get; set; } = true;
     public string? LastOpenedStableId { get; set; }
     public bool ShowChromeInReader { get; set; } = true;
     public string? LastScanCompletedUtc { get; set; }

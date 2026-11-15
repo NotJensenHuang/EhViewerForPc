@@ -23,8 +23,7 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // Reader windows are non-modal; without this the process would stay
-            // alive after the library window is closed.
+            // 托盘模式取消主窗关闭并隐藏；真正关闭主窗或托盘退出才结束应用。
             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
 
             StartupOptions options = StartupOptions.Current ?? new StartupOptions();
@@ -115,9 +114,18 @@ public partial class App : Application
             var shell = new ShellViewModel(services);
             var window = new MainWindow(shell);
             desktop.MainWindow = window;
+            DesktopTrayController? tray = null;
+            if (OperatingSystem.IsWindows() && !options.UiSmoke)
+            {
+                tray = new DesktopTrayController(window, services, () => desktop.TryShutdown());
+                tray.Start();
+            }
 
+            bool initialized = false;
             window.Opened += async (_, _) =>
             {
+                if (initialized) return;
+                initialized = true;
                 await shell.InitializeAsync();
                 if (!string.IsNullOrWhiteSpace(options.Gallery))
                 {
@@ -136,10 +144,14 @@ public partial class App : Application
                 }
             };
 
-            desktop.ShutdownRequested += (_, _) =>
+            desktop.Exit += (_, _) =>
             {
-                shell.Dispose();
-                services.Dispose();
+                try { tray?.Dispose(); }
+                finally
+                {
+                    try { shell.Dispose(); }
+                    finally { services.Dispose(); }
+                }
             };
         }
 

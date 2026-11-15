@@ -164,6 +164,8 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     [RelayCommand] private void ManageImageSearch() => ImageSearchRequested?.Invoke(this, EventArgs.Empty);
     private string ImageSearchSourceSelection => string.Join("\n", Sources.Where(row => row.IndexImages).Select(row => row.Source.Id).Order(StringComparer.Ordinal));
     private int _themeIndex;
+    [ObservableProperty]
+    private bool _closeToTray;
     private int _modeIndex;
     private int _fitIndex;
     private int _backgroundIndex;
@@ -251,6 +253,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         _imageSearchProbeIndex = Array.IndexOf(new[] { 4, 16, 64 }, settings.ImageSearch.NProbe);
         _imageSearchAutoUpdate = settings.ImageSearch.AutoUpdateAfterDownload;
         _themeIndex = (int)settings.Theme;
+        _closeToTray = settings.CloseToTray;
         _modeIndex = (int)settings.DefaultReadingMode;
         _fitIndex = (int)settings.DefaultFitMode;
         _backgroundIndex = (int)settings.ReaderBackground;
@@ -1290,6 +1293,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         ApplyEdited("ImageSearch.SourceIds", ImageSearchSourceSelection, _ => settings.ImageSearch.SourceIds = Sources.All(row => row.IndexImages) ? [] : Sources.Where(row => row.IndexImages).Select(row => row.Source.Id).ToList());
         _removedSources.Clear();
         ApplyEdited("Theme", (AppTheme)_themeIndex, value => settings.Theme = value);
+        ApplyEdited("CloseToTray", CloseToTray, value => settings.CloseToTray = value);
         ApplyEdited("DefaultReadingMode", (ReadingMode)_modeIndex, value => settings.DefaultReadingMode = value);
         ApplyEdited("DefaultFitMode", (FitMode)_fitIndex, value => settings.DefaultFitMode = value);
         ApplyEdited("ReaderBackground", (ReaderBackground)_backgroundIndex, value => settings.ReaderBackground = value);
@@ -1364,6 +1368,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         _editBaseline["Download.AddAsSource"] = _downloadAddAsSource;
         _editBaseline["favoriteSlots"] = string.Join("\0", FavoriteSlots.Select(f => f.Name.Trim()));
         _editBaseline["Theme"] = (AppTheme)_themeIndex;
+        _editBaseline["CloseToTray"] = CloseToTray;
         _editBaseline["DefaultReadingMode"] = (ReadingMode)_modeIndex;
         _editBaseline["DefaultFitMode"] = (FitMode)_fitIndex;
         _editBaseline["ReaderBackground"] = (ReaderBackground)_backgroundIndex;
@@ -1382,6 +1387,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
 
     public void RefreshSources()
     {
+        RefreshUnedited("CloseToTray", CloseToTray, _services.Settings.CloseToTray, value => CloseToTray = value);
         RefreshUnedited("ImageSearch.Enabled", ImageSearchEnabled, _services.Settings.ImageSearch.Enabled, value => ImageSearchEnabled = value);
         RefreshUnedited("ImageSearch.StorageDirectory", ImageSearchDirectory, _services.Settings.ImageSearch.StorageDirectory, value => ImageSearchDirectory = value);
         RefreshUnedited("ImageSearch.NProbe", new[] { 4, 16, 64 }[ImageSearchProbeIndex], _services.Settings.ImageSearch.NProbe, value => ImageSearchProbeIndex = Array.IndexOf(new[] { 4, 16, 64 }, value));

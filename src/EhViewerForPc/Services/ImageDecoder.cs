@@ -623,7 +623,7 @@ public sealed class ImageDecoder : IDisposable
         }
     }
 
-    private static SKMatrix CreateOrientationMatrix(SKEncodedOrigin origin, int width, int height)
+    internal static SKMatrix CreateOrientationMatrix(SKEncodedOrigin origin, int width, int height)
     {
         var matrix = SKMatrix.CreateIdentity();
         switch (origin)

@@ -865,12 +865,12 @@ public sealed class EhClient : IDisposable
     public async Task<string> GetImageUrlAsync(EhPageRef page, bool original, CancellationToken cancellationToken) =>
         (await ResolveImageAsync(page, original, cancellationToken).ConfigureAwait(false)).Url;
 
-    public async Task<EhResolvedImage> ResolveImageAsync(EhPageRef page, bool original, CancellationToken cancellationToken, int? resampledWidth = null)
+    public async Task<EhResolvedImage> ResolveImageAsync(EhPageRef page, bool original, CancellationToken cancellationToken, int? resampledWidth = null, bool refresh = false)
     {
         string pageUrl = page.PageUrl.Length > 0 ? page.PageUrl : EhUrls.ImagePage(Site, page);
         int width = resampledWidth ?? ResampledWidth;
         string key = pageUrl + (original ? "|orig" : "|res") + "|" + width;
-        lock (_cacheGate) { if (_imageUrlCache.TryGetValue(key, out var cached)) return cached; }
+        lock (_cacheGate) { if (!refresh && _imageUrlCache.TryGetValue(key, out var cached)) return cached; }
         string html;
         await _viewerResolutionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

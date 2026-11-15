@@ -19,6 +19,7 @@ using EhViewerForPc.ViewModels;
 using EhViewerForPc.Views;
 using FluentAvalonia.UI.Controls;
 using Microsoft.Data.Sqlite;
+using SkiaSharp;
 
 namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
@@ -134,8 +135,13 @@ public sealed class ImageSearchIntegrationTests
         Assert.Equal(2, scope.Services.Downloads.Tasks.Select(t => t.Id).Distinct().Count());
         Assert.True(shell.Library.HasRepairFailures);
         Assert.Contains("43-缺少链接", shell.Library.RepairFailureDetails);
+        int indexChanges = 0, scans = 0;
+        shell.Library.LocalIndexChanged += (_, _) => indexChanges++;
+        shell.Library.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(MainViewModel.IsScanning)) scans++; };
         await shell.Library.FillMissingPagesCommand.ExecuteAsync(null);
         Assert.Equal(2, scope.Services.Downloads.Tasks.Count);
+        Assert.Equal(0, scans);
+        Assert.Equal(0, indexChanges);
     }
 
     [AvaloniaFact]
@@ -854,12 +860,20 @@ public sealed class ImageSearchIntegrationTests
         try
         {
             window.Show(); Dispatcher.UIThread.RunJobs();
-            using var bitmap = new Bitmap(new MemoryStream(SyntheticImages.Create(42, 200, 280).EncodePng()));
+            using var colorImage = new SKBitmap(200, 280);
+            colorImage.Erase(new SKColor(235, 40, 80));
+            using var encoded = colorImage.Encode(SKEncodedImageFormat.Png, 100);
+            using var bitmap = new Bitmap(new MemoryStream(encoded.ToArray()));
             await window.Clipboard!.SetBitmapAsync(bitmap);
             var paste = page.GetVisualDescendants().OfType<Button>().First(b => AutomationProperties.GetAutomationId(b) == "ImageSearch.Paste");
             paste.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitForAsync(() => vm.HasInput);
             Assert.Equal("剪贴板图片", vm.InputName); Assert.Equal(200, vm.ImageWidth); Assert.Equal(280, vm.ImageHeight);
+            using var previewStream = new MemoryStream();
+            vm.QueryPreview!.Save(previewStream, PngBitmapEncoderOptions.Default);
+            using var preview = SKBitmap.Decode(previewStream.ToArray());
+            var pixel = preview.GetPixel(100, 140);
+            Assert.True(pixel.Red > 200 && pixel.Green < 80 && pixel.Blue < 110, "剪贴板预览丢失颜色：" + pixel);
             var surface = page.FindControl<Grid>("PreviewSurface")!;
             Point origin = surface.TranslatePoint(default, window)!.Value;
             double left = origin.X + (surface.Bounds.Width - 200) / 2;
@@ -1050,7 +1064,17 @@ public sealed class ImageSearchIntegrationTests
             var fit = window.GetVisualDescendants().OfType<ComboBox>().Single(c => AutomationProperties.GetAutomationId(c) == "Reader.FitMode");
             Assert.Equal(13, fit.FontSize);
             Assert.True(fit.Bounds.Height <= 40, $"Fit height: {fit.Bounds.Height}");
+            var commands = window.FindControl<FACommandBar>("ReaderCommands")!;
+            foreach (var command in commands.PrimaryCommands.OfType<Control>().Where(c => c is FACommandBarButton or FACommandBarToggleButton))
+            {
+                Assert.Equal(fit.Bounds.Height, command.Bounds.Height);
+                var background = command.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "AppBarButtonInnerBorder");
+                Assert.Equal(fit.Bounds.Height, background.Bounds.Height);
+                Assert.Equal(fit.TranslatePoint(default, window)!.Value.Y, background.TranslatePoint(default, window)!.Value.Y);
+                Assert.Equal(20, command.GetVisualDescendants().OfType<Viewbox>().Single(v => v.Name == "ContentViewbox").Bounds.Height);
+            }
             var more = window.FindControl<Button>("ReaderMoreButton")!;
+            Assert.Equal(fit.Bounds.Height, more.Bounds.Height);
             var position = more.TranslatePoint(default, window)!.Value;
             Assert.True(position.X >= 0 && position.X + more.Bounds.Width <= width, $"More position: {position}");
             var menu = Assert.IsType<MenuFlyout>(more.Flyout);

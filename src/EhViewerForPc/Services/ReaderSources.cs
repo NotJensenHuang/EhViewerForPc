@@ -41,11 +41,14 @@ public sealed class LocalReaderSource : IReaderSource
 {
     private readonly AppServices _services;
     private readonly GalleryInfo _gallery;
+    private readonly GalleryPage[] _pages;
+    private IReadOnlyList<PageRange> _missingRanges;
 
     public LocalReaderSource(AppServices services, GalleryInfo gallery)
     {
         _services = services;
         _gallery = gallery;
+        _missingRanges = gallery.MissingRanges;
         services.Works.Upsert(new WorkRecord { WorkId = gallery.WorkId, Gid = gallery.Gid, Token = gallery.Token,
             Title = gallery.DisplayTitle, PageCount = gallery.ExpectedPages ?? gallery.PageCount });
 
@@ -66,7 +69,7 @@ public sealed class LocalReaderSource : IReaderSource
                 State = page?.State ?? PageState.Empty,
             };
         }
-        Pages = pages;
+        _pages = pages;
         IsComplete = !gallery.IsIncomplete && !scan.IsIncomplete && present == count;
         if (scanError is not null)
         {
@@ -80,17 +83,35 @@ public sealed class LocalReaderSource : IReaderSource
     public string Title => _gallery.DisplayTitle;
     public string SourceLabel => _gallery.SourceName;
     public string DebugInfo => $"{_gallery.StableId} · {Pages.Count} 页 · {_gallery.ExtensionSummary}";
-    public IReadOnlyList<GalleryPage> Pages { get; }
+    public IReadOnlyList<GalleryPage> Pages => _pages;
     public int ExpectedPageCount => Math.Max(_gallery.ExpectedPages ?? 0, Pages.Count);
-    public bool IsComplete { get; }
+    public bool IsComplete { get; private set; }
 
-    public string MissingSummary => _gallery.MissingRanges.Count == 0
+    public string MissingSummary => _missingRanges.Count == 0
         ? string.Empty
-        : "缺页 " + string.Join(", ", _gallery.MissingRanges.Select(r => r.ToString()));
+        : "缺页 " + string.Join(", ", _missingRanges.Select(r => r.ToString()));
 
     public IImageRequest CreateRequest(int index, bool refresh = false) =>
         Pages[index].Candidates.Count == 0 ? NullImageRequest.Instance
             : new PageImageRequest(Pages[index].Candidates, _services.Images);
+
+    internal Task RedownloadPageAsync(int index, CancellationToken token) =>
+        _services.RetryLocalPageAsync(_gallery, Pages[index], token);
+
+    internal async Task ReloadPageAsync(int index, CancellationToken token)
+    {
+        int number = Pages[index].Number;
+        var scan = await Task.Run(() => PageFileParser.Scan(_gallery.FolderPath,
+            _gallery.ExpectedPages is > 0 ? new SpiderHeader { HasPages = true, Pages = _gallery.ExpectedPages.Value } : null, out _), token);
+        var page = scan.Pages.FirstOrDefault(p => p.Number == number);
+        _pages[index] = new GalleryPage
+        {
+            Number = number, DisplayIndex = index,
+            Candidates = page?.Candidates ?? [], State = page?.State ?? PageState.Empty,
+        };
+        IsComplete = Pages.Count > 0 && Pages.All(p => p.IsReadableCandidate);
+        _missingRanges = scan.MissingRanges;
+    }
 
     public Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(
         int focusPageNumber,

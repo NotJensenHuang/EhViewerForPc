@@ -29,7 +29,9 @@ public sealed class PageImageRequest : IImageRequest
     {
         _candidates = candidates;
         _loader = loader;
-        Key = candidates.Count == 0 ? "empty" : candidates[0].FilePath;
+        // 同一路径可被用户重下载；文件版本变化必须使连续阅读和预取位图失效。
+        Key = candidates.Count == 0 ? "empty" : string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"{candidates[0].FilePath}|{candidates[0].Length}|{candidates[0].MtimeTicks}");
     }
 
     public string Key { get; }

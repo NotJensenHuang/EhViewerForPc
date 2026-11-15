@@ -1,5 +1,15 @@
 # 变更记录
 
+## 2026-11-15 托盘后台运行、彩色预览与补页阅读修复
+
+- `DesktopTrayController.cs`、`App.axaml.cs`、`AppSettings.cs`、`SettingsViewModel.cs`、`SettingsPage.axaml`：加入 Windows 托盘和默认关闭到后台的可调设置，显示原窗口 / 显式退出；恢复不重复初始化，实际退出后再按原顺序释放服务。
+- `QueryImagePreview.cs`、`ImageSearchViewModel.cs`、`ImageDecoder.cs`：预览保留颜色、透明度和 EXIF 方向，独立于检索灰度流程，沿用输入预算与原始裁剪坐标。
+- `AppServices.LocalDownloads.cs`、`DownloadManager.Repair*.cs`、`DownloadsViewModel.cs`：无变化的副本核对不发布索引更新，空批次和重复入队不重复触发下载队列；暂停 / 运行状态变化不重扫未变化的目录。
+- `MainWindow.axaml`：阅读工具栏按钮与适应方式 ComboBox 统一为 32 DIP 高，保留窄窗口 36 DIP 图标宽度。
+- `DownloadManager.PageRetry.cs`、`EhClient.cs`、`ReaderSources.cs`、`ReaderViewModel.cs`：本地重试只重新下载选中页，绕过本地图片和 URL 缓存，等待同目录在途写入并原子替换；并发合并，失败保留原页，退出取消并等待收尾。
+- `ImageRequest.cs`、`ContinuousPageItem.cs`：本地请求键带文件版本，重试后更新页候选、缺页占位与尺寸；普通目录无链接时只重新载入并显示原因。
+- `tests/`、双语 README、`PRODUCT.md`、`DESIGN.md`：补充重复补页、三种模式、失败 / 并发 / 退出与工具栏主题及断点回归；证据见 `docs/托盘与阅读检索界面修复-2026-11-15.md`。
+
 ## 2026-11-15 CPU 检索、旧缓存迁移、补页等待进度与普通图片目录
 
 - `ImageSearch/DiskInvertedIndex.cs`、`BinaryDescriptor.cs`、`ImageSearchEngine.cs`、`SearchOptions.cs`：按桶顺序整块读取，Windows x64 直接解压到顺序布局记录，保留校验与取消；默认最多 8 个读取线程，移除逐向量迭代 / 计时 / 原子计数开销，不改变索引格式。

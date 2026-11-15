@@ -322,6 +322,12 @@
         <!-- ============================================================ 阅读 -->
         <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='4'}">
           <TextBlock Classes="group-title" Text="默认阅读" />
+          <controls:SettingsRow Header="关闭窗口后后台运行" Description="关闭到托盘，从托盘菜单退出程序。">
+            <controls:SettingsRow.Action>
+              <ToggleSwitch IsChecked="{Binding CloseToTray}" OnContent="开启" OffContent="关闭"
+                            AutomationProperties.AutomationId="Settings.CloseToTray" AutomationProperties.Name="关闭窗口后后台运行" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
           <controls:SettingsRow Header="主题">
             <controls:SettingsRow.Action>
               <ComboBox Width="180" ItemsSource="{Binding ThemeLabels}" SelectedIndex="{Binding ThemeIndex}" AutomationProperties.Name="主题" />

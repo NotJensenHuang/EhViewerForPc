@@ -315,28 +315,66 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         PreloadRequest = _index + 1 < _pages.Count ? _source.CreateRequest(_index + 1, refresh) : null;
     }
 
-    /// <summary>Re-creates the current page request so a failed load retries.</summary>
+    /// <summary>本地页经下载服务重下载；更新当前页候选和画面，不改变阅读位置。</summary>
     [RelayCommand]
-    private void RetryCurrent()
+    private async Task RetryCurrentAsync()
     {
-        if (_pages.Count == 0) return;
+        if (_disposed || _pages.Count == 0) return;
         int index = Math.Clamp(_index, 0, _pages.Count - 1);
+        if (_source is LocalReaderSource local)
+        {
+            RestoreHint = $"正在重新下载第 {_pages[index].Number} 页…";
+            ShowRestoreHint = true;
+            _hintTimer.Stop();
+            try
+            {
+                await local.RedownloadPageAsync(index, _lifetime.Token);
+                if (_disposed) return;
+                RestoreHint = $"第 {_pages[index].Number} 页已重新下载";
+            }
+            catch (OperationCanceledException) when (_disposed) { return; }
+            catch (Exception error)
+            {
+                if (_disposed) return;
+                RestoreHint = error.Message;
+            }
+            try
+            {
+                await local.ReloadPageAsync(index, _lifetime.Token);
+                if (_disposed) return;
+                _pages[index] = _source.Pages[index];
+                OnPropertyChanged(nameof(MissingSummary));
+                if (_pages[index].Primary is { Length: > 0 } candidate &&
+                    (index < _continuousItems.Count || index < _horizontalItems.Count))
+                {
+                    var size = await _services.Decoder.ReadDimensionAsync(candidate.FilePath, _lifetime.Token);
+                    if (_disposed) return;
+                    if (size is { } dimensions) RefineDimension(index, dimensions.DisplayWidth, dimensions.DisplayHeight);
+                }
+            }
+            catch (OperationCanceledException) when (_disposed) { return; }
+            catch (Exception error)
+            {
+                if (_disposed) return;
+                RestoreHint = error.Message;
+            }
+            _hintTimer.Start();
+            UpdateLabels();
+        }
+        if (index < _continuousItems.Count)
+        {
+            _continuousItems[index].UpdatePage(_pages[index], _source.CreateRequest(index, refresh: true));
+        }
+        if (index < _horizontalItems.Count)
+        {
+            _horizontalItems[index].UpdatePage(_pages[index], _source.CreateRequest(index, refresh: true));
+        }
         if (IsSingleMode)
         {
+            // 等待期间可以翻页；完成后更新当前画面，不把读者拉回被重试的页。
             UpdateCurrentRequests(refresh: true);
             OnPropertyChanged(nameof(SingleRequest));
             OnPropertyChanged(nameof(PreloadRequest));
-            return;
-        }
-
-        if (index < _continuousItems.Count)
-        {
-            _continuousItems[index].UpdateRequest(_source.CreateRequest(index, refresh: true));
-        }
-
-        if (index < _horizontalItems.Count)
-        {
-            _horizontalItems[index].UpdateRequest(_source.CreateRequest(index, refresh: true));
         }
     }
 

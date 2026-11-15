@@ -69,7 +69,7 @@ public sealed partial class DownloadManager
         }
         if (changes.Count > 0) RaiseChanged();
         foreach (var change in changes) RaiseTask(change.Task);
-        if (startImmediately) SchedulePump();
+        if (startImmediately && changes.Count > 0) SchedulePump();
         return new(added, continued, existing, failures);
     }
 

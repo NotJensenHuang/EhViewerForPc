@@ -26,7 +26,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private int _updateQueued;
     private readonly DispatcherTimer _libraryTimer;
     private readonly Dictionary<string, DownloadTask> _libraryUpdates = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, (int Pages, string Folder, DownloadState State)> _imported = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (int Pages, string Folder, int Total, bool Complete)> _imported = new(StringComparer.Ordinal);
     private bool _importing;
 
     public DownloadsViewModel(AppServices services, MainViewModel library)
@@ -196,7 +196,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         if ((!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) ||
             (!_services.Settings.Download.RefreshLibraryOnComplete && !task.FillMissingOnly) || task.DownloadedPages == 0) return;
-        var stamp = (task.DownloadedPages, task.FolderPath, task.State);
+        var stamp = (task.DownloadedPages, task.FolderPath, task.PageCount, task.State == DownloadState.Completed);
         if (_imported.TryGetValue(task.Id, out var previous) && previous == stamp) return;
         _libraryUpdates[task.Id] = task;
         if (!_importing) _libraryTimer.Start();
@@ -214,7 +214,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             foreach (var task in pending)
             {
                 if (_disposed || (!_services.Downloads.IsQueued(task) && task.State != DownloadState.Completed)) continue;
-                var stamp = (task.DownloadedPages, task.FolderPath, task.State);
+                var stamp = (task.DownloadedPages, task.FolderPath, task.PageCount, task.State == DownloadState.Completed);
                 try
                 {
                     await _library.ImportDownloadAsync(task);
