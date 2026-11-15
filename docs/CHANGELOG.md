@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-11-15 补齐托盘平台注册、设置入口与增量复用批次
+
+- `DesktopTrayController.cs`：托盘加入 Application 的 `TrayIcons` 才启动原生创建，释放时移除自身；失去注册后不再隐藏主窗。
+- `SettingsViewModel.cs`、`SettingsPage.axaml`：分类改为「界面与阅读」，分开「窗口与外观」和「默认阅读」，使后台运行开关可查找。
+- `MainWindow.axaml(.cs)`：顶部改用标准原生按钮，底板与 ComboBox 统一 32 DIP，保留窄窗图标模式和重复点击后的选中状态。
+- `LocalImageSearchService.Pipeline.cs`：纯复用元数据最多 1024 条提交，新特征仍按原小批上限；进度区分复用和新提取，保留既有索引及断点。
+- `tests/`：补充托盘注册和平台创建 / 释放、按分类名定位设置、144 页增量提交次数与断点恢复，避免仅检查对象属性的假通过。验证见 `docs/托盘注册与增量更新修复-2026-11-15.md`。
+
 ## 2026-11-15 托盘后台运行、彩色预览与补页阅读修复
 
 - `DesktopTrayController.cs`、`App.axaml.cs`、`AppSettings.cs`、`SettingsViewModel.cs`、`SettingsPage.axaml`：加入 Windows 托盘和默认关闭到后台的可调设置，显示原窗口 / 显式退出；恢复不重复初始化，实际退出后再按原顺序释放服务。

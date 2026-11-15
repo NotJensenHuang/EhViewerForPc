@@ -381,7 +381,7 @@ public sealed class ImageSearchIntegrationTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => scope.Services.ImageSearch.BuildAsync(snapshot,
             new InlineIndexProgress(p =>
             {
-                if (!p.Message.StartsWith("正在提取页图…", StringComparison.Ordinal)) return;
+                if (p.Phase != ImageIndexBuildPhase.Extracting) return;
                 Assert.Equal(0, scope.Services.ImageSearch.PlanStatistics!.EnumeratedGalleries);
                 first = p; canceled.Cancel();
             }), canceled.Token));
@@ -456,7 +456,7 @@ public sealed class ImageSearchIntegrationTests
             new InlineIndexProgress(p => { if (p.Message == "正在训练图片索引…") interrupted.Cancel(); }), interrupted.Token));
         bool extracted = false;
         var result = await scope.Services.ImageSearch.BuildAsync(snapshot, new InlineIndexProgress(p =>
-            extracted |= p.Message.StartsWith("正在提取页图", StringComparison.Ordinal)), CancellationToken.None);
+            extracted |= p.Phase == ImageIndexBuildPhase.Extracting), CancellationToken.None);
         Assert.False(extracted);
         Assert.Equal(6, result.Indexed);
     }
@@ -474,7 +474,7 @@ public sealed class ImageSearchIntegrationTests
         Assert.Equal(ImageIndexBuildPhase.CheckingSources, ReadCheckpoint(scope).Phase);
         var result = await scope.Services.ImageSearch.BuildAsync(galleries, new InlineIndexProgress(p =>
         {
-            Assert.False(p.Message.StartsWith("正在提取页图", StringComparison.Ordinal));
+            Assert.False(p.Phase == ImageIndexBuildPhase.Extracting);
             Assert.NotEqual("正在训练图片索引…", p.Message);
             Assert.NotEqual("正在构建图片索引…", p.Message);
         }), CancellationToken.None);
@@ -501,7 +501,7 @@ public sealed class ImageSearchIntegrationTests
         bool built = false, verified = false;
         var result = await scope.Services.ImageSearch.BuildAsync(galleries, new InlineIndexProgress(p =>
         {
-            Assert.False(p.Message.StartsWith("正在提取页图", StringComparison.Ordinal));
+            Assert.False(p.Phase == ImageIndexBuildPhase.Extracting);
             Assert.NotEqual("正在训练图片索引…", p.Message);
             if (p.Message == "正在构建图片索引…")
             {
@@ -560,6 +560,28 @@ public sealed class ImageSearchIntegrationTests
         Assert.True(scope.Services.ImageSearch.BuildStatistics!.Unchanged);
         var hits = await scope.Services.ImageSearch.SearchAsync(File.ReadAllBytes(Path.Combine(copies[0].FolderPath, "00000001.png")), null, copies, CancellationToken.None);
         Assert.Contains(hits, h => h.Gallery.SourceId == copies[1].SourceId && h.PageNumber == 1);
+    }
+
+    [AvaloniaFact]
+    public async Task IncrementalReuseUsesMetadataBatchesWithoutRedecodingUnchangedPages()
+    {
+        using var scope = new Fixture(); var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        byte[] repeated = SyntheticImages.Create(42, 200, 280).EncodePng();
+        for (int page = 1; page <= 140; page++)
+            File.WriteAllBytes(Path.Combine(copies[0].FolderPath, $"{page:D8}.png"), repeated);
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        var options = new IndexBuildOptions { Workers = 2, UseGpu = false };
+        await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None, options: options);
+        File.WriteAllBytes(Path.Combine(copies[0].FolderPath, "00000141.png"), SyntheticImages.Create(97, 200, 280).EncodePng());
+        var statuses = new List<LocalImageSearchStatus>();
+        var updated = await scope.Services.ImageSearch.BuildAsync(snapshot, new InlineIndexProgress(statuses.Add), CancellationToken.None, options: options);
+        var statistics = scope.Services.ImageSearch.BuildStatistics!;
+        Assert.Equal(143, updated.Reused);
+        Assert.Equal(1, statistics.DecodedPages);
+        Assert.Equal(1, statistics.ExtractedPages);
+        Assert.Equal(1, statistics.CommittedBatches);
+        Assert.Contains(statuses, s => s.Message.Contains("复用") && s.Message.Contains("新提取"));
     }
 
     [AvaloniaFact]
@@ -1064,15 +1086,19 @@ public sealed class ImageSearchIntegrationTests
             var fit = window.GetVisualDescendants().OfType<ComboBox>().Single(c => AutomationProperties.GetAutomationId(c) == "Reader.FitMode");
             Assert.Equal(13, fit.FontSize);
             Assert.True(fit.Bounds.Height <= 40, $"Fit height: {fit.Bounds.Height}");
-            var commands = window.FindControl<FACommandBar>("ReaderCommands")!;
-            foreach (var command in commands.PrimaryCommands.OfType<Control>().Where(c => c is FACommandBarButton or FACommandBarToggleButton))
+            var commands = window.FindControl<StackPanel>("ReaderCommands")!;
+            foreach (var command in commands.Children.OfType<Button>())
             {
                 Assert.Equal(fit.Bounds.Height, command.Bounds.Height);
-                var background = command.GetVisualDescendants().OfType<Border>().Single(b => b.Name == "AppBarButtonInnerBorder");
+                var background = command.GetVisualChildren().OfType<Control>().Single();
                 Assert.Equal(fit.Bounds.Height, background.Bounds.Height);
                 Assert.Equal(fit.TranslatePoint(default, window)!.Value.Y, background.TranslatePoint(default, window)!.Value.Y);
-                Assert.Equal(20, command.GetVisualDescendants().OfType<Viewbox>().Single(v => v.Name == "ContentViewbox").Bounds.Height);
             }
+            var single = commands.Children.OfType<Avalonia.Controls.Primitives.ToggleButton>().First();
+            Point center = single.TranslatePoint(new Point(single.Bounds.Width / 2, single.Bounds.Height / 2), window)!.Value;
+            window.MouseDown(center, MouseButton.Left);
+            window.MouseUp(center, MouseButton.Left);
+            Assert.True(single.IsChecked);
             var more = window.FindControl<Button>("ReaderMoreButton")!;
             Assert.Equal(fit.Bounds.Height, more.Bounds.Height);
             var position = more.TranslatePoint(default, window)!.Value;

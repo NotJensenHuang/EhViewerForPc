@@ -96,6 +96,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - The backend is pure C#, reusing SkiaSharp and SQLite with no additional runtime; a separate windowless host exists for build and verification. Source galleries are never written to
   - Validated quantizers and bucket tables are reused per immutable generation; file changes or a new publication trigger validation again. Initial loading shows checksum progress before the 30-second search budget starts. Descriptors are decompressed in batches and hit aliases are matched in one pass over legacy manifests, preserving existing index compatibility
   - Queries use CPU block reads and distance comparisons with up to eight readers by default, bounded by logical processor count. Buckets are visited in order, avoiding per-vector iteration, timing and atomic counters. GPU retrieval is omitted by user choice; existing GPU acceleration for index building remains
+  - Incremental updates show reused pages separately from newly extracted pages. Reused metadata commits in batches of up to 1024; new features keep small batches, preserving checkpoints and existing indexes
   - File and clipboard query previews preserve colour and EXIF orientation. The preview is limited to 2048 pixels on its longest edge, while cropping uses original-image coordinates; grayscale conversion is used only for retrieval
   - Five center-cropped images from a real library have found their original pages using the existing 435,605-page index. Samples, timings and limits are in the [search and repair validation report](docs/实际索引裁剪检索与补页修复-2026-11-14.md); this is not a full-library recall measurement
 
@@ -106,7 +107,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - Settings are grouped into categories and take effect on "Save settings"; saving uses an incremental merge so cached startup values cannot overwrite sources added at runtime
 
 - 🪟 **Interface and Navigation**
-  - The Windows tray offers "Show window / Exit". Closing the window keeps downloads and image indexing running by default and restores the same reader. Disable this under Settings → Interface → Keep running after closing the window; tray Exit releases application services
+  - The Windows tray offers "Show window / Exit". Closing the window keeps downloads and image indexing running by default and restores the same reader. Disable this under Settings → Interface and Reading → Keep running after closing the window; tray Exit releases application services
   - FluentAvaloniaUI `FANavigationView` + `FAFrame` history with back, forward and Alt+← / Alt+→
   - System / light / dark themes; the sidebar can collapse and remembers its state, collapses automatically in narrow windows, and list and scroll positions are preserved
   - Online and local details share `GalleryDetailsView`; descriptive text in Settings, details and the status bar can be selected and copied

@@ -4,6 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- 仅测试替换无窗口平台，核对 TrayIcon 注册是否真正创建 / 释放原生实现。 -->
+    <AvaloniaAccessUnstablePrivateApis>true</AvaloniaAccessUnstablePrivateApis>
     <OutputType>Exe</OutputType>
     <Platforms>AnyCPU;x64</Platforms>
   </PropertyGroup>

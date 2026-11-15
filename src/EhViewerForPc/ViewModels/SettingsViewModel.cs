@@ -291,7 +291,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public string[] FilterTargetLabels { get; } = ["标签", "标题", "上传者"];
 
     /// <summary>Settings categories, in the order the page presents them.</summary>
-    public string[] Categories { get; } = ["账号", "网络", "浏览", "下载", "阅读", "资料库", "维护"];
+    public string[] Categories { get; } = ["账号", "网络", "浏览", "下载", "界面与阅读", "资料库", "维护"];
 
     private int _selectedCategoryIndex;
 

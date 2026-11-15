@@ -1,10 +1,12 @@
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Controls.Platform;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Avalonia.Styling;
 using Avalonia.VisualTree;
+using Avalonia.Platform;
 using EhViewerForPc.Core.Download;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Storage;
@@ -17,6 +19,72 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
 public sealed class TrayIntegrationTests
 {
+    [AvaloniaFact]
+    public void RegistrationCreatesAndDisposesThePlatformTrayImplementation()
+    {
+        using var fixture = new ReaderRetryIntegrationTests.Fixture();
+        using var shell = new ShellViewModel(fixture.Services);
+        var window = new MainWindow(shell);
+        using var locator = AvaloniaLocator.EnterScope();
+        var platform = new TrayPlatformSpy(AvaloniaLocator.Current.GetRequiredService<IWindowingPlatform>());
+        AvaloniaLocator.CurrentMutable.Bind<IWindowingPlatform>().ToConstant(platform);
+        using var tray = new DesktopTrayController(window, fixture.Services, () => false);
+        try
+        {
+            Assert.True(tray.Start());
+            Assert.Equal(1, platform.Created);
+            Assert.NotNull(platform.Tray.Icon);
+            Assert.Equal("EhViewer for PC", platform.Tray.ToolTip);
+            Assert.True(platform.Tray.Visible);
+            tray.Dispose();
+            Assert.Equal(1, platform.Tray.DisposeCount);
+        }
+        finally { tray.Dispose(); window.Close(); }
+    }
+
+    private sealed class TrayPlatformSpy(IWindowingPlatform inner) : IWindowingPlatform
+    {
+        internal int Created;
+        internal TrayImplementationSpy Tray { get; } = new();
+        public IWindowImpl CreateWindow() => inner.CreateWindow();
+        public ITopLevelImpl CreateEmbeddableTopLevel() => inner.CreateEmbeddableTopLevel();
+        public IWindowImpl CreateEmbeddableWindow() => inner.CreateEmbeddableWindow();
+        public ITrayIconImpl CreateTrayIcon() { Created++; return Tray; }
+        public void GetWindowsZOrder(ReadOnlySpan<IWindowImpl> windows, Span<long> zOrder) => inner.GetWindowsZOrder(windows, zOrder);
+    }
+
+    private sealed class TrayImplementationSpy : ITrayIconImpl
+    {
+        internal IWindowIconImpl? Icon;
+        internal string? ToolTip;
+        internal bool Visible;
+        internal int DisposeCount;
+        public INativeMenuExporter? MenuExporter => null;
+        public Action? OnClicked { get; set; }
+        public void SetIcon(IWindowIconImpl? icon) => Icon = icon;
+        public void SetToolTipText(string? text) => ToolTip = text;
+        public void SetIsVisible(bool visible) => Visible = visible;
+        public void Dispose() => DisposeCount++;
+    }
+
+    [AvaloniaFact]
+    public void TrayIsRegisteredOnTheApplicationAndRemovedOnDispose()
+    {
+        using var fixture = new ReaderRetryIntegrationTests.Fixture();
+        using var shell = new ShellViewModel(fixture.Services);
+        var window = new MainWindow(shell);
+        using var tray = new DesktopTrayController(window, fixture.Services, () => false);
+        try
+        {
+            Assert.True(tray.Start());
+            Assert.Contains(tray.Icon!, TrayIcon.GetIcons(Application.Current!) ?? []);
+            var icon = tray.Icon!;
+            tray.Dispose();
+            Assert.DoesNotContain(icon, TrayIcon.GetIcons(Application.Current!) ?? []);
+        }
+        finally { tray.Dispose(); window.Close(); }
+    }
+
     [AvaloniaFact]
     public async Task ClosingHidesTheSameReaderAndBackgroundDownloadContinues()
     {
@@ -172,7 +240,10 @@ public sealed class TrayIntegrationTests
     public void SettingsSwitchUsesTheCompiledPreferenceBinding(int width, bool light)
     {
         using var fixture = new ReaderRetryIntegrationTests.Fixture();
-        using var editor = new SettingsViewModel(fixture.Services) { SelectedCategoryIndex = 4 };
+        using var editor = new SettingsViewModel(fixture.Services);
+        int category = Array.IndexOf(editor.Categories, "界面与阅读");
+        Assert.True(category >= 0, "托盘与外观设置必须有可查找的界面分类");
+        editor.SelectedCategoryIndex = category;
         Application.Current!.RequestedThemeVariant = light ? ThemeVariant.Light : ThemeVariant.Dark;
         var page = new SettingsPage { DataContext = editor };
         var window = new Window { Width = width, Height = width == 540 ? 420 : 600, Content = page };

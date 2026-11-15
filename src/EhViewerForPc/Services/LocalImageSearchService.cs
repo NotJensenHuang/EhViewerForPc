@@ -16,6 +16,7 @@ public sealed record ImageSearchGallery(string SourceId, string StableId, string
 public sealed record LocalImageSearchStatus(string Message, int Processed = 0, int Total = 0, int Indexed = 0, int Skipped = 0, int Failed = 0, int Reused = 0, bool CanResume = false)
 {
     public IndexBuildProgress? IndexProgress { get; init; }
+    public ImageIndexBuildPhase? Phase { get; init; }
 }
 /// <summary>Identifies an exact physical page and its owning local copy.</summary>
 public sealed record LocalImageSearchHit(GalleryInfo Gallery, int PageNumber, string FilePath, long Length, long MtimeTicks, float Score, string GenerationId);

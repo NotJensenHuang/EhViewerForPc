@@ -632,7 +632,13 @@ public partial class MainWindow : Window
     private void OnReaderImmersiveChanged(object? sender, bool immersive) => UpdateAdaptiveLayout();
 
     // ------------------------------------------------- reader header commands
-    private async void OnReaderSingleMode(object? sender, RoutedEventArgs e) { if (ActiveReader is { } r) await r.SetSingleModeAsync(); }
+    private async void OnReaderSingleMode(object? sender, RoutedEventArgs e)
+    {
+        if (ActiveReader is not { } reader) return;
+        await reader.SetSingleModeAsync();
+        if (sender is Avalonia.Controls.Primitives.ToggleButton button)
+            button.SetCurrentValue(Avalonia.Controls.Primitives.ToggleButton.IsCheckedProperty, reader.ViewModel.IsSingleMode);
+    }
     private async void OnReaderContinuousMode(object? sender, RoutedEventArgs e) { if (ActiveReader is { } r) await r.ToggleContinuousModeAsync(); }
     private async void OnReaderHorizontalMode(object? sender, RoutedEventArgs e) { if (ActiveReader is { } r) await r.ToggleHorizontalModeAsync(); }
     private void OnReaderImmersive(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleImmersive();
@@ -659,15 +665,13 @@ public partial class MainWindow : Window
         Navigation.Header = immersive ? null : HeaderHost;
         if (!immersive) UpdateHeaderForContent();
         // Narrow headers keep icons only so the command row always fits;
-        // the labels stay available as tooltips and in the overflow menu.
-        ReaderCommands.DefaultLabelPosition = narrow
-            ? FACommandBarDefaultLabelPosition.Collapsed
-            : FACommandBarDefaultLabelPosition.Right;
-        foreach (var command in ReaderCommands.PrimaryCommands.OfType<Control>())
+        // the labels stay available as tooltips.
+        ReaderCommands.Classes.Set("compact", narrow);
+        foreach (var command in ReaderCommands.Children.OfType<Button>())
         {
-            if (command is not (FACommandBarButton or FACommandBarToggleButton)) continue;
             command.MinWidth = narrow ? 36 : 0;
             command.Width = narrow ? 36 : double.NaN;
+            command.Padding = new Thickness(narrow ? 6 : 8, 0);
         }
         if (_lastNarrow != narrow)
         {

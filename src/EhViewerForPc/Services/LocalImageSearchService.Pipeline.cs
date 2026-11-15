@@ -243,9 +243,17 @@ public sealed partial class LocalImageSearchService
         SqliteTransaction? transaction = null;
         var restored = ReadPlanResult(manifest);
         int processed = restored.Processed, indexed = restored.Indexed, skipped = restored.Skipped,
-            failed = restored.Failed, reused = restored.Reused, buffered = 0, commits = 0;
+            failed = restored.Failed, reused = restored.Reused, buffered = 0, extractionPages = 0, commits = 0;
         bool needsBuild = false, writeFailed = false;
         long writeTicks = 0;
+        long lastProgress = Environment.TickCount64;
+        string phase = previous is null ? "正在提取新页图" : "正在更新页图索引";
+        void ReportProgress()
+        {
+            progress?.Report(new($"{phase} {processed:N0} / {total:N0} · 复用 {reused:N0} · 新提取 {Volatile.Read(ref counters.Extracted):N0} · {options.Workers} 并行",
+                processed, total, indexed, skipped, failed, reused) { Phase = ImageIndexBuildPhase.Extracting });
+            lastProgress = Environment.TickCount64;
+        }
         void Flush()
         {
             if (buffered == 0) return;
@@ -256,6 +264,7 @@ public sealed partial class LocalImageSearchService
             transaction?.Dispose();
             transaction = null;
             buffered = 0;
+            extractionPages = 0;
             commits++;
             writeTicks += Stopwatch.GetTimestamp() - start;
         }
@@ -278,7 +287,9 @@ public sealed partial class LocalImageSearchService
                 {
                     committedPage = true;
                     if (result.Descriptors is { } descriptors)
+                    {
                         needsBuild |= writer.Add(result.Alias, result.Hash!, descriptors).Status == "added";
+                    }
                     if (!candidate.Saved)
                     {
                         transaction ??= manifest.BeginTransaction(); insert.Transaction = transaction;
@@ -308,16 +319,18 @@ public sealed partial class LocalImageSearchService
                 }
                 processed++;
                 buffered++;
+                if (!committedPage || !result.Reused || result.Descriptors is not null) extractionPages++;
                 writeTicks += Stopwatch.GetTimestamp() - start;
-                if (buffered >= options.BatchSize || processed % 10 == 0 || processed == total) Flush();
-                if (processed % 10 == 0 || processed == total)
-                    progress?.Report(new($"正在提取页图 {processed:N0} / {total:N0} · {options.Workers} 并行 · {(_jobAccelerator?.IsAvailable == true ? "GPU" : "CPU")}", processed, total, indexed, skipped, failed, reused));
+                // 复用记录不持有描述子缓冲，允许批量写入元数据；新特征仍按原有内存上限提交。
+                bool flush = extractionPages >= options.BatchSize || buffered >= 1024 || processed == total;
+                if (flush) Flush();
+                if (flush || Environment.TickCount64 - lastProgress >= 250 || processed == total) ReportProgress();
             }
             catch { writeFailed = true; throw; }
         }
         try
         {
-            progress?.Report(new($"正在提取页图…（{_jobAccelerator?.DeviceName ?? "CPU"}，{options.Workers} 并行）", Processed: processed, Total: total, Indexed: indexed, Skipped: skipped, Failed: failed, Reused: reused));
+            ReportProgress();
             await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, ReadPlannedPages(generation, sources, pendingOnly: true, token), sources, token),
                 () => new ExtractionWorker(backend.Profile, root, rebuild, options.UseSimd, _jobAccelerator),
                 (worker, work, ct) => ExtractPageAsync(worker, work, backend.Profile, options, budget, counters, ct),

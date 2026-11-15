@@ -1,3 +1,4 @@
+using Avalonia;
 using Avalonia.Controls;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerForPc.Views;
@@ -8,6 +9,8 @@ namespace EhViewerForPc.Services;
 internal sealed class DesktopTrayController(MainWindow window, AppServices services, Func<bool> requestShutdown) : IDisposable
 {
     private TrayIcon? _icon;
+    private Application? _application;
+    private TrayIcons? _icons;
     private bool _exitRequested;
     private bool _disposed;
     internal TrayIcon? Icon => _icon;
@@ -29,14 +32,22 @@ internal sealed class DesktopTrayController(MainWindow window, AppServices servi
             _icon.Menu = menu;
             _icon.IsVisible = true;
             _icon.Clicked += OnClicked;
+            _application = Application.Current ?? throw new InvalidOperationException("应用尚未初始化。");
+            _icons = TrayIcon.GetIcons(_application);
+            if (_icons is null)
+            {
+                _icons = new TrayIcons();
+                TrayIcon.SetIcons(_application, _icons);
+            }
+            // Avalonia 12 仅在加入 Application 的托盘集合时创建原生实现。
+            _icons.Add(_icon);
             window.BackgroundCloseHandler = TryHide;
             return true;
         }
         catch (Exception error)
         {
             services.Log.Warn("Tray initialization failed", error);
-            _icon?.Dispose();
-            _icon = null;
+            ReleaseIcon();
             return false;
         }
     }
@@ -51,6 +62,7 @@ internal sealed class DesktopTrayController(MainWindow window, AppServices servi
 
     internal bool ShouldHide(WindowCloseReason reason) => !_disposed && !_exitRequested &&
         services.Settings.CloseToTray && _icon?.IsVisible == true &&
+        _application is not null && TrayIcon.GetIcons(_application)?.Contains(_icon) == true &&
         reason is WindowCloseReason.WindowClosing or WindowCloseReason.Undefined;
 
     private void OnClicked(object? sender, EventArgs e) => Restore();
@@ -85,11 +97,19 @@ internal sealed class DesktopTrayController(MainWindow window, AppServices servi
         if (_disposed) return;
         _disposed = true;
         window.BackgroundCloseHandler = null;
+        ReleaseIcon();
+    }
+
+    private void ReleaseIcon()
+    {
         if (_icon is null) return;
         _icon.Clicked -= OnClicked;
         _icon.IsVisible = false;
+        _icons?.Remove(_icon);
         _icon.Menu = null;
         _icon.Dispose();
         _icon = null;
+        _icons = null;
+        _application = null;
     }
 }
