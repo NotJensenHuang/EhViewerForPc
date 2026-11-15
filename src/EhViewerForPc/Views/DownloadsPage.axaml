@@ -82,6 +82,62 @@
           </ir:ItemsRepeater></ScrollViewer>
         </Grid>
       </TabItem>
+      <TabItem><TabItem.Header><TextBlock Text="{Binding UnavailableTabTitle}" FontSize="14" /></TabItem.Header>
+        <Grid RowDefinitions="Auto,*" RowSpacing="10">
+          <StackPanel Spacing="8">
+            <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                                 Text="站点明确回答「画廊不可用（可能已删除或需登录）」的任务会移到这里：不再自动开始或重试，已下载的页面、目录和阅读进度保持不变。确认画廊恢复或账号可访问后，可在任务上移除标记并继续 / 重试。" />
+            <StackPanel IsVisible="{Binding !HasUnavailable}" Spacing="8">
+              <SelectableTextBlock Text="没有画廊不可用的任务" Classes="h2" />
+              <SelectableTextBlock Classes="secondary" TextWrapping="Wrap"
+                                   Text="站点回答画廊不可用时，任务会自动移到这里，便于以后恢复或清理。" />
+            </StackPanel>
+          </StackPanel>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <ir:ItemsRepeater ItemsSource="{Binding UnavailableTasks}">
+              <ir:ItemsRepeater.Layout><layout:StackLayout /></ir:ItemsRepeater.Layout>
+              <ir:ItemsRepeater.ItemTemplate>
+                <DataTemplate x:DataType="vm:DownloadTaskViewModel">
+                  <Border Classes="row" Margin="0,0,0,8">
+                    <Border.ContextMenu>
+                      <ContextMenu>
+                        <MenuItem Header="打开目录" Command="{Binding OpenFolderCommand}" />
+                        <MenuItem Header="移除画廊不可用标记" Command="{Binding UnmarkUnavailableCommand}" />
+                        <Separator />
+                        <MenuItem Header="移除任务（保留文件）" Command="{Binding RemoveCommand}" />
+                        <MenuItem Header="删除文件…" Command="{Binding RequestDeleteCommand}" IsEnabled="{Binding CanDeleteFiles}" />
+                      </ContextMenu>
+                    </Border.ContextMenu>
+                    <Grid RowDefinitions="Auto,Auto" RowSpacing="8">
+                      <StackPanel Spacing="5">
+                        <SelectableTextBlock Text="{Binding Title}" FontWeight="Bold" TextTrimming="CharacterEllipsis"
+                                             ToolTip.Tip="{Binding Title}" />
+                        <WrapPanel Orientation="Horizontal">
+                          <SelectableTextBlock Classes="caption" Text="{Binding GidText}" Margin="0,0,10,4" />
+                          <SelectableTextBlock Classes="caption" Text="画廊不可用" Margin="0,0,10,4" />
+                          <SelectableTextBlock Classes="caption" Text="{Binding Label}" Margin="0,0,10,4" />
+                          <SelectableTextBlock Classes="caption" Text="{Binding QualityText}" Margin="0,0,10,4" />
+                        </WrapPanel>
+                        <SelectableTextBlock Classes="caption" Text="{Binding Message}" TextWrapping="Wrap" />
+                        <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}" />
+                        <SelectableTextBlock Classes="caption" Text="{Binding ProgressText}" />
+                      </StackPanel>
+                      <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Classes="actions">
+                        <Button Content="阅读" Command="{Binding ReadCommand}" IsVisible="{Binding CanRead}"
+                                ToolTip.Tip="{Binding ReadHint}" />
+                        <Button Content="目录" Command="{Binding OpenFolderCommand}" />
+                        <Button Content="移除标记" Command="{Binding UnmarkUnavailableCommand}"
+                                ToolTip.Tip="回到画廊下载队列，可继续 / 重试" />
+                        <Button Content="移除" Command="{Binding RemoveCommand}" />
+                      </WrapPanel>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ir:ItemsRepeater.ItemTemplate>
+            </ir:ItemsRepeater>
+          </ScrollViewer>
+        </Grid>
+      </TabItem>
       <TabItem><TabItem.Header><TextBlock Text="已完成" FontSize="14" /></TabItem.Header>
         <Grid RowDefinitions="Auto,*" RowSpacing="8">
           <Button Content="清空记录（保留文件）" Command="{Binding ClearArchiveCommand}" HorizontalAlignment="Right" />

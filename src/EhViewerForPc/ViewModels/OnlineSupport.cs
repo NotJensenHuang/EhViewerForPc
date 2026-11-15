@@ -312,6 +312,9 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
 
     public DownloadTask Task { get; }
 
+    /// <summary>下载页维护：卡片当前位于「画廊不可用」集合，避免每次同步扫描列表。</summary>
+    internal bool InUnavailable { get; set; }
+
     [RelayCommand]
     private System.Threading.Tasks.Task PauseAsync() => _owner.PauseTask(this);
 
@@ -320,6 +323,9 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
 
     [RelayCommand]
     private System.Threading.Tasks.Task RemoveAsync() => _owner.RemoveTask(this);
+
+    [RelayCommand]
+    private System.Threading.Tasks.Task UnmarkUnavailableAsync() => _owner.UnmarkUnavailable(this);
 
     [RelayCommand]
     private void OpenFolder() => _owner.OpenTaskFolder(this);

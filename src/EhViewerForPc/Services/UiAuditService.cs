@@ -129,6 +129,11 @@ public static class UiAuditService
                 var completed = manager.Enqueue(new EhGalleryDetails { Gid = 912347, Token = "audit", Title = "合成已完成任务", Pages = 10 }, startImmediately: false);
                 completed.State = DownloadState.Completed;
                 completed.DownloadedPages = 10;
+                var unavailable = manager.Enqueue(new EhGalleryDetails { Gid = 912348, Token = "audit", Title = "合成画廊不可用任务", Pages = 64 }, startImmediately: false);
+                unavailable.State = DownloadState.Failed;
+                unavailable.DownloadedPages = 12;
+                unavailable.Message = EhParser.GalleryUnavailableMessage;
+                manager.MarkGalleryUnavailable(unavailable);
                 manager.ClearFinished();
             }
             shell.Downloads.SyncAll();
@@ -164,7 +169,8 @@ public static class UiAuditService
             var transfer = shell.Downloads.GetArchiveSession(details, shell);
             transfer.ApplyPage(new EhArchivePage { Message = "可选择归档格式" });
             var downloadTabs = window.GetVisualDescendants().OfType<DownloadsPage>().FirstOrDefault()?.GetVisualDescendants().OfType<TabControl>().FirstOrDefault();
-            for (int i = 0; i < 3; i++) { if (downloadTabs is not null) downloadTabs.SelectedIndex = i; await Capture(new[] { "downloads-tasks", "downloads-completed", "downloads-transfers" }[i], variant); }
+            string[] downloadTabNames = ["downloads-tasks", "downloads-unavailable", "downloads-completed", "downloads-transfers"];
+            for (int i = 0; i < downloadTabNames.Length; i++) { if (downloadTabs is not null) downloadTabs.SelectedIndex = i; await Capture(downloadTabNames[i], variant); }
             shell.Navigate("settings"); await Task.Delay(250);
             var settingsPage = window.GetVisualDescendants().OfType<SettingsPage>().FirstOrDefault();
             var categories = settingsPage?.FindControl<ListBox>("SettingsCategories");

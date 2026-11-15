@@ -873,7 +873,7 @@ public static partial class EhParser
 
         if (html.Contains("This gallery is unavailable", StringComparison.OrdinalIgnoreCase))
         {
-            return "画廊不可用（可能已删除或需登录）";
+            return GalleryUnavailableMessage;
         }
 
         if (html.Contains("Key missing, or incorrect key provided", StringComparison.OrdinalIgnoreCase))
@@ -888,6 +888,16 @@ public static partial class EhParser
 
         return null;
     }
+
+    /// <summary>站点对已删除 / 需更高权限画廊的固定答复。</summary>
+    public const string GalleryUnavailableMessage = "画廊不可用（可能已删除或需登录）";
+
+    /// <summary>
+    /// 只认这条完整理由：其它失败（网络、配额、解析）都可能是暂时问题，
+    /// 不应被归入「画廊不可用」。
+    /// </summary>
+    public static bool IsGalleryUnavailableMessage(string? message) =>
+        string.Equals(message, GalleryUnavailableMessage, StringComparison.Ordinal);
 
     private static string NormalizeUrl(string? url)
     {

@@ -1,5 +1,21 @@
 # 变更记录
 
+## 2026-11-15 修复 MSIX 任务栏图标黑边
+
+- `packaging/EhViewerForPc.Msix/Assets/Square44x44Logo.targetsize-*_altform-unplated.png`、`..._altform-lightunplated.png`：补齐 16 / 20 / 24 / 30 / 32 / 36 / 40 / 48 / 60 / 64 / 72 / 80 / 96 / 256 两套无底板 AppList 图标。此前包内只有带底板 PNG，任务栏与开始菜单会回退到带底板图标，并用清单 `BackgroundColor="#0B0D10"` 绘制方形底板，形成图标外圈黑边。
+- `packaging/EhViewerForPc.Msix/Package.appxmanifest`：`BackgroundColor` 改为 `transparent`；即使主题对比度判定使系统回退到带底板图标，也不会再出现深色方形底板。图标自身的深色圆角底板保留。
+- `packaging/EhViewerForPc.Msix/EhViewerForPc.Msix.wapproj`：注明 `Assets\*.png` 通配必须保留，新增无底板资源随包自动收集。
+- `src/EhViewerForPc/Assets/icon.ico`：9 个尺寸帧的 AND 透明掩码此前全为 0，按 alpha=0 的像素重建为 1；像素数据、帧尺寸与文件大小不变，避免走掩码的旧渲染路径把透明区画成黑色。窗口与 Alt+Tab 使用该 ICO，任务栏优先使用包内 AppList 资源。
+- 验证：新增 28 个 PNG 均为 8 位 RGBA、尺寸与 targetsize 一致、四角 alpha=0、中心不透明；以 `makepri new` 重建资源索引并 dump，确认 28 个候选按 `TargetSize-16…256 + AlternateForm-UNPLATED / LIGHTUNPLATED` 登记。需在 VS 中重新生成 MSIX 并重装后观察任务栏（旧图标可能被 Shell 缓存，必要时取消固定后重新固定或重启资源管理器）。
+
+## 2026-11-15 画廊不可用下载任务单独归档
+
+- `Core/Download/DownloadModels.cs`、`DownloadManager.cs`、`DownloadManager.Repair.Batch.cs`：失败理由为「画廊不可用（可能已删除或需登录）」的任务写入持久化标记，移入独立分类并跳过「全部开始」、自动启动与调度；移除标记、显式继续 / 重试、重新入队或主动补页时清除标记，补页批次保存失败时随其余字段回滚。
+- `Core/Online/EhParser.cs`：站点答复抽为固定常量与精确匹配判定，网络、配额和解析失败不会被误归入不可用。
+- `ViewModels/DownloadsViewModel.cs`、`OnlineSupport.cs`、`Views/DownloadsPage.axaml`：新增「画廊不可用」页，任务在队列与该页之间原位移动；提供移除标记、阅读、打开目录与移除任务，状态栏与页签名显示不可用数量。
+- `Services/UiAuditService.cs`、`tests/`：审计增加不可用页截图；核心测试覆盖失败标记、持久化、跳过自动重试与重新入队恢复，UI 测试覆盖分类移动与移除标记。
+- 兼容性：`downloads.json` 结构版本不变，新增字段缺失时按未标记读取；启动加载会把非失败状态上的残留标记清掉。验证：Core 173 / UI 142 通过；Debug 与 NativeAOT 审计各 122 张截图、无横向溢出。
+
 ## 2026-11-15 批量复用索引清单与本地副本删除
 
 - `LocalImageSearchService.Reuse.cs`、`Pipeline.cs`：最多 4096 条窗口批量匹配旧清单，只将新增、变更和失败页送入提取；失败元数据不再每 10 页强制刷盘，进度显示失败数。

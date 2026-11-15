@@ -47,6 +47,11 @@ public sealed class DownloadTask
     public long TotalBytes { get; set; }
     public DownloadState State { get; set; } = DownloadState.Pending;
     public string Message { get; set; } = string.Empty;
+    /// <summary>
+    /// 站点明确回答「画廊不可用」时置位。任务仍保留在队列和磁盘上，但归入
+    /// 「画廊不可用」分类并跳过自动开始与重试，直到用户移除标记或重新入队。
+    /// </summary>
+    public bool GalleryUnavailable { get; set; }
     public string AddedUtc { get; set; } = DateTime.UtcNow.ToString("O");
     public string? FinishedUtc { get; set; }
     public List<int> FailedPages { get; set; } = [];

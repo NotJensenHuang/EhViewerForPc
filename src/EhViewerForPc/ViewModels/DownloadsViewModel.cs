@@ -44,6 +44,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     }
 
     public ObservableCollection<DownloadTaskViewModel> Tasks { get; } = [];
+    /// <summary>站点确认不可用的任务：不再自动重试，单独成页，文件与进度保留。</summary>
+    public ObservableCollection<DownloadTaskViewModel> UnavailableTasks { get; } = [];
     public IReadOnlyList<DownloadArchiveViewModel> Archive { get; private set; } = [];
     public ObservableCollection<ArchiveViewModel> ArchiveTransfers { get; } = [];
     public event EventHandler<ArchiveViewModel>? ArchiveRequested;
@@ -87,7 +89,12 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     public string RootPathDisplay => RootPath;
 
     public bool HasTasks => Tasks.Count > 0;
+    public bool HasUnavailable => UnavailableTasks.Count > 0;
     public bool HasArchive => Archive.Count > 0;
+
+    public string UnavailableTabTitle => UnavailableTasks.Count == 0
+        ? "画廊不可用"
+        : $"画廊不可用 ({UnavailableTasks.Count})";
 
     public string StatusText
     {
@@ -105,9 +112,12 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         int pending = Tasks.Count(t => t.IsPending);
         int failed = Tasks.Count(t => t.IsFailed);
         int done = Tasks.Count(t => t.IsCompleted);
-        StatusText = $"队列 {Tasks.Count} · 下载 {running} · 等待 {pending} · 失败 {failed} · 完成 {done}";
+        string unavailable = UnavailableTasks.Count > 0 ? $" · 不可用 {UnavailableTasks.Count}" : string.Empty;
+        StatusText = $"队列 {Tasks.Count} · 下载 {running} · 等待 {pending} · 失败 {failed} · 完成 {done}{unavailable}";
         OnPropertyChanged(nameof(ActiveText));
         OnPropertyChanged(nameof(HasTasks));
+        OnPropertyChanged(nameof(HasUnavailable));
+        OnPropertyChanged(nameof(UnavailableTabTitle));
         OnPropertyChanged(nameof(HasArchive));
         OnPropertyChanged(nameof(RootPathDisplay));
     }
@@ -120,20 +130,13 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             QueueLibraryUpdate(task);
             if (task.State == DownloadState.Completed) continue;
             ids.Add(task.Id);
-            if (_byId.TryGetValue(task.Id, out DownloadTaskViewModel? existing))
-            {
-                existing.Refresh();
-                continue;
-            }
-
-            var vm = new DownloadTaskViewModel(task, this);
-            _byId[task.Id] = vm;
-            Tasks.Add(vm);
+            ApplyTask(task, newestFirst: false);
         }
 
-        foreach (DownloadTaskViewModel stale in Tasks.Where(t => !ids.Contains(t.Task.Id)).ToList())
+        foreach (DownloadTaskViewModel stale in Tasks.Concat(UnavailableTasks).Where(t => !ids.Contains(t.Task.Id)).ToArray())
         {
             Tasks.Remove(stale);
+            UnavailableTasks.Remove(stale);
             _byId.Remove(stale.Task.Id);
         }
 
@@ -141,6 +144,37 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 
         RefreshStatus();
         _library.ApplyDownloadStates(_services.Downloads.Tasks);
+    }
+
+    /// <summary>
+    /// Keeps one view-model per task and moves it between the queue and the
+    /// unavailable page without recreating it (progress and command state stay).
+    /// </summary>
+    private void ApplyTask(DownloadTask task, bool newestFirst)
+    {
+        bool unavailable = task.GalleryUnavailable;
+        if (!_byId.TryGetValue(task.Id, out DownloadTaskViewModel? existing))
+        {
+            var created = new DownloadTaskViewModel(task, this) { InUnavailable = unavailable };
+            _byId[task.Id] = created;
+            var destination = unavailable ? UnavailableTasks : Tasks;
+            if (newestFirst) destination.Insert(0, created);
+            else destination.Add(created);
+            return;
+        }
+
+        if (existing.InUnavailable == unavailable)
+        {
+            existing.Refresh();
+            return;
+        }
+
+        (existing.InUnavailable ? UnavailableTasks : Tasks).Remove(existing);
+        var target = unavailable ? UnavailableTasks : Tasks;
+        if (newestFirst) target.Insert(0, existing);
+        else target.Add(existing);
+        existing.InUnavailable = unavailable;
+        existing.Refresh();
     }
 
     internal void ApplyArchive(IEnumerable<DownloadArchiveEntry> entries)
@@ -166,12 +200,15 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
                     if (!_dirtyTasks.TryRemove(pair.Key, out var changed) || !_services.Downloads.IsQueued(changed)) continue;
                     if (changed.State == DownloadState.Completed)
                     {
-                        if (_byId.Remove(changed.Id, out var finished)) Tasks.Remove(finished);
+                        if (_byId.Remove(changed.Id, out var finished))
+                        {
+                            Tasks.Remove(finished);
+                            UnavailableTasks.Remove(finished);
+                        }
                         QueueLibraryUpdate(changed);
                         continue;
                     }
-                    if (_byId.TryGetValue(changed.Id, out var vm)) vm.Refresh();
-                    else { vm = new DownloadTaskViewModel(changed, this); _byId[changed.Id] = vm; Tasks.Insert(0, vm); }
+                    ApplyTask(changed, newestFirst: true);
                     QueueLibraryUpdate(changed);
                 }
                 RefreshStatus();
@@ -264,6 +301,9 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     public Task RemoveTask(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Remove(item.Task, deleteFiles: false));
 
     public Task RemoveWithFiles(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.Remove(item.Task, deleteFiles: true));
+
+    /// <summary>撤销「画廊不可用」标记，任务回到下载队列并可继续 / 重试。</summary>
+    public Task UnmarkUnavailable(DownloadTaskViewModel item) => Task.Run(() => _services.Downloads.ClearGalleryUnavailable(item.Task));
 
     public void OpenTaskFolder(DownloadTaskViewModel item) => OpenFolder(item.Task.FolderPath);
 

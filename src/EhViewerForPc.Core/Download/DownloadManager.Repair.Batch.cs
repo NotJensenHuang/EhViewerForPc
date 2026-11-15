@@ -97,7 +97,7 @@ public sealed partial class DownloadManager
             Category = details.Category, ThumbUrl = details.ThumbUrl, FolderPath = request.Folder, DestinationRoot = request.Root,
             Quality = _settings.ImageQuality, ResampledWidth = _settings.ResampledWidth,
         };
-        var undo = new RepairUndo(task, added, task.State, task.Message, task.FillMissingOnly, task.Token, task.PageCount, task.DownloadedPages, task.FinishedUtc, task.FailedPages, task.DestinationRoot);
+        var undo = new RepairUndo(task, added, task.State, task.Message, task.FillMissingOnly, task.Token, task.PageCount, task.DownloadedPages, task.FinishedUtc, task.FailedPages, task.DestinationRoot, task.GalleryUnavailable);
         task.FillMissingOnly = true;
         task.DestinationRoot = request.Root;
         task.Token = details.Token;
@@ -105,6 +105,8 @@ public sealed partial class DownloadManager
         task.DownloadedPages = request.ExistingPages;
         task.State = DownloadState.Pending;
         task.Message = "等待补齐缺页";
+        // 主动补页是显式重试：撤销不可用标记，避免任务被自动调度跳过。
+        task.GalleryUnavailable = false;
         task.FinishedUtc = null;
         task.FailedPages = [];
         if (added) _tasks.Insert(0, task);
@@ -112,13 +114,13 @@ public sealed partial class DownloadManager
     }
 
     private sealed record RepairUndo(DownloadTask Task, bool Added, DownloadState State, string Message, bool FillMissingOnly,
-        string Token, int PageCount, int DownloadedPages, string? FinishedUtc, List<int> FailedPages, string Root)
+        string Token, int PageCount, int DownloadedPages, string? FinishedUtc, List<int> FailedPages, string Root, bool GalleryUnavailable)
     {
         internal void Restore(List<DownloadTask> tasks)
         {
             if (Added) tasks.Remove(Task);
-            (Task.State, Task.Message, Task.FillMissingOnly, Task.Token, Task.PageCount, Task.DownloadedPages, Task.FinishedUtc, Task.FailedPages, Task.DestinationRoot) =
-                (State, Message, FillMissingOnly, Token, PageCount, DownloadedPages, FinishedUtc, FailedPages, Root);
+            (Task.State, Task.Message, Task.FillMissingOnly, Task.Token, Task.PageCount, Task.DownloadedPages, Task.FinishedUtc, Task.FailedPages, Task.DestinationRoot, Task.GalleryUnavailable) =
+                (State, Message, FillMissingOnly, Token, PageCount, DownloadedPages, FinishedUtc, FailedPages, Root, GalleryUnavailable);
         }
     }
 }

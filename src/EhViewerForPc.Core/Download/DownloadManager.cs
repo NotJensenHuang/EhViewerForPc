@@ -342,6 +342,8 @@ public sealed partial class DownloadManager : IDisposable
 
                 existing.State = DownloadState.Pending;
                 existing.Message = "等待中";
+                // 用户主动重新入队即视为重试，撤销「画廊不可用」标记。
+                existing.GalleryUnavailable = false;
                 task = existing;
                 changed = true;
             }
@@ -406,12 +408,50 @@ public sealed partial class DownloadManager : IDisposable
             task.State = DownloadState.Pending;
             task.Message = "等待中";
             task.FailedPages.Clear();
+            // 显式重试：先撤销不可用标记，否则任务会继续被自动调度跳过。
+            task.GalleryUnavailable = false;
             SaveLocked();
         }
 
         RaiseTask(task);
         RaiseChanged();
         SchedulePump();
+    }
+
+    /// <summary>
+    /// 将任务归入「画廊不可用」分类：站点已明确回答该画廊不可用，自动开始与
+    /// 重试都会跳过它；文件、进度和归档记录不变，用户移除标记或重新入队后恢复。
+    /// </summary>
+    public void MarkGalleryUnavailable(DownloadTask task)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.Contains(task) || task.GalleryUnavailable) return;
+            // 只归类失败任务：运行中的任务应继续走正常失败 / 暂停流程。
+            if (task.State != DownloadState.Failed) return;
+            task.GalleryUnavailable = true;
+            SaveLocked();
+        }
+
+        RaiseTask(task);
+        RaiseChanged();
+    }
+
+    /// <summary>
+    /// 移除「画廊不可用」标记，让任务回到普通下载队列。任务保持原来的失败状态
+    /// 与理由，用户可继续 / 重试，构建失败时不会悄悄变成成功。
+    /// </summary>
+    public void ClearGalleryUnavailable(DownloadTask task)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.Contains(task) || !task.GalleryUnavailable) return;
+            task.GalleryUnavailable = false;
+            SaveLocked();
+        }
+
+        RaiseTask(task);
+        RaiseChanged();
     }
 
     public void Retry(DownloadTask task) => Resume(task);
@@ -444,6 +484,7 @@ public sealed partial class DownloadManager : IDisposable
         {
             foreach (DownloadTask task in _tasks)
             {
+                if (task.GalleryUnavailable) continue;
                 if (task.State is DownloadState.Paused or DownloadState.Failed)
                 {
                     task.State = DownloadState.Pending;
@@ -525,7 +566,7 @@ public sealed partial class DownloadManager : IDisposable
 
     private bool CanStartDownloadLocked(DownloadTask task)
     {
-        if (task.State != DownloadState.Pending || _cancellations.ContainsKey(task.Id) ||
+        if (task.State != DownloadState.Pending || task.GalleryUnavailable || _cancellations.ContainsKey(task.Id) ||
             _pageRetries.ContainsKey(task.FolderPath) || IsLocalCopyDeleting(task.FolderPath)) return false;
         foreach (var writer in _running.Values)
             if (FoldersOverlap(writer.Download.FolderPath, task.FolderPath)) return false;
@@ -619,6 +660,7 @@ public sealed partial class DownloadManager : IDisposable
                 if (!_tasks.Contains(task)) return;
                 task.State = DownloadState.Failed;
                 task.Message = ex.Message;
+                if (EhParser.IsGalleryUnavailableMessage(ex.Message)) task.GalleryUnavailable = true;
                 SaveLocked();
             }
 
@@ -979,6 +1021,9 @@ public sealed partial class DownloadManager : IDisposable
             foreach (DownloadTask task in file.Tasks)
             {
                 if (task.State == DownloadState.Running) task.State = DownloadState.Pending;
+                // 只有失败任务可能带有不可用标记；其它状态一律清掉，避免
+                // 被跳过的等待任务永远轮不到调度。
+                if (task.GalleryUnavailable && task.State != DownloadState.Failed) task.GalleryUnavailable = false;
                 task.FailedPages ??= [];
                 task.ResampledPages ??= [];
                 _tasks.Add(task);

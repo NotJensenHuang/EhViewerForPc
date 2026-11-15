@@ -11,6 +11,7 @@ using Avalonia.VisualTree;
 using EhViewerForPc.Controls;
 using EhViewerForPc.Core.Download;
 using EhViewerForPc.Core.Models;
+using EhViewerForPc.Core.Online;
 using EhViewerForPc.Core.Storage;
 using EhViewerForPc.Services;
 using EhViewerForPc.ViewModels;
@@ -238,5 +239,32 @@ public sealed class LocalManagementTests
             Assert.False(deletion.HasConfirmation); Assert.True(Directory.Exists(fixture.Folder));
         }
         finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task UnavailableDownloadMovesToItsOwnPageAndUnmarkRestoresIt()
+    {
+        using var fixture = new ReaderRetryIntegrationTests.Fixture();
+        using var shell = new ShellViewModel(fixture.Services);
+        var manager = fixture.Services.Downloads;
+        var task = manager.Enqueue(new EhGalleryDetails { Gid = 90210, Token = "unavailable", Title = "合成不可用任务", Pages = 4 }, startImmediately: false);
+        task.State = DownloadState.Failed;
+        task.Message = EhParser.GalleryUnavailableMessage;
+        manager.MarkGalleryUnavailable(task);
+
+        shell.Downloads.SyncAll();
+        Assert.Empty(shell.Downloads.Tasks);
+        Assert.True(shell.Downloads.HasUnavailable);
+        Assert.Contains("(1)", shell.Downloads.UnavailableTabTitle);
+        var item = Assert.Single(shell.Downloads.UnavailableTasks);
+        Assert.Equal(task.Id, item.Task.Id);
+
+        await shell.Downloads.UnmarkUnavailable(item);
+        shell.Downloads.SyncAll();
+        Assert.False(task.GalleryUnavailable);
+        Assert.Equal(DownloadState.Failed, task.State);
+        Assert.Single(shell.Downloads.Tasks);
+        Assert.Empty(shell.Downloads.UnavailableTasks);
+        Assert.False(shell.Downloads.HasUnavailable);
     }
 }

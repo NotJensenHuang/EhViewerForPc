@@ -81,6 +81,9 @@
     </AppxManifest>
   </ItemGroup>
   <ItemGroup>
+    <!-- 通配包含 Assets 下全部 PNG，包括 Square44x44Logo.targetsize-*_altform-unplated /
+         lightunplated 无底板图标。缺少无底板变体时任务栏会回退到带底板图标，并用
+         清单 BackgroundColor 绘制方形底板（表现为图标外圈黑边）。 -->
     <Content Include="Assets\*.png" />
   </ItemGroup>
   <Import Project="$(WapProjPath)\Microsoft.DesktopBridge.targets" />

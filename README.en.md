@@ -62,6 +62,7 @@ Online browsing is available on first launch. To use the local library, point "L
 
 - ⬇️ **Downloads**
   - A download engine independent of the local library: the queue is persisted in `downloads.json`, resumes from its last state after exit or a crash, and completed tasks appear only under "Completed", leaving the "Gallery downloads" queue
+  - When the site answers "This gallery is unavailable", the task moves to the "Gallery unavailable" page and automatic starts and retries stop. Downloaded pages, folders and reading progress are kept; clearing the marker returns the task to the queue for a manual retry
   - Configurable download root and subdirectory rules; with "register download directory as source" and automatic updates enabled, a gallery is indexed as soon as its first image lands, without rescanning other sources
   - Incomplete copies remain readable and reaching the current last page does not mark the whole work as finished; gallery concurrency 1–8, per-gallery page concurrency 1–8, with serialized throttling on pagination requests
   - Local cards, details and version rows offer "Continue download" for the selected copy's exact original folder without changing the global download root; a GID and token are required. Conflicting original files are preserved and reported as failed pages. Repair tasks can be removed from the queue, but cannot delete the original folder
