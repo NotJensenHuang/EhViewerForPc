@@ -72,6 +72,7 @@ public sealed partial class DownloadManager
         {
             if (registered)
             {
+                bool resumePending = false;
                 lock (_gate)
                 {
                     foreach (var task in _tasks.Where(t => FoldersOverlap(t.FolderPath, folder)))
@@ -81,9 +82,12 @@ public sealed partial class DownloadManager
                     {
                         _localDeletes.Remove(folder);
                         completion.TrySetResult();
+                        // 只有删除期间明确接受过启动且未被随后暂停的任务才需恢复调度。
+                        resumePending = _tasks.Any(t => t.State == DownloadState.Pending && FoldersOverlap(t.FolderPath, folder));
                     }
                 }
                 RaiseChanged();
+                if (resumePending) SchedulePump();
             }
         }
     }

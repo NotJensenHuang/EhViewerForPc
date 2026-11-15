@@ -1,5 +1,13 @@
 # 变更记录
 
+## 2026-11-15 修复两日审查中的副本身份、编号与删除调度
+
+- `ViewModels/VersionsViewModel.cs`：单目录缺页检测在作品身份未变时保留完整扫描的副本 StableId 和重复标记，避免已有图片索引命中消失。
+- `Core/Format/PageFileParser.cs`、`Core/Scanning/LibraryScanner.cs`：有效 8 位页名优先保留原始编号，额外封面不压缩缺页；定向重查旧误分类缓存，保留其余 schema 3 / 4 缓存命中。
+- `Services/ReaderSources.cs`：重试后的页重载保留真实元数据并合并已知总数，保持尾页与缺页占位。
+- `Core/Download/DownloadManager.LocalDelete.cs`：删除保护解除后恢复受影响等待任务的调度，保留随后暂停的用户意图；成功删除不启动无关等待任务。
+- `tests/`：加入重复副本真实建库检索、三种阅读模式、旧缓存以及删除失败 / 取消 / 成功的回归测试；证据与范围见 `docs/REVIEW-2026-11-14-15.md`。
+
 ## 2026-11-15 托盘菜单补齐页面直达与本地库图搜图
 
 - `Services/DesktopTrayController.cs`：菜单改为「显示窗口 → 各页面 → 本地库图搜图 → 退出」。页面项直接遍历 `ShellViewModel.NavItems` 生成，新增页面无需再改托盘，避免维护第二份清单；点击先恢复前台再切页（隐藏窗口上跑导航动画会白做一次布局）。设置迁移期间导航会被 `SelectedNav` 拒绝，菜单点击改为弹出提示而不是静默丢弃。`OpenImageSearch` 复用窗口既有入口，不新建第二套图搜图页面。

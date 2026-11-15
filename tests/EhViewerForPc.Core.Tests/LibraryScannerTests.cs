@@ -92,6 +92,40 @@ public class LibraryScannerTests : IDisposable
         Assert.Equal(new[] { new PageRange(2, 2) }, pages.MissingRanges);
     }
 
+    [Theory]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void RechecksMisclassifiedNumberedCacheWithoutInvalidatingNaturalFolders(int schema)
+    {
+        string numbered = Path.Combine(_root, "102-numbered");
+        string natural = Path.Combine(_root, "plain");
+        Directory.CreateDirectory(numbered);
+        Directory.CreateDirectory(natural);
+        foreach (string name in new[] { "00000001.png", "00000004.png", "cover.png" })
+            File.WriteAllBytes(Path.Combine(numbered, name), [0x89, 0x50, 0x4e, 0x47]);
+        File.WriteAllBytes(Path.Combine(natural, "Image00000.jpg"), [0xff, 0xd8, 0xff, 0xe0]);
+        var scanner = new LibraryScanner();
+        var first = scanner.Scan(_root, null);
+        first.Cache.SchemaVersion = schema;
+        // 重现旧版已持久化的错误语义；文件签名完全不变。
+        var cached = first.Cache.Entries["102-numbered"];
+        cached.HasNaturalPageNames = true;
+        cached.DirectoryGid = null;
+        cached.PageCount = 3;
+        cached.MaxPageNumber = 3;
+        cached.MissingRanges = [];
+
+        var corrected = scanner.Scan(_root, first.Cache);
+
+        Assert.Equal(1, corrected.CacheHitCount);
+        var gallery = corrected.Galleries.Single(info => info.FolderPath == numbered);
+        Assert.Equal(102L, gallery.Gid);
+        Assert.False(gallery.HasNaturalPageNames);
+        Assert.Equal(2, gallery.PageCount);
+        Assert.Equal(new[] { new PageRange(2, 3) }, gallery.MissingRanges);
+        Assert.Equal(2, scanner.Scan(_root, corrected.Cache).CacheHitCount);
+    }
+
     [Fact]
     public void ScansAndUsesCache()
     {

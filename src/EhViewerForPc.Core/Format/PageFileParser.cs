@@ -61,8 +61,8 @@ public static partial class PageFileParser
     {
         error = null;
         bool numbered = files.Any(file => TryParsePageName(file.FileName, out _, out _));
-        if (files.Count > 0 && (!numbered || (header is not { IsValid: true } && files.Any(file =>
-                IsSupportedExtension(file.Extension) && !TryParsePageName(file.FileName, out _, out _)))))
+        // 编号页本身就是原始页号的依据；缺少元数据或额外封面不能压缩缺页位置。
+        if (files.Count > 0 && !numbered)
             return ScanNaturalPages(files);
         var grouped = new Dictionary<int, List<PageCandidate>>();
         int zeroByteFiles = 0;

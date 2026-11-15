@@ -64,7 +64,10 @@ public sealed partial class LibraryScanner
             GalleryInfo gallery;
             bool recheckLegacyPages = cache?.SchemaVersion == 3 && cached is { } &&
                 (cached.ZeroByteFiles > 0 || cached.HeaderPageCountOutdated);
-            if (!forceRefresh && !recheckLegacyPages && cached is not null && snapshot.Matches(cached))
+            // 旧版曾因额外封面把编号副本缓存成自然页号；只重查命中此特征的条目。
+            bool recheckPageNames = cached is { HasNaturalPageNames: true } &&
+                files.Any(file => PageFileParser.TryParsePageName(file.FileName, out _, out _));
+            if (!forceRefresh && !recheckLegacyPages && !recheckPageNames && cached is not null && snapshot.Matches(cached))
             {
                 gallery = FromCache(cached, directory.FullName);
                 cacheHits++;

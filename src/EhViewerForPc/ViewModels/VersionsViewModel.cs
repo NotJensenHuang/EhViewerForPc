@@ -110,6 +110,12 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
                         var result = _services.Scanner.Scan(root, null, true, null, token,
                             sourceId, sourceName, qualify, original.FolderPath);
                         var info = result.Galleries.Single();
+                        // 单目录检测没有同源重复 GID 的上下文，身份未变时沿用完整扫描的副本标识。
+                        if (info.WorkId == original.WorkId && info.HasGidConflict == original.HasGidConflict)
+                        {
+                            info.StableId = original.StableId;
+                            info.IsDuplicateGid = original.IsDuplicateGid;
+                        }
                         int? expected = info.ExpectedPages ?? knownPages;
                         if (expected is > 0 && info.ExpectedPages != expected)
                         {

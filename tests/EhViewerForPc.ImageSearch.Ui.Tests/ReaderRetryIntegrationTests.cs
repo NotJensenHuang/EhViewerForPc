@@ -78,6 +78,30 @@ public sealed class ReaderRetryIntegrationTests
         Assert.NotNull(decoded);
     }
 
+    [AvaloniaTheory]
+    [InlineData(ReadingMode.Single)]
+    [InlineData(ReadingMode.Continuous)]
+    [InlineData(ReadingMode.Double)]
+    public async Task RetryKeepsNumberedTailAndMissingSlotsWhenALooseCoverExists(ReadingMode mode)
+    {
+        using var fixture = new Fixture();
+        File.WriteAllBytes(Path.Combine(fixture.Folder, "cover.png"), fixture.Handler.Image);
+        using var reader = new ReaderViewModel(fixture.Services, fixture.Info, initialPageNumber: 4);
+        await reader.SetModeAsync(mode);
+        var unchanged = fixture.Snapshot(exclude: "00000004.png");
+        Assert.False(reader.IsCurrentPageMissing);
+
+        await reader.RetryCurrentCommand.ExecuteAsync(null);
+
+        Assert.False(reader.IsCurrentPageMissing, reader.RestoreHint);
+        Assert.Equal("00000004.png", reader.Source.Pages[3].Primary!.FileName);
+        Assert.Equal("缺页 2-3", reader.MissingSummary);
+        Assert.Equal("4 / 4", reader.PageLabel);
+        Assert.Equal(unchanged, fixture.Snapshot(exclude: "00000004.png"));
+        if (mode == ReadingMode.Continuous) Assert.False(reader.ContinuousItems[3].IsMissing);
+        if (mode == ReadingMode.Double) Assert.False(reader.HorizontalDisplayItems.Single(page => page.Number == 4).IsMissing);
+    }
+
     [AvaloniaFact]
     public async Task RetryReplacesOnlyTheSelectedExistingPageAndBypassesLocalCache()
     {

@@ -100,6 +100,25 @@ public class PageFileParserTests : IDisposable
         Assert.Equal(1, scan.ZeroByteFiles);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NumberedPagesKeepTheirOriginalSlotsWithALooseCoverAndNoValidHeader(bool knownTotal)
+    {
+        Touch("00000001.png");
+        Touch("00000004.png");
+        Touch("cover.png");
+        var header = knownTotal ? new SpiderHeader { HasPages = true, Pages = 6 } : null;
+
+        var scan = PageFileParser.Scan(_root, header, out string? error);
+
+        Assert.Null(error);
+        Assert.False(scan.HasNaturalPageNames);
+        Assert.Equal(new[] { 1, 4 }, scan.Pages.Select(page => page.Number));
+        Assert.Equal(knownTotal ? new[] { new PageRange(2, 3), new PageRange(5, 6) } : new[] { new PageRange(2, 3) }, scan.MissingRanges);
+        Assert.Equal(knownTotal, scan.HasExpectedPages);
+    }
+
     [Fact]
     public void ParsesPageNames()
     {

@@ -117,6 +117,114 @@ public sealed class LocalManagementTests
         Assert.False(Directory.Exists(fixture.Folder)); Assert.False(deletion.HasConfirmation);
     }
 
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedDeletionHonorsStartAllAndAnyLaterPause(bool pauseAfterStart)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        using var fixture = new ReaderRetryIntegrationTests.Fixture(_ =>
+        {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+            throw new IOException("合成回收失败");
+        });
+        var source = fixture.Services.Settings.Sources.Single();
+        var manager = fixture.Services.Downloads;
+        var task = manager.EnqueueRepair(new() { Gid = 42, Token = "0123456789", Pages = 4 }, fixture.Folder, source.RootPath, false);
+        Task deleting = fixture.Services.DeleteLocalCopyAsync(fixture.Info, TestContext.Current.CancellationToken);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            manager.StartAll();
+            if (pauseAfterStart) manager.PauseAll();
+            Assert.Empty(fixture.Handler.Requests);
+        }
+        finally { release.Set(); }
+        await Assert.ThrowsAsync<IOException>(() => deleting);
+
+        if (pauseAfterStart)
+        {
+            Assert.Equal(DownloadState.Paused, task.State);
+            Assert.Equal(0, manager.ActiveCount);
+            Assert.Empty(fixture.Handler.Requests);
+        }
+        else
+        {
+            await fixture.Handler.ImageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            for (int i = 0; i < 250 && task.State is not (DownloadState.Completed or DownloadState.Failed); i++) await Task.Delay(20);
+            Assert.Equal(DownloadState.Completed, task.State);
+        }
+        Assert.True(Directory.Exists(fixture.Folder));
+    }
+
+    [AvaloniaFact]
+    public async Task SuccessfulDeletionDoesNotStartUnrelatedPendingTasks()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        using var fixture = new ReaderRetryIntegrationTests.Fixture(folder =>
+        {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+            MoveFixtureCopy(folder);
+        });
+        var source = fixture.Services.Settings.Sources.Single();
+        var manager = fixture.Services.Downloads;
+        manager.EnqueueRepair(new() { Gid = 42, Token = "0123456789", Pages = 4 }, fixture.Folder, source.RootPath, false);
+        DownloadTask? unrelated = null;
+        Task deleting = fixture.Services.DeleteLocalCopyAsync(fixture.Info, TestContext.Current.CancellationToken);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            manager.StartAll();
+            unrelated = manager.Enqueue(new() { Gid = 78, Token = "another", Pages = 4 }, startImmediately: false);
+        }
+        finally { release.Set(); }
+        await deleting;
+
+        Assert.False(Directory.Exists(fixture.Folder));
+        Assert.Same(unrelated, Assert.Single(manager.Tasks));
+        Assert.Equal(DownloadState.Pending, unrelated!.State);
+        Assert.Equal(0, manager.ActiveCount);
+        Assert.Empty(fixture.Handler.Requests);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledDeletionKeepsLatestStartIntentAndWaitsForTheOldWriter(bool requestStart)
+    {
+        bool recycled = false;
+        using var fixture = new ReaderRetryIntegrationTests.Fixture(_ => recycled = true);
+        fixture.Handler.BlockImage = true;
+        fixture.Handler.IgnoreImageCancellation = true;
+        var source = fixture.Services.Settings.Sources.Single();
+        var manager = fixture.Services.Downloads;
+        var task = manager.EnqueueRepair(new() { Gid = 42, Token = "0123456789", Pages = 4 }, fixture.Folder, source.RootPath);
+        using var cancellation = new CancellationTokenSource();
+        await fixture.Handler.ImageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var unchanged = fixture.Snapshot();
+        try
+        {
+            Task deleting = fixture.Services.DeleteLocalCopyAsync(fixture.Info, cancellation.Token);
+            if (requestStart) manager.StartAll();
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => deleting);
+            Assert.False(recycled);
+            Assert.Equal(unchanged, fixture.Snapshot());
+            Assert.Equal(requestStart ? DownloadState.Pending : DownloadState.Paused, task.State);
+        }
+        finally { fixture.Handler.Release.TrySetResult(); }
+
+        for (int i = 0; i < 250 && (manager.ActiveCount != 0 || task.State == DownloadState.Pending); i++) await Task.Delay(20);
+        Assert.Equal(requestStart ? DownloadState.Completed : DownloadState.Paused, task.State);
+        Assert.Equal(0, manager.ActiveCount);
+        Assert.False(recycled);
+        Assert.DoesNotContain(Directory.EnumerateFiles(fixture.Folder), file => file.EndsWith(".part"));
+    }
+
     [AvaloniaFact]
     public async Task DeletionWaitsForPageRetryAndDisposalWaitsForRecycling()
     {

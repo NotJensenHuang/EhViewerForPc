@@ -101,8 +101,19 @@ public sealed class LocalReaderSource : IReaderSource
     internal async Task ReloadPageAsync(int index, CancellationToken token)
     {
         int number = Pages[index].Number;
-        var scan = await Task.Run(() => PageFileParser.Scan(_gallery.FolderPath,
-            _gallery.ExpectedPages is > 0 ? new SpiderHeader { HasPages = true, Pages = _gallery.ExpectedPages.Value } : null, out _), token);
+        string folder = _gallery.FolderPath;
+        int? expected = _gallery.ExpectedPages;
+        var scan = await Task.Run(() =>
+        {
+            var header = SpiderInfoParser.TryParseFile(Path.Combine(folder, ".ehviewer"), out _) ?? new SpiderHeader();
+            // 保留真实头信息，同时沿用已知总数，避免旧下载头使尾部缺页消失。
+            if (expected is > 0)
+            {
+                header.HasPages = true;
+                header.Pages = expected.Value;
+            }
+            return PageFileParser.Scan(folder, header, out _);
+        }, token);
         var page = scan.Pages.FirstOrDefault(p => p.Number == number);
         _pages[index] = new GalleryPage
         {
