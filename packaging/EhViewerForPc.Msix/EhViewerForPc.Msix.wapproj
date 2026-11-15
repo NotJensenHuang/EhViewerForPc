@@ -48,7 +48,7 @@
     <TargetPlatformVersion>10.0.26100.0</TargetPlatformVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <DefaultLanguage>zh-CN</DefaultLanguage>
-    <AppxPackageSigningEnabled>False</AppxPackageSigningEnabled>
+    <AppxPackageSigningEnabled>True</AppxPackageSigningEnabled>
     <!-- Unsigned packages must not request cleanup of a certificate that was never created. -->
     <GenerateTemporaryStoreCertificate>$(AppxPackageSigningEnabled)</GenerateTemporaryStoreCertificate>
     <NoWarn>$(NoWarn);NU1702;NU1701</NoWarn>
@@ -61,7 +61,7 @@
     <EntryPointProjectUniqueName>..\..\src\EhViewerForPc\EhViewerForPc.csproj</EntryPointProjectUniqueName>
     <!-- VS builds the solution's ordinary app evaluation, not this isolated
          reference. Publish the isolated variant before collecting its outputs. -->
-    <WapAlwaysBuildDependentProjects>true</WapAlwaysBuildDependentProjects>   
+    <WapAlwaysBuildDependentProjects>true</WapAlwaysBuildDependentProjects>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
     <AppxBundle>Always</AppxBundle>
@@ -102,7 +102,6 @@
   <Target Name="RestoreMsixProjectReferences" BeforeTargets="SetProjectReferenceProperties" Condition="'$(DesignTimeBuild)' != 'true'">
     <MSBuild Projects="@(ProjectReference)" Targets="Restore" Properties="Configuration=$(Configuration);Platform=$(Platform);RuntimeIdentifier=win-x64;SelfContained=true;MSBuildIsRestoring=true" />
   </Target>
-
   <PropertyGroup>
     <AppProject>$(MSBuildThisFileDirectory)..\..\src\EhViewerForPc\EhViewerForPc.csproj</AppProject>
     <AotPayloadDir>$(MSBuildThisFileDirectory)..\..\artifacts\msix\aot</AotPayloadDir>
@@ -110,16 +109,13 @@
     <!-- 入口工程负载在包内的子目录前缀 = 项目名（与 obj/.../PackageLayout 下观察到的
          EhViewerForPc\ 一致）；InjectAotPayload 按此前缀移除托管负载。 -->
     <EntryPayloadPrefix>EhViewerForPc\</EntryPayloadPrefix>
+    <PackageCertificateThumbprint>0002A085EDBAA55E2DD16A09CF752756DA371596</PackageCertificateThumbprint>
   </PropertyGroup>
-
   <!-- AOT 发布：AOT 代码生成只发生在 publish 管线，必须在 _ConvertItems（负载组装）之前产出文件。 -->
-  <Target Name="PublishAotForMsix"
-          BeforeTargets="_ConvertItems"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipAotPublish)' != 'true'">
-    <Message Importance="high" Text="MSIX: NativeAOT publish -> $(AotPayloadDir)" />
+  <Target Name="PublishAotForMsix" BeforeTargets="_ConvertItems" Condition="'$(DesignTimeBuild)' != 'true' and '$(SkipAotPublish)' != 'true'">
+    <Message Importance="high" Text="MSIX: NativeAOT publish -&gt; $(AotPayloadDir)" />
     <Exec Command="dotnet publish &quot;$(AppProject)&quot; -c Release -r win-x64 -p:PublishAot=true -o &quot;$(AotPayloadDir)&quot;" />
   </Target>
-
   <!-- 把 AOT 产物注入包负载并移除托管负载。四个集合与参考工程的
        RebaseCliPayloadToPackageRoot 同构：WapProjPackageFile / UploadWapProjPackageFile
        驱动 AppxPackagePayload（清单生成 + 打包），_FileToCopy / _UploadFileToCopy
@@ -132,15 +128,13 @@
   <Target Name="InjectAotPayload" AfterTargets="_ConvertItems" Condition="'$(DesignTimeBuild)' != 'true'">
     <ItemGroup>
       <_AotSourceFile Include="$(AotPayloadDir)\**\*" Exclude="$(AotPayloadDir)\**\*.pdb" />
-      <_EntryManagedPayload Include="@(WapProjPackageFile)"
-                            Condition="$([System.String]::Copy('%(WapProjPackageFile.TargetPath)').StartsWith('$(EntryPayloadPrefix)'))" />
+      <_EntryManagedPayload Include="@(WapProjPackageFile)" Condition="$([System.String]::Copy('%(WapProjPackageFile.TargetPath)').StartsWith('$(EntryPayloadPrefix)'))" />
     </ItemGroup>
     <ItemGroup Condition="'@(_AotSourceFile)' != ''">
       <WapProjPackageFile Remove="@(_EntryManagedPayload)" />
       <UploadWapProjPackageFile Remove="@(_EntryManagedPayload)" />
       <_FileToCopy Remove="@(_EntryManagedPayload)" />
       <_UploadFileToCopy Remove="@(_EntryManagedPayload)" />
-
       <WapProjPackageFile Include="%(_AotSourceFile.Identity)">
         <TargetPath>$(EntryPayloadPrefix)%(Filename)%(Extension)</TargetPath>
       </WapProjPackageFile>
@@ -156,7 +150,6 @@
         <CopyToTargetPath>$([System.IO.Path]::Combine($(AotPayloadLayoutRoot), '$(EntryPayloadPrefix)', '%(Filename)%(Extension)'))</CopyToTargetPath>
       </_UploadFileToCopy>
     </ItemGroup>
-    <Message Condition="'@(_AotSourceFile)' == '' and '$(SkipAotPublish)' == 'true'" Importance="high"
-             Text="MSIX: AOT payload not found at $(AotPayloadDir); packaging managed build output instead. Run without -p:SkipAotPublish=true." />
+    <Message Condition="'@(_AotSourceFile)' == '' and '$(SkipAotPublish)' == 'true'" Importance="high" Text="MSIX: AOT payload not found at $(AotPayloadDir); packaging managed build output instead. Run without -p:SkipAotPublish=true." />
   </Target>
 </Project>
