@@ -1,5 +1,22 @@
 # 变更记录
 
+## 2026-11-15 托盘菜单补齐页面直达与本地库图搜图
+
+- `Services/DesktopTrayController.cs`：菜单改为「显示窗口 → 各页面 → 本地库图搜图 → 退出」。页面项直接遍历 `ShellViewModel.NavItems` 生成，新增页面无需再改托盘，避免维护第二份清单；点击先恢复前台再切页（隐藏窗口上跑导航动画会白做一次布局）。设置迁移期间导航会被 `SelectedNav` 拒绝，菜单点击改为弹出提示而不是静默丢弃。`OpenImageSearch` 复用窗口既有入口，不新建第二套图搜图页面。
+- `Views/MainWindow.axaml.cs`：新增 `ActiveImageSearch` 内部属性，供托盘回归断言当前文档是图搜图页。
+- `tests/EhViewerForPc.ImageSearch.Ui.Tests/TrayIntegrationTests.cs`：菜单项断言更新为 9 项完整清单；新增 `TrayMenuBringsTheWindowBackAndSwitchesToEveryPage`，逐个点击页面项断言「窗口回到前台 + `SelectedNav` 命中对应页面」，并断言图搜图项把 `ImageSearchPage` 压入导航帧。
+- 验证：UI 测试 19 / 19 通过（含新增用例）。托盘菜单由系统原生绘制，外观与点击热区仍需在真实桌面手工确认。
+
+## 2026-11-15 重复启动改为唤醒已运行窗口
+
+- `Services/SingleInstanceEndpoint.cs`（新增）：命名管道通道承载 `SHOW` / `OPEN <id>` 请求，管道名带会话号（`EhViewerReader.Activation.v1.<session>`），协议为换行分隔 UTF-8 纯文本，不走序列化上下文。接收端在 UI 线程完成窗口恢复后才回 `OK`，客户端 4 次 × 250 ms 重试覆盖首实例初始化窗口期；监听循环单次失败只记录并重建服务端，`Dispose` 取消 + 关闭等待中的连接 + 最多等 1 秒，未结束则保留令牌源到进程退出。
+- `Services/WindowActivation.cs`（新增）：恢复窗口的唯一入口。`SetForegroundWindow` 被前台锁拒绝时降级为置顶切换（下一轮调度清除标志）并在仍未激活时闪烁任务栏；`AllowSetForegroundWindow` 由第二实例向首实例 PID 授予一次性前台许可。
+- `Program.cs`：互斥锁已被占用时不再返回 0 后静默结束，改为投递请求（含 `--gallery`）再退出；新增探针第二进程入口 `--single-instance-probe-signal`（退出码 0 已投递 / 5 无人接收）。
+- `App.axaml.cs`：窗口首次 `Opened` 时启动监听（此时平台句柄已存在）；`Exit` 顺序改为「停监听 → 托盘 → Shell → 服务」；`--single-instance-probe` 使用隔离数据目录且跳过资料库初始化。
+- `Services/DesktopTrayController.cs`：托盘「显示窗口」与第二实例激活共用 `WindowActivation.Restore`，不再各自维护一套显示逻辑。
+- `StartupOptions.cs`、`Services/SingleInstanceProbe.cs`（新增）：`--single-instance-probe <json>` 无人值守验证「隐藏窗口 → 第二进程投递 → 窗口恢复 → 作品 ID 转发 → 请求计数」。
+- 验证：Debug 与 NativeAOT（`artifacts/si-aot-final`，全新输出目录）均运行探针通过，5 项断言全部为 true（含前台焦点 `foreground: true` 与作品 ID 转发）；互斥锁被占用时探针返回 6，与「已唤醒」区分；真实双启动第二进程 105 ms 内退出、仅保留一个进程、隔离目录无告警日志；Core 回归 173 项通过。MSIX 打包形态尚未实机验证。
+
 ## 2026-11-15 沉浸模式隐藏左下角账号按钮
 
 - `Views/MainWindow.axaml.cs`：紧凑态账号按钮的可见性补上 `!immersive` 条件。此前只判断了面板展开态，面板收起时（窄栏或手动收起），该按钮在沉浸模式下仍固定于客户区左下角，压在阅读器底部的「上一页」按钮上。展开态的账号栏原本已隐藏，现在两种形态在沉浸时都不再显示，退出沉浸后按面板状态恢复。

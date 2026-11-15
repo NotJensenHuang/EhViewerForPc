@@ -108,7 +108,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - Settings are grouped into categories and take effect on "Save settings"; saving uses an incremental merge so cached startup values cannot overwrite sources added at runtime
 
 - 🪟 **Interface and Navigation**
-  - The Windows tray offers "Show window / Exit". Closing the window keeps downloads and image indexing running by default and restores the same reader. Disable this under Settings → Interface and Reading → Keep running after closing the window; tray Exit releases application services
+  - The Windows tray menu offers "Show window", one-click entries for every page (online browse / favorites / reading history / downloads / local library / settings) plus a separate "Local image search" entry, and "Exit"; any entry brings the window to the front and then switches to that page. Closing the window keeps downloads and image indexing running by default and restores the same reader. Disable this under Settings → Interface and Reading → Keep running after closing the window; tray Exit releases application services
   - FluentAvaloniaUI `FANavigationView` + `FAFrame` history with back, forward and Alt+← / Alt+→
   - System / light / dark themes; the sidebar can collapse and remembers its state, collapses automatically in narrow windows, and list and scroll positions are preserved
   - Online and local details share `GalleryDetailsView`; descriptive text in Settings, details and the status bar can be selected and copied
@@ -212,6 +212,7 @@ All unattended modes run without dialogs; diagnostics can be written to the path
 | `--navigation-regression` | Page navigation and back-stack regression |
 | `--anim-probe <file> [--dump-frames <dir>]` | Frame count, frame durations, decode timings and playback simulation for one animation |
 | `--probe-file <path>` | Diagnose one image: decodable or timing out |
+| `--single-instance-probe <out.json>` | Unattended single-instance check: hide the window, signal from a second process, assert it is restored and the gallery id forwarded |
 | `--image-search-probe-root <dir> --out <json>` | Windowless check of the application image-search service chain (requires an empty directory) |
 | `--bookmark-probe-root <dir> --out <json>` | Windowless check of bookmark import/export compatibility (requires an empty directory) |
 | `--verbose` | More detailed diagnostics |
@@ -247,7 +248,7 @@ Main window: `Ctrl+F` focuses the current page's search box, `F5` refreshes the 
 
 ## 🗂️ Data Storage
 
-Application state is written to the system local application data directory (`%LocalAppData%\EhViewerForPc` on Windows) and can be overridden with `--data-dir`. If the new directory does not exist but the legacy `%LocalAppData%\EhViewerReader` does, the app keeps using the legacy directory so settings and progress survive the rename; the single-instance mutex also keeps its old name.
+Application state is written to the system local application data directory (`%LocalAppData%\EhViewerForPc` on Windows) and can be overridden with `--data-dir`. If the new directory does not exist but the legacy `%LocalAppData%\EhViewerReader` does, the app keeps using the legacy directory so settings and progress survive the rename; the single-instance mutex also keeps its old name. A second launch hands "show window / open gallery" to the running instance over a named pipe and exits, so a window hidden in the tray is restored and brought to the foreground instead of doing nothing.
 
 ```
 settings.json            Settings (session cookies, proxy, online / download / reading preferences, filter rules, sources, search history)

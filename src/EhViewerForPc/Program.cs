@@ -33,6 +33,12 @@ internal static class Program
             return FormatProbe.Run(options.ProbeFile);
         }
 
+        if (options.SingleInstanceProbeSignal)
+        {
+            // 探针的第二个进程：只投递请求，退出码区分「已投递」与「无人接收」。
+            return SingleInstanceEndpoint.TrySignal(options.Gallery) ? 0 : 5;
+        }
+
         if (options.SelfTest)
         {
             // A running dispatcher loop is required for WriteableBitmap/Skia
@@ -48,6 +54,13 @@ internal static class Program
             _instanceMutex = new Mutex(initiallyOwned: true, OperatingSystem.IsWindows() ? @"Local\EhViewerReader" : "EhViewerReader", out bool createdNew);
             if (!createdNew)
             {
+                // 探针要求自己是首实例：被占用时明确失败，避免与「已唤醒」结论混淆。
+                if (options.SingleInstanceProbe is not null) return 6;
+
+                // Hand the request to the running instance, then leave. The
+                // foreground grant must happen in this process: Windows only
+                // lets a freshly launched process grant foreground rights.
+                SingleInstanceEndpoint.TrySignal(options.Gallery);
                 return 0;
             }
         }

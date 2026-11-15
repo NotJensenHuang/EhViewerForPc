@@ -100,6 +100,8 @@ public partial class MainWindow : Window
     /// <summary>Exposed for the UI smoke test (web login window, when open).</summary>
     public DocumentPage? LoginWindow => _loginPage;
     public ReaderPage? ActiveReader => ContentHost.Content as ReaderPage;
+    /// <summary>Exposed for the tray regression: the retained local image search document.</summary>
+    internal ImageSearchPage? ActiveImageSearch => _imageSearchPage;
     internal Func<WindowClosingEventArgs, bool>? BackgroundCloseHandler { get; set; }
     internal FAFrame NavigationFrame => ContentHost;
 

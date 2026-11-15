@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using CommunityToolkit.Mvvm.Input;
+using EhViewerForPc.ViewModels;
 using EhViewerForPc.Views;
 
 namespace EhViewerForPc.Services;
@@ -22,10 +23,7 @@ internal sealed class DesktopTrayController(MainWindow window, AppServices servi
         try
         {
             if (AppIcons.Window is not { } icon) return false;
-            var menu = new NativeMenu();
-            menu.Items.Add(new NativeMenuItem("显示窗口") { Command = new RelayCommand(Restore) });
-            menu.Items.Add(new NativeMenuItemSeparator());
-            menu.Items.Add(new NativeMenuItem("退出") { Command = new RelayCommand(Exit) });
+            var menu = BuildMenu();
             _icon = new TrayIcon();
             _icon.Icon = icon;
             _icon.ToolTipText = "EhViewer for PC";
@@ -52,6 +50,61 @@ internal sealed class DesktopTrayController(MainWindow window, AppServices servi
         }
     }
 
+    /// <summary>
+    /// 托盘菜单直接由导航模型生成：新增页面会自动出现在菜单里，不维护第二份清单。
+    /// </summary>
+    private NativeMenu BuildMenu()
+    {
+        var menu = new NativeMenu();
+        menu.Items.Add(new NativeMenuItem("显示窗口") { Command = new RelayCommand(Restore) });
+        menu.Items.Add(new NativeMenuItemSeparator());
+
+        if (window.Shell is { } shell)
+        {
+            foreach (NavItem item in shell.NavItems)
+            {
+                string key = item.Key;
+                menu.Items.Add(new NativeMenuItem(item.Label) { Command = new RelayCommand(() => OpenPage(key)) });
+            }
+
+            menu.Items.Add(new NativeMenuItemSeparator());
+        }
+
+        menu.Items.Add(new NativeMenuItem("本地库图搜图") { Command = new RelayCommand(OpenImageSearch) });
+        menu.Items.Add(new NativeMenuItemSeparator());
+        menu.Items.Add(new NativeMenuItem("退出") { Command = new RelayCommand(Exit) });
+        return menu;
+    }
+
+    /// <summary>先恢复前台再切页：隐藏窗口上跑导航动画与页面激活会被白做一次布局。</summary>
+    private void OpenPage(string key)
+    {
+        if (_disposed) return;
+        Restore();
+        if (window.Shell is not { } shell) return;
+        if (shell.Settings.IsSaving)
+        {
+            // 迁移期间导航会被拒绝，明确告知而不是静默丢弃这次点击。
+            shell.Notify("请等待目录迁移完成，或在设置页取消迁移");
+            return;
+        }
+
+        shell.Navigate(key);
+    }
+
+    private void OpenImageSearch()
+    {
+        if (_disposed) return;
+        Restore();
+        if (window.Shell is { } shell && shell.Settings.IsSaving)
+        {
+            shell.Notify("请等待目录迁移完成，或在设置页取消迁移");
+            return;
+        }
+
+        window.OpenImageSearch();
+    }
+
     internal bool TryHide(WindowClosingEventArgs e)
     {
         if (!ShouldHide(e.CloseReason)) return false;
@@ -70,10 +123,8 @@ internal sealed class DesktopTrayController(MainWindow window, AppServices servi
     internal void Restore()
     {
         if (_disposed) return;
-        window.Show();
-        if (window.WindowState == WindowState.Minimized)
-            window.WindowState = services.Settings.WindowMaximized ? WindowState.Maximized : WindowState.Normal;
-        window.Activate();
+        // 与「第二实例请求激活」共用同一条恢复路径，避免两套显示窗口实现。
+        WindowActivation.Restore(window, services.Settings.WindowMaximized);
     }
 
     internal void Exit()

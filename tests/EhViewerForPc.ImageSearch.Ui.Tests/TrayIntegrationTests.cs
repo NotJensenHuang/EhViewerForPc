@@ -117,7 +117,42 @@ public sealed class TrayIntegrationTests
                 window.Close();
                 Assert.False(window.IsVisible);
             }
-            Assert.Equal(new[] { "显示窗口", "退出" }, tray.Icon!.Menu!.Items.OfType<NativeMenuItem>().Where(i => i is not NativeMenuItemSeparator).Select(i => i.Header));
+            Assert.Equal(
+                new[] { "显示窗口", "在线浏览", "收藏", "阅读历史", "下载", "本地库", "设置", "本地库图搜图", "退出" },
+                tray.Icon!.Menu!.Items.OfType<NativeMenuItem>().Where(i => i is not NativeMenuItemSeparator).Select(i => i.Header));
+        }
+        finally { tray.Dispose(); window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public void TrayMenuBringsTheWindowBackAndSwitchesToEveryPage()
+    {
+        using var fixture = new ReaderRetryIntegrationTests.Fixture();
+        using var shell = new ShellViewModel(fixture.Services);
+        var window = new MainWindow(shell);
+        using var tray = new DesktopTrayController(window, fixture.Services, () => false);
+        try
+        {
+            window.Show(); Assert.True(tray.Start());
+            window.Close();
+            Assert.False(window.IsVisible);
+
+            NativeMenuItem[] items = tray.Icon!.Menu!.Items.OfType<NativeMenuItem>()
+                .Where(item => item is not NativeMenuItemSeparator).ToArray();
+            // 菜单项由导航模型生成：每一项都要既回到前台，又停在对应页面。
+            foreach (NavItem nav in shell.NavItems)
+            {
+                items.Single(item => item.Header == nav.Label).Command!.Execute(null);
+                Assert.True(window.IsVisible);
+                Assert.Same(nav, shell.SelectedNav);
+                window.Close();
+                Assert.False(window.IsVisible);
+            }
+
+            items.Single(item => item.Header == "本地库图搜图").Command!.Execute(null);
+            Assert.True(window.IsVisible);
+            Assert.NotNull(window.ActiveImageSearch);
+            Assert.Same(window.ActiveImageSearch, window.NavigationFrame.Content);
         }
         finally { tray.Dispose(); window.Close(); }
     }

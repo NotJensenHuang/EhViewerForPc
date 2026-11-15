@@ -25,6 +25,12 @@ public sealed class StartupOptions
     public string? DumpFrames { get; private set; }
     public bool SelfTest { get; private set; }
 
+    /// <summary>Unattended single-instance activation probe; writes a JSON report.</summary>
+    public string? SingleInstanceProbe { get; private set; }
+
+    /// <summary>Second-process role for the probe: signal the running instance, then exit.</summary>
+    public bool SingleInstanceProbeSignal { get; private set; }
+
     /// <summary>Network probe: front page → detail → page list → image URL.</summary>
     public bool OnlineProbe { get; private set; }
 
@@ -43,6 +49,12 @@ public sealed class StartupOptions
         if (UiSmoke && string.IsNullOrWhiteSpace(DataDirectory))
         {
             DataDirectory = Path.Combine(Path.GetTempPath(), "EhReaderSmokeData-" + Guid.NewGuid().ToString("N"));
+        }
+
+        // 激活探针会真实启动第二个进程并显示窗口，不能读写用户本机状态。
+        if (SingleInstanceProbe is not null && string.IsNullOrWhiteSpace(DataDirectory))
+        {
+            DataDirectory = Path.Combine(Path.GetTempPath(), "EhReaderActivationProbe-" + Guid.NewGuid().ToString("N"));
         }
     }
 
@@ -83,6 +95,12 @@ public sealed class StartupOptions
                     break;
                 case "--self-test":
                     options.SelfTest = true;
+                    break;
+                case "--single-instance-probe":
+                    options.SingleInstanceProbe = Next(args, ref i);
+                    break;
+                case "--single-instance-probe-signal":
+                    options.SingleInstanceProbeSignal = true;
                     break;
                 case "--online-probe":
                     options.OnlineProbe = true;

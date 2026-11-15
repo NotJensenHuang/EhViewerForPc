@@ -108,7 +108,7 @@ dotnet run --project src/EhViewerForPc -c Release
   - 设置按分类页展示，修改后点击「保存设置」生效；保存采用增量合并，不会用启动时的缓存值覆盖运行时新增的数据源
 
 - 🪟 **界面与导航**
-  - Windows 托盘提供「显示窗口 / 退出」；默认关闭窗口后继续后台下载和建立图片索引，恢复原有阅读页；可在设置「界面与阅读 → 关闭窗口后后台运行」关闭，托盘退出才释放服务
+  - Windows 托盘菜单提供「显示窗口」、各页面直达（在线浏览 / 收藏 / 阅读历史 / 下载 / 本地库 / 设置）与独立的「本地库图搜图」入口，点击任一项都会先把窗口带回前台再切到对应页面，最后是「退出」；默认关闭窗口后继续后台下载和建立图片索引，恢复原有阅读页；可在设置「界面与阅读 → 关闭窗口后后台运行」关闭，托盘退出才释放服务
   - FluentAvaloniaUI 的 `FANavigationView` + `FAFrame` 页面历史，支持返回、前进和 Alt+← / Alt+→
   - 跟随系统 / 浅色 / 深色三套主题；侧栏可收拢并记住选择，窄窗口自动收拢；主页面保留列表与滚动位置
   - 在线与本地详情共用 `GalleryDetailsView`；设置、详情与状态栏中的说明性文本支持拖选复制
@@ -212,6 +212,7 @@ Release 配置默认启用 `PublishAot`，依赖框架的托管发布需显式�
 | `--navigation-regression` | 页面导航与返回栈回归 |
 | `--anim-probe <file> [--dump-frames <dir>]` | 单个动图的帧数、帧时长、解码耗时与播放模拟 |
 | `--probe-file <path>` | 诊断单个图片：是否可解析、是否超时 |
+| `--single-instance-probe <out.json>` | 无人值守验证单实例唤醒：隐藏窗口 → 第二进程投递请求 → 断言窗口恢复并转发作品 ID |
 | `--image-search-probe-root <dir> --out <json>` | 无窗口验证以图搜图的应用服务链路（需空目录） |
 | `--bookmark-probe-root <dir> --out <json>` | 无窗口验证书签导入导出兼容性（需空目录） |
 | `--verbose` | 输出更详细的诊断信息 |
@@ -247,7 +248,7 @@ EhViewerForPc.exe --ui-smoke --out "<输出目录>"
 
 ## 🗂️ 数据存储
 
-应用状态写入系统本地应用数据目录（Windows 为 `%LocalAppData%\EhViewerForPc`），可用 `--data-dir` 覆盖。若新目录不存在而旧目录 `%LocalAppData%\EhViewerReader` 存在，应用会继续沿用旧目录，避免更名导致设置与进度丢失；单实例互斥锁也保留旧名称。
+应用状态写入系统本地应用数据目录（Windows 为 `%LocalAppData%\EhViewerForPc`），可用 `--data-dir` 覆盖。若新目录不存在而旧目录 `%LocalAppData%\EhViewerReader` 存在，应用会继续沿用旧目录，避免更名导致设置与进度丢失；单实例互斥锁也保留旧名称。重复启动时，新进程通过命名管道把「显示窗口 / 打开指定作品」交给已运行实例后退出，因此关闭到托盘的窗口会被恢复并带到前台，而不是毫无反应。
 
 ```
 settings.json            设置（会话 Cookie、代理、在线 / 下载 / 阅读偏好、过滤规则、数据源、搜索历史）

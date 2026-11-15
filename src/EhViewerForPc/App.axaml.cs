@@ -121,15 +121,62 @@ public partial class App : Application
                 tray.Start();
             }
 
+            // 与互斥锁同条件：仅在 Windows 主界面启用；冒烟模式不参与单实例。
+            SingleInstanceEndpoint? endpoint = null;
+            SingleInstanceProbe? activationProbe = null;
+            // 初始化完成前到达的「打开作品」请求先排队，避免命中尚未初始化的资料库视图模型。
+            bool libraryReady = false;
+            string? pendingGallery = null;
+            if (OperatingSystem.IsWindows() && !options.UiSmoke)
+            {
+                if (!string.IsNullOrWhiteSpace(options.SingleInstanceProbe))
+                {
+                    activationProbe = new SingleInstanceProbe(options.OutputPath ??
+                        Path.Combine(Path.GetTempPath(), "ehviewer-single-instance-probe.json"));
+                    endpoint = new SingleInstanceEndpoint(window, static () => false, activationProbe.RecordOpen, services.Log);
+                }
+                else
+                {
+                    endpoint = new SingleInstanceEndpoint(window, () => services.Settings.WindowMaximized,
+                        id =>
+                        {
+                            if (string.IsNullOrWhiteSpace(id)) return;
+                            if (!libraryReady)
+                            {
+                                pendingGallery = id;
+                                return;
+                            }
+
+                            shell.Library.OpenById(id);
+                        }, services.Log);
+                }
+            }
+
             bool initialized = false;
             window.Opened += async (_, _) =>
             {
                 if (initialized) return;
                 initialized = true;
+                endpoint?.Start();
+                if (activationProbe is not null)
+                {
+                    // 探针只验证激活链路，不初始化资料库，避免对真实环境产生副作用。
+                    desktop.Shutdown(await activationProbe.RunAsync(window, endpoint!));
+                    return;
+                }
+
                 await shell.InitializeAsync();
+                libraryReady = true;
                 if (!string.IsNullOrWhiteSpace(options.Gallery))
                 {
                     shell.Library.OpenById(options.Gallery);
+                }
+
+                // 命令行作品先打开，初始化期间排队的第二实例请求随后生效（后者是更晚的意图）。
+                if (pendingGallery is { } pending)
+                {
+                    pendingGallery = null;
+                    shell.Library.OpenById(pending);
                 }
 
                 if (options.UiSmoke)
@@ -146,11 +193,16 @@ public partial class App : Application
 
             desktop.Exit += (_, _) =>
             {
-                try { tray?.Dispose(); }
+                // 先停监听再释放它所引用的窗口与服务，顺序与启动相反。
+                try { endpoint?.Dispose(); }
                 finally
                 {
-                    try { shell.Dispose(); }
-                    finally { services.Dispose(); }
+                    try { tray?.Dispose(); }
+                    finally
+                    {
+                        try { shell.Dispose(); }
+                        finally { services.Dispose(); }
+                    }
                 }
             };
         }
