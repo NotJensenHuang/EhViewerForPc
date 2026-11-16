@@ -1,5 +1,22 @@
 # 变更记录
 
+## 2026-11-16 页级下载失败按图床换源重试
+
+- `Core/Online/EhClient.cs`：`ResolveImageAsync` 在解析不到图片或拿到 509 占位图时，用页面里的 `nl` 换源键重新请求一次视图页再按新地址解析；新抽 `FetchViewerHtmlAsync` 统一串行化与节流。509 判定收紧为 `/509.gif` 与结尾 `/509`，避免把正常图床路径误判成配额错误。下载失败消息补上主机与容器识别结果，HTTP 失败不再只有状态码。
+- `Core/Online/EhParser.cs`：`TryParseImagePage` 先解析 `nl` 键再检查 `#img`，加载失败的页面也能拿到换源键。
+- `Core/Online/EhHttp.cs`：图片请求不再声明 `image/avif`，避免服务端返回本地容器校验与解码都不支持的格式。
+- `Core/Format/ImageSignature.cs`：WebP 改为「文件不短于 RIFF 声明长度」，允许尾部填充并继续拒绝截断；新增 `DescribeFile` 供失败消息使用。
+- `Core/Imaging/GalleryImageStore.cs`：`GetAsync` 增加 `refresh`，重试时绕过在线图片缓存——占位图本身可能是完整 GIF，容器校验发现不了。
+- `Core/Download/DownloadManager.cs`：单页获取失败后重试 3 次并退避，重试时重新解析地址；HttpClient 超时不再当作任务取消，只有外部 token 真正取消才中止整批下载。
+- `Core/Online/EhClient.cs`、`Core/Download/DownloadManager.cs`：509 配额是外部可恢复条件，`EhException.QuotaExceeded` 标记后单页与整批都不再重试；任务转为「已暂停」并提示配额不足，避免继续逐页请求把剩余配额打光。
+- `Core/Download/DownloadManager.PageRetry.cs`：「重试本页」的分页定位改为按首页条数定位 + 相邻分页 + 全列表兜底，避免固定步长猜错就报「在线画廊中找不到当前页」。
+- `tests/EhViewerForPc.Core.Tests/RemediationTests.cs`：覆盖 nl 换源（缺图与 509）、瞬时失败后重试完成、配额耗尽暂停且只请求一次、WebP 尾部填充与截断判定。
+- `Core/Online/EhParser.cs`、`Core/Online/EhModels.cs`、`Core/Online/EhUrls.cs`、`Core/Online/EhClient.cs`：解析 `home.php` 的 Image Limits 为 `EhImageLimits`。额度从未触发时限流时不打印数字，改为识别站点的「No restrictions … in effect」措辞并标记为无限制；`GetImageLimitsAsync` 固定读主站（`exhentai.org/home.php` 返回 404，认证 cookie 两个域都装），未登录或页面变化时返回 null。
+- `ViewModels/ShellViewModel.cs`：账号区新增 `ImageLimitLabel` / `ImageLimitDetail` 与 `RefreshImageLimitsCommand`；启动、登录变化和下载任务出现 509 时按 30 秒节流自动刷新，退出登录清空读数；已登录但未读到时显示「未读取」而不是留空。
+- `Views/MainWindow.axaml`：账号栏改为两行（账号 + 图片额度），额度单独一行避免窄侧栏先截掉数字；按钮只对齐首行，内容块垂直居中。额度整行就是刷新按钮，展开态与折叠浮出共用同一入口；浮出层固定宽度并加大行距，避免长说明换行挤压。
+- `tests/EhViewerForPc.Core.Tests/OnlineParserTests.cs`：覆盖额度数字解析、超限标记、无限制措辞与缺少标签时不臆造数值。
+- 验证：`dotnet test tests/EhViewerForPc.Core.Tests -c Debug` 187/187 通过；`dotnet build src/EhViewerForPc -c Release` 与 `PublishAot` 通过；`--ui-smoke` 截图确认账号区两行左对齐、按钮与首行同一基线；用真实登录页面驱动 Core 解析器得到 `unrestricted=True`，证实该账号当时没有图片配额限制。
+
 ## 2026-11-15 修复两日审查中的副本身份、编号与删除调度
 
 - `ViewModels/VersionsViewModel.cs`：单目录缺页检测在作品身份未变时保留完整扫描的副本 StableId 和重复标记，避免已有图片索引命中消失。

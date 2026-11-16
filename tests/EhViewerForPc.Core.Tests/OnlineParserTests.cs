@@ -216,6 +216,46 @@ public sealed class OnlineParserTests
     }
 
     [Fact]
+    public void ImageLimitsComeFromTheHomePagePair()
+    {
+        string html = "<html><body><div class='home'><p>Image Limits</p><div>1,234 / 5,000</div></div></body></html>";
+
+        Assert.True(EhParser.TryParseImageLimits(html, out EhImageLimits limits));
+        Assert.Equal(1234, limits.Used);
+        Assert.Equal(5000, limits.Maximum);
+        Assert.False(limits.IsExceeded);
+    }
+
+    [Fact]
+    public void UnrestrictedImageLimitsComeFromTheSitesOwnWording()
+    {
+        string html = "<p>Image Limits</p><p>Due to widespread usage of bulk downloaders, high-resolution "
+                      + "images can be limited. You are currently using IP-based limits. "
+                      + "No restrictions are currently in effect.</p>";
+
+        Assert.True(EhParser.TryParseImageLimits(html, out EhImageLimits limits));
+        Assert.True(limits.IsUnrestricted);
+        Assert.False(limits.IsExceeded);
+    }
+
+    [Fact]
+    public void ExceededImageLimitsAreFlagged()
+    {
+        string html = "<p>Image Limits</p><span>30,123 / 5,000</span><p>Reset</p>";
+
+        Assert.True(EhParser.TryParseImageLimits(html, out EhImageLimits limits));
+        Assert.Equal(30123, limits.Used);
+        Assert.True(limits.IsExceeded);
+    }
+
+    [Fact]
+    public void HomePageWithoutImageLimitsDoesNotInventNumbers()
+    {
+        Assert.False(EhParser.TryParseImageLimits("<p>Image Limits are temporarily unavailable</p>", out _));
+        Assert.False(EhParser.TryParseImageLimits("<p>Nothing here</p>", out _));
+    }
+
+    [Fact]
     public void SearchUrlUsesExcludedCategoryMask()
     {
         var request = new EhSearchRequest

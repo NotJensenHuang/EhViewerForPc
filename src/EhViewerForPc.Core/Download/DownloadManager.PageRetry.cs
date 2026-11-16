@@ -79,13 +79,23 @@ public sealed partial class DownloadManager
             EhPageRef? page = list.Pages.FirstOrDefault(p => p.Page == pageNumber);
             if (page is null && list.HasMore && list.Pages.Count > 0)
             {
-                int group = (pageNumber - 1) / list.Pages.Count;
-                if (group > 0)
+                // 预览每页条数由站点决定，解析也可能少一两条；先按首页条数定位，
+                // 再查相邻分页，避免固定步长猜错就把这一页判成「在线画廊中不存在」。
+                int guess = (pageNumber - 1) / list.Pages.Count;
+                foreach (int index in new[] { guess, guess - 1, guess + 1 }.Where(i => i > 0).Distinct())
                 {
-                    list = await _client.GetPageListAsync(details.Gid, details.Token, group, token).ConfigureAwait(false);
-                    page = list.Pages.FirstOrDefault(p => p.Page == pageNumber);
+                    var candidate = await _client.GetPageListAsync(details.Gid, details.Token, index, token).ConfigureAwait(false);
+                    page = candidate.Pages.FirstOrDefault(p => p.Page == pageNumber);
+                    if (page is not null) break;
                 }
             }
+
+            if (page is null)
+            {
+                var all = await _client.GetAllPagesAsync(details.Gid, details.Token, details.Pages, null, token).ConfigureAwait(false);
+                page = all.FirstOrDefault(p => p.Page == pageNumber);
+            }
+
             if (page is null) throw new IOException("在线画廊中找不到当前页。");
             var resolved = await _client.ResolveImageAsync(page, quality == ImageQuality.Original, token, width, refresh: true).ConfigureAwait(false);
             // 手动重下载不命中本地副本或图片缓存，避免把坏页再次复制回来。

@@ -489,3 +489,16 @@ public sealed class EhArchiveResult
     public string DownloadUrl { get; init; } = string.Empty;
     public string Message { get; init; } = string.Empty;
 }
+
+/// <summary>
+/// One reading of the account's image limits (home.php). The site tracks this
+/// per IP for ordinary accounts, regenerates a few hits per minute, and answers
+/// with a 509 placeholder once it is used up. When nothing is throttled the page
+/// prints no numbers at all, only "No restrictions are currently in effect".
+/// </summary>
+public sealed record EhImageLimits(int Used, int Maximum, bool IsUnrestricted = false)
+{
+    public static EhImageLimits Unrestricted { get; } = new(0, 0, true);
+
+    public bool IsExceeded => !IsUnrestricted && Maximum > 0 && Used >= Maximum;
+}

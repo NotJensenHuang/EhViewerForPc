@@ -76,7 +76,8 @@ public static class ImageSignature
             if (stream.Length < 16) return false;
             Span<byte> header = stackalloc byte[32];
             int read = stream.Read(header);
-            ImageKind kind = Detect(header[..read]);
+            ReadOnlySpan<byte> head = header[..read];
+            ImageKind kind = Detect(head);
             Span<byte> tail = stackalloc byte[12];
             stream.Seek(-12, SeekOrigin.End);
             stream.ReadExactly(tail);
@@ -85,10 +86,45 @@ public static class ImageSignature
                 ImageKind.Jpeg => tail[^2] == 0xff && tail[^1] == 0xd9,
                 ImageKind.Png => tail[4..8].SequenceEqual("IEND"u8),
                 ImageKind.Gif => tail[^1] == 0x3b,
-                ImageKind.Webp => System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header[4..8]) + 8L == stream.Length,
+                ImageKind.Webp => IsCompleteWebp(head, stream.Length),
                 _ => false,
             };
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>WebP 载荷边界：RIFF 声明长度 + 8 是有效字节数。截断必须拒绝，
+    /// 但少数编码器会在末尾追加填充或把长度写成 0，因此只要求文件不短于
+    /// 声明长度，并核对首个 chunk 标识。</summary>
+    private static bool IsCompleteWebp(ReadOnlySpan<byte> header, long length)
+    {
+        if (header.Length < 16) return false;
+        bool vp8 = header[12] == (byte)'V' && header[13] == (byte)'P' && header[14] == (byte)'8' &&
+                   header[15] is (byte)' ' or (byte)'L' or (byte)'X';
+        if (!vp8) return false;
+        uint declared = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(header[4..8]);
+        return declared == 0 ? length >= 20 : length >= declared + 8L;
+    }
+
+    /// <summary>人类可读的容器识别结果，用于下载失败时定位真实原因
+    /// （格式不支持与传输截断必须能区分开）。</summary>
+    public static string DescribeFile(string path)
+    {
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete, 16, FileOptions.SequentialScan);
+            long length = stream.Length;
+            Span<byte> header = stackalloc byte[32];
+            int read = stream.Read(header);
+            ImageKind kind = Detect(header[..read]);
+            return kind == ImageKind.Unknown
+                ? $"{length} 字节，未识别为受支持的图片"
+                : $"{ToKindString(kind)}，{length} 字节";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return "临时文件不可读";
+        }
     }
 }

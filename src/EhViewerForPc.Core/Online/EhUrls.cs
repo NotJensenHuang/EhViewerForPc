@@ -17,6 +17,9 @@ public static class EhUrls
 
     public static string Home(EhSite site) => Base(site) + "/";
 
+    /// <summary>Account home page; carries the current Image Limits reading.</summary>
+    public static string HomePage(EhSite site) => Base(site) + "/home.php";
+
     public static string Popular(EhSite site, int page) =>
         Base(site) + "/popular" + (page > 0 ? "?page=" + page : string.Empty);
 

@@ -40,6 +40,9 @@ public static partial class EhParser
     [GeneratedRegex(@"nl\('([^']+)'\)", RegexOptions.CultureInvariant)]
     private static partial Regex NlKeyRegex();
 
+    [GeneratedRegex(@"([0-9][0-9,]*)\s*/\s*([0-9][0-9,]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex ImageLimitPairRegex();
+
     [GeneratedRegex(@"<option[^>]*value\s*=\s*""(?<slot>[0-9]+)""[^>]*selected", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SelectedFavSlotRegex();
 
@@ -782,6 +785,12 @@ public static partial class EhParser
         error = null;
 
         HtmlNode document = HtmlLite.Parse(html);
+
+        // nl 是站点给出的换源键（onerror / loadfail 链接）。即使本次没有 #img
+        // 也要解析出来，调用方才能带它重新请求并让站点换一个 H@H 节点。
+        Match nl = NlKeyRegex().Match(html);
+        if (nl.Success) nlKey = nl.Groups[1].Value;
+
         HtmlNode? image = document.FirstDescendantById("img");
         if (image is null)
         {
@@ -791,10 +800,6 @@ public static partial class EhParser
 
         imageUrl = NormalizeUrl(image.GetAttribute("src"));
 
-        // nl is the retry/skip-H@H key, independent from the fullimg original link.
-        Match nl = NlKeyRegex().Match(html);
-        if (nl.Success) nlKey = nl.Groups[1].Value;
-
         if (imageUrl.Length == 0)
         {
             error = "图片地址为空";
@@ -803,6 +808,46 @@ public static partial class EhParser
 
         return true;
     }
+
+    /// <summary>
+    /// Reads the account's image limits from home.php. When nothing is throttled
+    /// the page prints no numbers at all, only "No restrictions are currently in
+    /// effect"; otherwise it prints current usage as "used / maximum". The
+    /// surrounding markup has changed several times, so this only anchors on the
+    /// label and the first number pair after it.
+    /// </summary>
+    public static bool TryParseImageLimits(string html, out EhImageLimits limits)
+    {
+        limits = new EhImageLimits(0, 0);
+        if (string.IsNullOrEmpty(html)) return false;
+
+        string text = HtmlLite.Parse(html).InnerText;
+        int label = text.IndexOf("Image Limits", StringComparison.OrdinalIgnoreCase);
+        if (label < 0) return false;
+
+        ReadOnlySpan<char> window = text.AsSpan(label);
+        if (window.Length > 1200) window = window[..1200];
+
+        // 额度正常时站点不打印数字，只说明「当前没有限制」。用两个关键短语
+        // 判定，避免相邻标签把整句拆开导致漏读。
+        if (window.Contains("No restrictions", StringComparison.OrdinalIgnoreCase) &&
+            window.Contains("in effect", StringComparison.OrdinalIgnoreCase))
+        {
+            limits = EhImageLimits.Unrestricted;
+            return true;
+        }
+
+        Match match = ImageLimitPairRegex().Match(window.ToString());
+        if (!match.Success) return false;
+        if (!TryParseCount(match.Groups[1].Value, out int used) ||
+            !TryParseCount(match.Groups[2].Value, out int maximum) || maximum <= 0) return false;
+
+        limits = new EhImageLimits(used, maximum);
+        return true;
+    }
+
+    private static bool TryParseCount(string text, out int value) =>
+        int.TryParse(text.Replace(",", string.Empty), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
 
     /// <summary>
     /// Reads the favourite state from #favoritelink. The link reads "Add to

@@ -17,6 +17,11 @@ namespace EhViewerForPc.Core.Download;
 /// </summary>
 public sealed partial class DownloadManager : IDisposable
 {
+    /// <summary>单页尝试次数。页级失败多为图床节点抖动或响应截断，重试一次
+    /// 往往就能成功，但失败页过多时不能让整本无限等待。</summary>
+    private const int PageAttempts = 3;
+    private const int PageRetryDelayMilliseconds = 400;
+
     private readonly AppPaths _paths;
     private readonly AppSettings _settings;
     private readonly EhClient _client;
@@ -655,11 +660,14 @@ public sealed partial class DownloadManager : IDisposable
         catch (Exception ex)
         {
             _log?.Invoke($"Download failed ({task.Gid}): {ex}");
+            bool quota = ex is EhException { QuotaExceeded: true };
             lock (_gate)
             {
                 if (!_tasks.Contains(task)) return;
-                task.State = DownloadState.Failed;
-                task.Message = ex.Message;
+                // 配额不足是可恢复的外部条件：暂停而不是失败，用户不会以为页面坏了
+                // 反复重试，自动调度也不会立刻把下一次请求又打上去。
+                task.State = quota ? DownloadState.Paused : DownloadState.Failed;
+                task.Message = quota ? "站点返回 509（配额已用尽或节点限流），已暂停；稍后点继续" : ex.Message;
                 if (EhParser.IsGalleryUnavailableMessage(ex.Message)) task.GalleryUnavailable = true;
                 SaveLocked();
             }
@@ -754,7 +762,7 @@ public sealed partial class DownloadManager : IDisposable
             {
                 if (HasPage(page.Page)) return;
 
-                var cached = await _images.GetAsync(page, task.Quality == ImageQuality.Original, innerToken, task.ResampledWidth, meter.ObservePage()).ConfigureAwait(false);
+                var cached = await LoadPageImageAsync(page, task, meter, innerToken).ConfigureAwait(false);
                 string extension = ImageSignature.DetectFile(cached.Path) switch
                 {
                     ImageKind.Png => ".png", ImageKind.Gif => ".gif", ImageKind.Webp => ".webp", _ => ".jpg"
@@ -786,8 +794,14 @@ public sealed partial class DownloadManager : IDisposable
 
                 RaiseTask(task);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (innerToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (EhException ex) when (ex.QuotaExceeded)
+            {
+                // 配额用尽后继续逐页请求只会把剩余配额也打光，直接停下整批。
+                _log?.Invoke($"Gallery {task.Gid} stopped at page {page.Page}: {ex.Message}");
                 throw;
             }
             catch (Exception ex)
@@ -815,6 +829,47 @@ public sealed partial class DownloadManager : IDisposable
         }
 
         if (!task.FillMissingOnly) await WriteMetadataAsync(task, token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 获取一页的本地文件。失败后按固定次数重试，并在重试时绕过解析缓存与
+    /// 在线图片缓存，让站点换一个图床节点；只有外部真正取消时才中止整批下载。
+    /// HttpClient 超时同样表现为 <see cref="OperationCanceledException"/>，
+    /// 但调用方的 token 未被取消，因此必须按可重试失败处理。
+    /// </summary>
+    private async Task<CachedGalleryImage> LoadPageImageAsync(
+        EhPageRef page, DownloadTask task, DownloadTransferMeter meter, CancellationToken token)
+    {
+        IProgress<ImageLoadStatus>? progress = meter.ObservePage();
+        Exception? last = null;
+        for (int attempt = 1; attempt <= PageAttempts; attempt++)
+        {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                return await _images
+                    .GetAsync(page, task.Quality == ImageQuality.Original, token, task.ResampledWidth, progress, refresh: attempt > 1)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (EhException ex) when (ex.QuotaExceeded)
+            {
+                // 配额类失败再试只会继续消耗站点配额，交给整批流程停下。
+                throw;
+            }
+            catch (Exception ex)
+            {
+                last = ex;
+                _log?.Invoke($"Page {page.Page} attempt {attempt}/{PageAttempts} failed ({task.Gid}): {ex.Message}");
+                if (attempt == PageAttempts) break;
+                await Task.Delay(PageRetryDelayMilliseconds * attempt, token).ConfigureAwait(false);
+            }
+        }
+
+        throw last ?? new EhException($"第 {page.Page} 页下载失败");
     }
 
     private async Task WriteMetadataAsync(DownloadTask task, CancellationToken token)

@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using EhViewerForPc.Core.Download;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Online;
 using EhViewerForPc.Services;
@@ -53,6 +55,9 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     private CancellationTokenSource? _imageUpdateCancellation;
     private bool _imageUpdateRunning, _imageUpdateDirty, _imageMaintenanceReady;
     private bool _imageResumeRunning, _imageResumeChecked;
+    private EhImageLimits? _imageLimits;
+    private DateTime _imageLimitsFetchedUtc = DateTime.MinValue;
+    private bool _imageLimitsBusy;
 
     public ShellViewModel(AppServices services)
     {
@@ -91,6 +96,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Library.LocalIndexChanged += OnImageIndexLibraryChanged;
         Library.PropertyChanged += OnImageIndexLibraryPropertyChanged;
         services.Downloads.TaskCompleted += OnImageIndexDownloadCompleted;
+        services.Downloads.TaskChanged += OnDownloadTaskChanged;
 
         // The local index drives the "已在本机" badges on every online listing.
         Library.LocalIndexChanged += (_, _) => { Online.RefreshLocalState(); Favorites.RefreshLocalState(); LocalStateChanged?.Invoke(this, EventArgs.Empty); };
@@ -188,6 +194,81 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         ? (_services.Online.ExAccess ? "ExHentai 可访问" : "ExHentai 可能不可用")
         : "登录后可收藏、关注与下载";
 
+    /// <summary>
+    /// Image Limits reading shown under the account line. The site answers a
+    /// 509 placeholder once the quota is used up, so the number is the fastest
+    /// way to tell "my quota" from "this H@H node refuses the page".
+    /// </summary>
+    public bool ShowImageLimit => IsSignedIn;
+
+    public string ImageLimitLabel => _imageLimits switch
+    {
+        { IsUnrestricted: true } => "图片额度：无限制",
+        { IsExceeded: true } limits => $"图片额度 {Count(limits.Used)} / {Count(limits.Maximum)} · 已超限",
+        { } limits => $"图片额度 {Count(limits.Used)} / {Count(limits.Maximum)}",
+        _ => _imageLimitsBusy ? "图片额度：读取中…" : "图片额度：未读取",
+    };
+
+    public string ImageLimitDetail => _imageLimits switch
+    {
+        { IsUnrestricted: true } =>
+            "站点当前未限制图片（按 IP 记账）。若仍出现 509，说明是该页图床节点拒绝，不是额度问题。点击这一行可刷新。",
+        { } limits => $"图片额度 {Count(limits.Used)} / {Count(limits.Maximum)}。"
+                      + "普通账号按 IP 记账，约每分钟恢复 3–5 次；用尽时图片返回 509。点击这一行可刷新。",
+        _ => "图片额度尚未读取到。点击这一行重试；站点页面不可达时这里不会显示数字。",
+    };
+
+    /// <summary>浮出层用的短说明；刷新提示由旁边的按钮承担。</summary>
+    public string ImageLimitNote => _imageLimits switch
+    {
+        { IsUnrestricted: true } => "站点当前未限制图片（按 IP 记账）。仍出现 509 说明是该页图床节点拒绝。",
+        { } => "按 IP 记账，约每分钟恢复 3–5 次；用尽时图片返回 509。",
+        _ => "尚未读取到；站点页面不可达时不会显示数字。",
+    };
+
+    private static string Count(int value) => value.ToString("N0", CultureInfo.CurrentCulture);
+
+    [RelayCommand]
+    private async Task RefreshImageLimitsAsync()
+    {
+        if (_imageLimitsBusy || !IsSignedIn) return;
+        _imageLimitsBusy = true;
+        RaiseImageLimits();
+        try
+        {
+            EhImageLimits? limits = await _services.Online.GetImageLimitsAsync(CancellationToken.None).ConfigureAwait(true);
+            _imageLimitsFetchedUtc = DateTime.UtcNow;
+            if (limits is not null) _imageLimits = limits;
+        }
+        finally
+        {
+            _imageLimitsBusy = false;
+            RaiseImageLimits();
+        }
+    }
+
+    private void RaiseImageLimits()
+    {
+        OnPropertyChanged(nameof(ShowImageLimit));
+        OnPropertyChanged(nameof(ImageLimitLabel));
+        OnPropertyChanged(nameof(ImageLimitDetail));
+        OnPropertyChanged(nameof(ImageLimitNote));
+    }
+
+    /// <summary>Throttled refresh for automatic triggers (startup, sign-in, 509).</summary>
+    private void MaybeRefreshImageLimits()
+    {
+        if (!IsSignedIn) return;
+        if (DateTime.UtcNow - _imageLimitsFetchedUtc < TimeSpan.FromSeconds(30)) return;
+        _ = RefreshImageLimitsAsync();
+    }
+
+    private void OnDownloadTaskChanged(object? sender, DownloadTask task)
+    {
+        if (!task.Message.Contains("509", StringComparison.Ordinal)) return;
+        Dispatcher.UIThread.Post(MaybeRefreshImageLimits);
+    }
+
     public string ToastText
     {
         get => _toastText;
@@ -210,6 +291,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         _imageMaintenanceReady = true;
         _ = ResumeImageIndexAsync();
         Settings.RefreshAccount();
+        MaybeRefreshImageLimits();
         await Online.LoadAsync(reset: true).ConfigureAwait(true);
     }
 
@@ -368,13 +450,17 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 
     public void RaiseAccount()
     {
+        // 退出登录后不能继续显示上一个账号的额度读数。
+        if (!IsSignedIn) { _imageLimits = null; _imageLimitsFetchedUtc = DateTime.MinValue; }
         OnPropertyChanged(nameof(IsSignedIn));
         OnPropertyChanged(nameof(AccountLabel));
         OnPropertyChanged(nameof(AccountDetail));
         OnPropertyChanged(nameof(SiteLabel));
         OnPropertyChanged(nameof(SiteBadge));
         OnPropertyChanged(nameof(IsExSite));
+        RaiseImageLimits();
         Settings.RefreshAccount();
+        MaybeRefreshImageLimits();
         Online.RefreshProgress();
         Favorites.RefreshFavoriteNames();
         Favorites.RefreshProgress();
@@ -388,6 +474,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Library.LocalIndexChanged -= OnImageIndexLibraryChanged;
         Library.PropertyChanged -= OnImageIndexLibraryPropertyChanged;
         _services.Downloads.TaskCompleted -= OnImageIndexDownloadCompleted;
+        _services.Downloads.TaskChanged -= OnDownloadTaskChanged;
         _imageUpdateCancellation?.Cancel();
         _toastTimer.Stop();
         Downloads.Dispose();

@@ -156,15 +156,31 @@
          share one baseline; a transparent background lets the pane's own brush
          show through. -->
     <Border x:Name="AccountBar" VerticalAlignment="Bottom" HorizontalAlignment="Left"
-            Height="40" Background="Transparent" IsVisible="False" Padding="16,0"
+            MinHeight="40" Background="Transparent" IsVisible="False" Padding="16,5"
             IsEnabled="{Binding !Settings.IsSaving}">
-      <Grid x:Name="AccountRow" ColumnDefinitions="*,Auto" ColumnSpacing="8">
-        <SelectableTextBlock Text="{Binding AccountLabel}" Classes="caption" MaxLines="1"
+      <Grid x:Name="AccountRow" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto"
+            ColumnSpacing="8" VerticalAlignment="Center">
+        <SelectableTextBlock Grid.Row="0" Grid.Column="0" Text="{Binding AccountLabel}" Classes="caption" MaxLines="1"
                              VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                             ToolTip.Tip="{Binding AccountLabel}" />
-        <Button Grid.Column="1" Content="登录" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="26"
+                             ToolTip.Tip="{Binding AccountDetail}" />
+        <!-- 图片额度单独一行：放在账号同一行时，侧栏变窄会先截掉尾部的额度数字。
+             整行就是刷新按钮，展开态与折叠浮出都有同一个入口。
+             按钮只对齐首行；跨两行居中会让未登录时的单行文字看起来上浮。 -->
+        <Button Grid.Row="1" Grid.Column="0" Classes="ghost" Padding="0,1" MinHeight="0"
+                HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                VerticalAlignment="Center" Background="Transparent"
+                Command="{Binding RefreshImageLimitsCommand}"
+                IsVisible="{Binding ShowImageLimit}"
+                ToolTip.Tip="{Binding ImageLimitDetail}"
+                AutomationProperties.Name="刷新图片额度">
+          <TextBlock Text="{Binding ImageLimitLabel}" Classes="caption" FontSize="11"
+                     Opacity="0.72" TextTrimming="CharacterEllipsis" MaxLines="1" />
+        </Button>
+        <Button Grid.Row="0" Grid.Column="1" Content="登录" Classes="ghost" FontSize="12"
+                Padding="8,2" MinHeight="26" VerticalAlignment="Center"
                 Command="{Binding OpenWebLoginCommand}" IsVisible="{Binding !IsSignedIn}" />
-        <Button Grid.Column="1" Content="退出" Classes="ghost" FontSize="12" Padding="8,2" MinHeight="26"
+        <Button Grid.Row="0" Grid.Column="1" Content="退出" Classes="ghost" FontSize="12"
+                Padding="8,2" MinHeight="26" VerticalAlignment="Center"
                 Command="{Binding SignOutCommand}" IsVisible="{Binding IsSignedIn}" />
       </Grid>
     </Border>
@@ -178,8 +194,16 @@
       <ui:FASymbolIcon Symbol="Contact" FontSize="18" />
       <Button.Flyout>
         <Flyout Placement="RightEdgeAlignedBottom">
-          <StackPanel Spacing="8" MinWidth="200">
+          <StackPanel Spacing="10" Width="248">
             <SelectableTextBlock Text="{Binding AccountLabel}" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <StackPanel Spacing="2" IsVisible="{Binding ShowImageLimit}">
+              <TextBlock Text="{Binding ImageLimitLabel}" FontSize="12" />
+              <SelectableTextBlock Text="{Binding ImageLimitNote}" Classes="caption" Opacity="0.68"
+                                   TextWrapping="Wrap" />
+            </StackPanel>
+            <Button Content="刷新图片额度" Command="{Binding RefreshImageLimitsCommand}"
+                    IsVisible="{Binding IsSignedIn}" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center" />
             <Button Content="登录账号" Command="{Binding OpenWebLoginCommand}"
                     IsVisible="{Binding !IsSignedIn}" HorizontalAlignment="Stretch"
                     HorizontalContentAlignment="Center" />

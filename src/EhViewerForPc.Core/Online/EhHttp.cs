@@ -313,10 +313,12 @@ public static class EhHttp
 
         client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", UserAgent);
         client.DefaultRequestHeaders.TryAddWithoutValidation("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        // 图片请求不声明 avif：本地容器校验与解码只覆盖 jpeg/png/gif/webp，
+        // 声明未支持的格式只会换来一个无法落盘的响应。
         client.DefaultRequestHeaders.TryAddWithoutValidation(
             "Accept",
             forImages
-                ? "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+                ? "image/webp,image/apng,image/png,image/jpeg,image/gif,*/*;q=0.8"
                 : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
         return client;
     }

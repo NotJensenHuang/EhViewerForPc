@@ -10,13 +10,18 @@ public sealed record EhResolvedImage(string Url, bool IsOriginal);
 
 public sealed class EhException : Exception
 {
-    public EhException(string message, bool requiresSignIn = false, Exception? inner = null)
+    public EhException(string message, bool requiresSignIn = false, Exception? inner = null, bool quotaExceeded = false)
         : base(message, inner)
     {
         RequiresSignIn = requiresSignIn;
+        QuotaExceeded = quotaExceeded;
     }
 
     public bool RequiresSignIn { get; }
+
+    /// <summary>站点图片配额已用尽或被节点限流（两者都用 509 表达）。
+    /// 这类失败重试只会继续消耗配额，调用方应立即停下而不是逐页重试。</summary>
+    public bool QuotaExceeded { get; }
 }
 
 /// <summary>
@@ -77,6 +82,41 @@ public sealed class EhClient : IDisposable
     public bool ExAccess => _settings.Account.ExAccess;
 
     public string UserName => _settings.Account.LastUserName;
+
+    /// <summary>
+    /// Reads the account's image limits. The page only exists on the main site
+    /// (exhentai.org/home.php answers 404), and the auth cookies are installed
+    /// on both hosts, so ExHentai sessions read it from e-hentai.org. Returns
+    /// null when signed out, blocked, or the page shape changed — the reading is
+    /// diagnostic only and must never fail a caller.
+    /// </summary>
+    public async Task<EhImageLimits?> GetImageLimitsAsync(CancellationToken cancellationToken)
+    {
+        if (!IsSignedIn) return null;
+        var urls = new List<string>(2) { EhUrls.HomePage(EhSite.EHentai) };
+        if (Site != EhSite.EHentai) urls.Add(EhUrls.HomePage(Site));
+
+        foreach (string url in urls)
+        {
+            try
+            {
+                string html = await GetStringAsync(url, EhUrls.Base(EhSite.EHentai) + "/", cancellationToken)
+                    .ConfigureAwait(false);
+                if (EhParser.TryParseImageLimits(html, out EhImageLimits limits)) return limits;
+                _log?.Invoke("Image limits label missing on " + url);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex) when (ex is EhException or HttpRequestException or OperationCanceledException)
+            {
+                _log?.Invoke($"Image limits unavailable ({url}): {ex.Message}");
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>Rebuilds both handlers after proxy/DNS settings changed.</summary>
     public void ReloadNetwork()
@@ -871,18 +911,32 @@ public sealed class EhClient : IDisposable
         int width = resampledWidth ?? ResampledWidth;
         string key = pageUrl + (original ? "|orig" : "|res") + "|" + width;
         lock (_cacheGate) { if (!refresh && _imageUrlCache.TryGetValue(key, out var cached)) return cached; }
-        string html;
-        await _viewerResolutionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+
+        string html = await FetchViewerHtmlAsync(pageUrl, width, cancellationToken).ConfigureAwait(false);
+        bool parsed = EhParser.TryParseImagePage(html, out string imageUrl, out string? nlKey, out string? error);
+
+        // 站点为图片加载失败提供了换源键（页面里的 nl(...)）。解析不到图片或拿到
+        // 509 占位图时带它重请求一次，让站点把这一页重新分配到可用的图床节点；
+        // 只重试一次，避免在真正的账号配额耗尽时放大请求。
+        if ((!parsed || IsQuotaPlaceholder(imageUrl)) && nlKey is { Length: > 0 })
         {
-            await ThrottleViewerAsync(cancellationToken).ConfigureAwait(false);
-            _session.SetImageSize(width);
-            html = await GetStringAsync(pageUrl, null, cancellationToken).ConfigureAwait(false);
+            string retryHtml = await FetchViewerHtmlAsync(AppendRetryKey(pageUrl, nlKey), width, cancellationToken).ConfigureAwait(false);
+            if (EhParser.TryParseImagePage(retryHtml, out string retryImage, out _, out string? retryError))
+            {
+                html = retryHtml;
+                imageUrl = retryImage;
+                parsed = true;
+            }
+            else
+            {
+                error = retryError ?? error;
+            }
         }
-        finally { _viewerResolutionGate.Release(); }
-        if (!EhParser.TryParseImagePage(html, out string imageUrl, out _, out string? error))
-            throw new EhException(error ?? "无法解析图片页");
-        if (imageUrl.Contains("/509", StringComparison.OrdinalIgnoreCase)) throw new EhException("站点图片配额不足，请稍后重试");
+
+        if (!parsed) throw new EhException(error ?? "无法解析图片页");
+        if (IsQuotaPlaceholder(imageUrl))
+            throw new EhException("站点返回 509（图片配额已用尽或节点限流）", quotaExceeded: true);
+
         bool actualOriginal = false;
         if (original)
         {
@@ -895,6 +949,7 @@ public sealed class EhClient : IDisposable
                 if (full is not null) { imageUrl = full; actualOriginal = true; }
             }
         }
+
         var resolved = new EhResolvedImage(imageUrl, actualOriginal);
         lock (_cacheGate)
         {
@@ -903,6 +958,31 @@ public sealed class EhClient : IDisposable
         }
         return resolved;
     }
+
+    /// <summary>视图页请求：串行化解析并按固定间隔节流，与阅读和下载共用。</summary>
+    private async Task<string> FetchViewerHtmlAsync(string url, int width, CancellationToken cancellationToken)
+    {
+        await _viewerResolutionGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await ThrottleViewerAsync(cancellationToken).ConfigureAwait(false);
+            _session.SetImageSize(width);
+            return await GetStringAsync(url, null, cancellationToken).ConfigureAwait(false);
+        }
+        finally { _viewerResolutionGate.Release(); }
+    }
+
+    private static string AppendRetryKey(string pageUrl, string nlKey)
+    {
+        string separator = pageUrl.Contains('?') ? "&" : "?";
+        return pageUrl + separator + "nl=" + Uri.EscapeDataString(nlKey);
+    }
+
+    /// <summary>509.gif 是站点的图片占位响应。只认这一条路径，避免把
+    /// 正常图床路径里的数字误判成配额错误。</summary>
+    private static bool IsQuotaPlaceholder(string url) =>
+        url.Contains("/509.gif", StringComparison.OrdinalIgnoreCase) ||
+        url.EndsWith("/509", StringComparison.OrdinalIgnoreCase);
 
     private async Task<string?> ResolveFullImageAsync(string originalUrl, string pageUrl, CancellationToken cancellationToken)
     {
@@ -981,7 +1061,7 @@ public sealed class EhClient : IDisposable
 
         request.Headers.TryAddWithoutValidation(
             "Accept",
-            imageAccept ? "image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8" : "*/*");
+            imageAccept ? "image/webp,image/png,image/jpeg,image/gif,*/*;q=0.8" : "*/*");
 
         using HttpResponseMessage response = await client
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
@@ -989,7 +1069,10 @@ public sealed class EhClient : IDisposable
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new EhException($"下载失败：HTTP {(int)response.StatusCode}");
+            string host = EhUrls.HostOf(url);
+            throw new EhException(host.Length > 0
+                ? $"下载失败：HTTP {(int)response.StatusCode}（{host}）"
+                : $"下载失败：HTTP {(int)response.StatusCode}");
         }
 
         long? contentLength = response.Content.Headers.ContentLength;
@@ -1015,8 +1098,10 @@ public sealed class EhClient : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             if (contentLength is long expected && total != expected)
                 throw new IOException("下载数据不完整，请重试");
-            if (total == 0 || (imageAccept && !ImageSignature.IsValidFile(tempPath)))
-                throw new EhException("下载结果不是完整的受支持图片，请重试");
+            if (total == 0)
+                throw new EhException("下载结果为空，请重试");
+            if (imageAccept && !ImageSignature.IsValidFile(tempPath))
+                throw new EhException($"下载结果不是完整的受支持图片（{ImageSignature.DescribeFile(tempPath)}）");
             File.Move(tempPath, targetPath, overwrite: true);
         }
         finally

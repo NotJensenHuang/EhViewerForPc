@@ -1,6 +1,8 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Reflection;
 using EhViewerForPc.Core.Download;
+using EhViewerForPc.Core.Format;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Imaging;
 using EhViewerForPc.Core.Online;
@@ -102,6 +104,125 @@ public sealed class RemediationTests : IDisposable
         await WaitFor(() => task.State is DownloadState.Failed or DownloadState.Completed);
         Assert.Equal(DownloadState.Completed, task.State);
         Assert.Equal(Png, File.ReadAllBytes(Path.Combine(task.FolderPath, "00000001.png")));
+    }
+
+    [Fact]
+    public async Task MissingImagePageIsRetriedOnceWithTheSitesNlKey()
+    {
+        var urls = new List<string>();
+        using var client = Client((request, _) =>
+        {
+            string url = request.RequestUri!.ToString();
+            lock (urls) urls.Add(url);
+            return Task.FromResult(url.Contains("nl=", StringComparison.Ordinal)
+                ? Html("<img id='img' src='https://images.test/page.png'>")
+                : Html("<div id='loadfail'>Failed to load the image</div><a href='#' onclick=\"return nl('42-7')\">reload</a>"));
+        });
+
+        string url = await client.GetImageUrlAsync(Page(), false, CancellationToken.None);
+
+        Assert.Equal("https://images.test/page.png", url);
+        lock (urls) Assert.Contains(urls, u => u.Contains("nl=42-7", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task QuotaPlaceholderIsRetriedWithNlBeforeReportingQuota()
+    {
+        var urls = new List<string>();
+        using var client = Client((request, _) =>
+        {
+            string url = request.RequestUri!.ToString();
+            lock (urls) urls.Add(url);
+            return Task.FromResult(url.Contains("nl=", StringComparison.Ordinal)
+                ? Html("<img id='img' src='https://images.test/real.webp'>")
+                : Html("<img id='img' src='https://e-hentai.org/img/509.gif' onerror=\"this.onerror=null; nl('42-9')\">"));
+        });
+
+        string url = await client.GetImageUrlAsync(Page(), false, CancellationToken.None);
+
+        Assert.Equal("https://images.test/real.webp", url);
+        lock (urls) Assert.Contains(urls, u => u.Contains("nl=42-9", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NormalImagePathContaining509IsNotTreatedAsAQuotaError()
+    {
+        using var client = Client((_, _) =>
+            Task.FromResult(Html("<img id='img' src='https://images.test/w/509/abc.webp'>")));
+
+        string url = await client.GetImageUrlAsync(Page(), false, CancellationToken.None);
+
+        Assert.Equal("https://images.test/w/509/abc.webp", url);
+    }
+
+    [Fact]
+    public async Task QuotaExhaustionPausesTheGalleryWithoutRetryingEveryPage()
+    {
+        int viewerRequests = 0;
+        using var client = Client((request, _) =>
+        {
+            if (request.RequestUri!.AbsolutePath.StartsWith("/g/", StringComparison.Ordinal))
+                return Task.FromResult(Html(PageList));
+            Interlocked.Increment(ref viewerRequests);
+            return Task.FromResult(Html("<img id='img' src='https://e-hentai.org/img/509.gif'>"));
+        });
+        using var manager = new DownloadManager(Paths("quota"), Settings(), client);
+
+        var task = manager.Enqueue(Details(42), quality: ImageQuality.Resampled);
+        await WaitFor(() => task.State is DownloadState.Paused or DownloadState.Failed or DownloadState.Completed);
+
+        Assert.Equal(DownloadState.Paused, task.State);
+        Assert.Contains("509", task.Message, StringComparison.Ordinal);
+        Assert.Equal(1, viewerRequests);
+    }
+
+    [Fact]
+    public async Task TransientImageFailureIsRetriedWithoutFailingTheGallery()
+    {
+        int imageRequests = 0;
+        using var client = Client((request, _) =>
+        {
+            string path = request.RequestUri!.AbsolutePath;
+            if (path.StartsWith("/g/", StringComparison.Ordinal)) return Task.FromResult(Html(PageList));
+            if (path.StartsWith("/s/", StringComparison.Ordinal)) return Task.FromResult(Html("<img id='img' src='https://images.test/image.png'>"));
+            return Task.FromResult(Interlocked.Increment(ref imageRequests) == 1
+                ? Html("<html>temporary gateway error</html>")
+                : new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Png) });
+        });
+        using var manager = new DownloadManager(Paths("page-retry"), Settings(), client);
+        var task = manager.Enqueue(Details(42), quality: ImageQuality.Resampled);
+
+        await WaitFor(() => task.State is DownloadState.Completed or DownloadState.Failed);
+
+        Assert.Equal(DownloadState.Completed, task.State);
+        Assert.Empty(task.FailedPages);
+        Assert.True(imageRequests >= 2);
+        Assert.True(File.Exists(Path.Combine(task.FolderPath, "00000001.png")));
+    }
+
+    [Fact]
+    public void WebpTrailingPaddingIsAcceptedButTruncationIsRejected()
+    {
+        string padded = Path.Combine(_root, "padded.webp");
+        File.WriteAllBytes(padded, Webp(padded: true));
+        Assert.True(ImageSignature.IsValidFile(padded));
+
+        string truncated = Path.Combine(_root, "truncated.webp");
+        File.WriteAllBytes(truncated, Webp(padded: true)[..20]);
+        Assert.False(ImageSignature.IsValidFile(truncated));
+    }
+
+    private static byte[] Webp(bool padded)
+    {
+        // RIFF + 声明长度 17 + WEBP + VP8L + 5 字节载荷；padded 版本追加 4 字节填充。
+        var bytes = new byte[padded ? 29 : 25];
+        "RIFF"u8.CopyTo(bytes);
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(4), 17);
+        "WEBP"u8.CopyTo(bytes.AsSpan(8));
+        "VP8L"u8.CopyTo(bytes.AsSpan(12));
+        BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(16), 5);
+        bytes[20] = 0x2F;
+        return bytes;
     }
 
     [Fact]

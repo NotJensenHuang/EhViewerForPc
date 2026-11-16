@@ -31,7 +31,8 @@ public sealed class GalleryImageStore
         bool original,
         CancellationToken token,
         int? resampledWidth = null,
-        IProgress<ImageLoadStatus>? progress = null)
+        IProgress<ImageLoadStatus>? progress = null,
+        bool refresh = false)
     {
         int width = resampledWidth ?? _client.ResampledWidth;
         string key = CacheKey(page.Gid, page.Page);
@@ -40,7 +41,9 @@ public sealed class GalleryImageStore
         try
         {
             string requested = Path.Combine(_paths.OnlineCacheDirectory, key + (original ? "-orig" : "-" + width) + ".img");
-            if (ImageSignature.IsValidFile(requested))
+            // 重试必须绕过在线缓存：占位图或错误响应本身可能是完整的 GIF/PNG，
+            // 容器校验无法识别，复用缓存只会让失败稳定复现。
+            if (!refresh && ImageSignature.IsValidFile(requested))
             {
                 Touch(requested);
                 progress?.Report(ImageLoadStatus.Decoding(new FileInfo(requested).Length));
@@ -55,7 +58,7 @@ public sealed class GalleryImageStore
             }
 
             progress?.Report(ImageLoadStatus.Resolving());
-            EhResolvedImage resolved = await _client.ResolveImageAsync(page, original, token, width).ConfigureAwait(false);
+            EhResolvedImage resolved = await _client.ResolveImageAsync(page, original, token, width, refresh).ConfigureAwait(false);
             string target = Path.Combine(_paths.OnlineCacheDirectory, key + (resolved.IsOriginal ? "-orig" : "-" + width) + ".img");
             bool downloaded = false;
             if (!ImageSignature.IsValidFile(target))
