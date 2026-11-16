@@ -364,3 +364,11 @@ FodyWeavers.xsd
 
 # Isolated UI regression data and captures
 .qa/
+
+# Agent work/temporary directories (local only, not committed)
+.workbuddy/
+.claude/
+.codebuddy/
+.cursor/
+tmp/
+temp/
