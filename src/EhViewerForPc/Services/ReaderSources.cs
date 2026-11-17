@@ -1,5 +1,6 @@
 using System.Globalization;
 using EhViewerForPc.Core.Format;
+using EhViewerForPc.Core.Imaging;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Online;
 
@@ -27,6 +28,11 @@ public interface IReaderSource
     int ExpectedPageCount => Pages.Count;
     bool IsComplete => true;
 
+    /// <summary>Whether a single unreadable page can be fetched again from the
+    /// original gallery. Local downloads can; online pages are always fetchable;
+    /// a bare folder without a gid cannot.</summary>
+    bool CanRedownload { get; }
+
     /// <summary><paramref name="refresh"/> drops any cached request for the page
     /// so the next load re-fetches it (manual retry).</summary>
     IImageRequest CreateRequest(int index, bool refresh = false);
@@ -52,9 +58,10 @@ public sealed class LocalReaderSource : IReaderSource
         services.Works.Upsert(new WorkRecord { WorkId = gallery.WorkId, Gid = gallery.Gid, Token = gallery.Token,
             Title = gallery.DisplayTitle, PageCount = gallery.ExpectedPages ?? gallery.PageCount });
 
-        // 容器校验与下载/补页用同一标准：文件存在但截断的页必须判为损坏，
-        // 否则下载页认定缺页、阅读器却当成正常页显示空白。
-        PageScanResult scan = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError, validateContainers: true);
+        PageScanResult scan = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError);
+        // 打开阅读器只做便宜的目录扫描：容器校验要逐页两次 seek，197 页冷缓存
+        // 实测约 1 秒，放在 UI 线程会让「开始阅读」明显卡顿。校验改在页面显示
+        // 之后由 ValidateStatesAsync 在后台补做。
         // 文件扫描只返回实际文件；阅读序列按原始页号补齐，避免缺页改变进度与总页数。
         int count = Math.Max(gallery.ExpectedPages ?? 0, Math.Max(gallery.MaxPageNumber, scan.MaxPageNumber));
         var pages = new GalleryPage[count];
@@ -89,6 +96,10 @@ public sealed class LocalReaderSource : IReaderSource
     public int ExpectedPageCount => Math.Max(_gallery.ExpectedPages ?? 0, Pages.Count);
     public bool IsComplete { get; private set; }
 
+    /// <summary>需要原画廊的 gid / token 与原始页号；自然命名或 gid 冲突的副本
+    /// 无法定位在线页，界面上不显示重下按钮。</summary>
+    public bool CanRedownload => _gallery.Gid is > 0 && !_gallery.HasGidConflict && !_gallery.HasNaturalPageNames;
+
     public string MissingSummary => _missingRanges.Count == 0
         ? string.Empty
         : "缺页 " + string.Join(", ", _missingRanges.Select(r => r.ToString()));
@@ -99,8 +110,41 @@ public sealed class LocalReaderSource : IReaderSource
         Pages[index].State != PageState.Ok ? NullImageRequest.Instance
             : new PageImageRequest(Pages[index].Candidates, _services.Images);
 
-    internal Task RedownloadPageAsync(int index, CancellationToken token) =>
-        _services.RetryLocalPageAsync(_gallery, Pages[index], token);
+    internal Task RedownloadPageAsync(int index, CancellationToken token, IProgress<ImageLoadStatus>? progress = null) =>
+        _services.RetryLocalPageAsync(_gallery, Pages[index], token, progress);
+
+    /// <summary>
+    /// 打开阅读器之后的容器校验：逐页读取头尾判断截断/错误内容，结果写回
+    /// 页状态。纯读操作，不修改任何文件，放在后台线程执行。
+    /// </summary>
+    internal async Task<PageScanResult> ValidateStatesAsync(CancellationToken token)
+    {
+        string folder = _gallery.FolderPath;
+        int? expected = _gallery.ExpectedPages;
+        PageScanResult scan = await Task.Run(() =>
+        {
+            var header = SpiderInfoParser.TryParseFile(Path.Combine(folder, ".ehviewer"), out _) ?? new SpiderHeader();
+            if (expected is > 0)
+            {
+                header.HasPages = true;
+                header.Pages = expected.Value;
+            }
+            return PageFileParser.Scan(folder, header, out _, validateContainers: true);
+        }, token).ConfigureAwait(false);
+
+        foreach (GalleryPage scanned in scan.Pages)
+        {
+            token.ThrowIfCancellationRequested();
+            int slot = scanned.Number - 1;
+            if (slot < 0 || slot >= _pages.Length) continue;
+            if (_pages[slot].Number != scanned.Number) continue;
+            _pages[slot].State = scanned.State;
+        }
+
+        _missingRanges = scan.MissingRanges;
+        IsComplete = Pages.Count > 0 && Pages.All(p => p.State == PageState.Ok);
+        return scan;
+    }
 
     internal async Task ReloadPageAsync(int index, CancellationToken token)
     {
@@ -205,6 +249,10 @@ public sealed class OnlineReaderSource : IReaderSource, IDisposable
     /// <summary>The detail page's page count is authoritative; a page whose image
     /// fails to load is reported per page and does not move the reading position.</summary>
     public bool IsComplete => true;
+
+    /// <summary>Online pages are always re-fetchable (refresh drops the cached
+    /// resolution), so a failed page can be retried in place.</summary>
+    public bool CanRedownload => true;
 
     public IImageRequest CreateRequest(int index, bool refresh = false)
     {

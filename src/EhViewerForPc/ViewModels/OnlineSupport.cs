@@ -347,6 +347,37 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public string SpeedText => Task.State == DownloadState.Running ? DownloadTask.FormatSize((long)Task.BytesPerSecond) + "/s" : "—";
     public string Message => Task.Message;
     public string Label => Task.Label;
+
+    /// <summary>失败页的构成：损坏页有文件需要替换，缺失页需要新增。分开写，
+    /// 避免把「文件在但截断」报成缺页。</summary>
+    public string DamageText
+    {
+        get
+        {
+            int total = Task.FailedPages.Count;
+            if (total == 0) return string.Empty;
+            int corrupt = Task.CorruptPages.Count;
+            return corrupt == 0
+                ? $"{total} 页缺失"
+                : $"{Math.Max(0, total - corrupt)} 页缺失 · {corrupt} 页损坏";
+        }
+    }
+
+    public bool HasDamage => Task.FailedPages.Count > 0;
+
+    /// <summary>具体是哪几页：卡片只写数量，页号放在提示里，省得用户去猜。</summary>
+    public string DamageDetail
+    {
+        get
+        {
+            if (Task.FailedPages.Count == 0) return string.Empty;
+            var corrupt = Task.CorruptPages.ToHashSet();
+            string pages = string.Join("、", Task.FailedPages.Take(24)
+                .Select(page => corrupt.Contains(page) ? $"第 {page} 页损坏" : $"第 {page} 页缺失"));
+            return Task.FailedPages.Count > 24 ? $"{pages} 等 {Task.FailedPages.Count} 页" : pages;
+        }
+    }
+
     public string QualityText => Task.Quality == ImageQuality.Original ? (Task.ResampledPages.Count > 0 ? $"原图（{Task.ResampledPages.Count} 页回退压缩图）" : "原图") : $"压缩图 {Task.ResampledWidth}px";
     public string FolderPath => Task.FolderPath;
 

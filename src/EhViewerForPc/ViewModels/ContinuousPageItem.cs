@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Services;
 
@@ -56,6 +57,12 @@ public sealed class ContinuousPageItem : ObservableObject
     public bool Known { get; private set; }
     public int Number => Page.Number;
 
+    /// <summary>缺页/损坏页提供的直接重下入口；由阅读器注入，绑定到按钮。</summary>
+    public IAsyncRelayCommand<int>? RetryCommand { get; init; }
+
+    /// <summary>RetryCommand 只有在副本能定位到在线原始页时才注入。</summary>
+    public bool CanRetry => RetryCommand is not null;
+
     /// <summary>A page the reader must not attempt to decode. Empty and corrupt
     /// look the same to the layout but differ in what the user can do about it.</summary>
     public bool IsMissing => Page.State is PageState.Empty or PageState.Corrupt or PageState.Unreadable;
@@ -70,6 +77,28 @@ public sealed class ContinuousPageItem : ObservableObject
         PageState.Unreadable => $"第 {Number} 页无法读取",
         _ => $"第 {Number} 页缺失",
     };
+
+    private bool _isRetrying;
+    private double _retryProgress = -1;
+    private string _retryStatusText = string.Empty;
+
+    public bool IsRetrying => _isRetrying;
+    public double RetryProgress => _retryProgress;
+    public bool IsRetryProgressIndeterminate => _retryProgress < 0;
+    public string RetryStatusText => _retryStatusText;
+    public bool HasRetryStatus => _retryStatusText.Length > 0;
+
+    public void SetRetryState(bool running, double progress, string text)
+    {
+        _isRetrying = running;
+        _retryProgress = progress;
+        _retryStatusText = text;
+        OnPropertyChanged(nameof(IsRetrying));
+        OnPropertyChanged(nameof(RetryProgress));
+        OnPropertyChanged(nameof(IsRetryProgressIndeterminate));
+        OnPropertyChanged(nameof(RetryStatusText));
+        OnPropertyChanged(nameof(HasRetryStatus));
+    }
 
     /// <summary>
     /// Replaces the estimated aspect ratio with the real one once the page has

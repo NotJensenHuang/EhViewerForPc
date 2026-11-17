@@ -178,7 +178,8 @@ public class PageFileParserTests : IDisposable
         Assert.Equal(PageState.Corrupt, validated.Pages[1].State);
         Assert.True(validated.Pages[1].IsCorrupt);
         Assert.Equal(1, validated.CorruptPages);
-        Assert.Equal(new PageRange(2, 2), validated.MissingRanges[0]);
+        // 损坏页不是缺页：文件存在，只是内容不完整，UI 必须分开显示。
+        Assert.Empty(validated.MissingRanges);
         Assert.True(validated.IsIncomplete);
         Assert.Equal(0, validated.ZeroByteFiles);
     }
@@ -224,7 +225,8 @@ public class PageFileParserTests : IDisposable
         Assert.Equal(2, result.PageCount);
         Assert.Equal(PageState.Corrupt, result.Pages[1].State);
         Assert.Equal(1, result.CorruptPages);
-        Assert.Equal(new PageRange(2, 2), result.MissingRanges[0]);
+        Assert.Empty(result.MissingRanges);
+        Assert.True(result.IsIncomplete);
     }
 }
 

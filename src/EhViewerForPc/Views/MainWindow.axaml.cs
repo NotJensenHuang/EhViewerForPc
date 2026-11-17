@@ -549,6 +549,9 @@ public partial class MainWindow : Window
         UpdateHeaderForContent();
         _shell?.Library.RefreshAllProgress();
         _shell?.History.Reload();
+        // 从阅读器返回下载页时 SelectedNav 没有变化，ActivatePage 不会被调用；
+        // 这里补一次同步，让刚补齐或重下过的页立刻从「缺页」里消失。
+        if (target.Section.Page is DownloadsViewModel downloads) downloads.SyncAll();
         UpdateAdaptiveLayout();
     }
 

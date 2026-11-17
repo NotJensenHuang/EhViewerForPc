@@ -55,6 +55,12 @@ public sealed class DownloadTask
     public string AddedUtc { get; set; } = DateTime.UtcNow.ToString("O");
     public string? FinishedUtc { get; set; }
     public List<int> FailedPages { get; set; } = [];
+    /// <summary>
+    /// 目录里存在文件但容器不完整（0 字节以外的截断/错误内容）的页。与
+    /// <see cref="FailedPages"/> 分开保存：前者可被重新下载替换，后者缺失
+    /// 需要新增，两者的提示与修复方式不同。
+    /// </summary>
+    public List<int> CorruptPages { get; set; } = [];
     public List<int> ResampledPages { get; set; } = [];
 
     [JsonIgnore]

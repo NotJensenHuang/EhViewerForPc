@@ -585,6 +585,7 @@ public static class UiSmokeService
             await Task.Delay(900);
 
             string notice = truncatedViewModel.MissingPageText;
+            SaveScreenshot(truncatedWindow, Path.Combine(output, "reader-corrupt.png"));
             report["corruptPageNotice"] = new
             {
                 page = truncatedViewModel.PageLabel,
@@ -592,6 +593,7 @@ public static class UiSmokeService
                 corrupt = truncatedViewModel.IsCurrentPageCorrupt,
                 canvasHidden = !truncatedViewModel.ShowSingleView,
                 notice,
+                retryButton = truncatedViewModel.CanRedownload,
                 ok = truncatedViewModel.IsCurrentPageCorrupt &&
                      notice.Contains("损坏", StringComparison.Ordinal) &&
                      !truncatedViewModel.ShowSingleView,

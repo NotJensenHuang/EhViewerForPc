@@ -1,5 +1,20 @@
 # 变更记录
 
+## 2026-11-17 修复缺页状态、损坏页分类与阅读器重下进度
+
+- `Core/Format/PageFileParser.cs`、`Core/Format/PageFileParser.Natural.cs`、`Core/Models/GalleryPage.cs`：损坏页不再计入 `MissingRanges`，`PageScanResult.IsIncomplete` 同时考虑损坏页；缺页只表示没有可用字节的页。
+- `Core/Download/DownloadModels.cs`、`Core/Download/DownloadManager.cs`：`DownloadTask` 新增 `CorruptPages`；目录核对按「有效 / 损坏 / 缺失」三态重算，卡片文案区分为「N 页缺失、M 页文件损坏（可重试）」；完成任务清空损坏记录。
+- `Core/Download/DownloadManager.Repair.cs`：补页允许替换容器无效的同名文件（0 字节、截断、错误内容），有效同名文件仍保留并报告失败——此前损坏页会永久卡在「原目录存在同名文件」。
+- `Core/Download/DownloadManager.PageRetry.cs`：单页重下增加进度中继（同目录并发调用共享同一次下载并各自收到进度），上报解析 / 解码状态；成功后同时清除失败页与损坏页记录。
+- `Services/ReaderSources.cs`、`Services/AppServices.LocalDownloads.cs`：打开本地阅读器恢复便宜的目录扫描，容器校验改为页面显示后后台执行（197 页目录冷缓存实测 991 ms → 0.3 ms 打开）；`CanRedownload` 暴露给阅读器。
+- `ViewModels/ReaderViewModel.cs`、`ViewModels/ContinuousPageItem.cs`、`Views/ReaderPage.axaml`：缺失/损坏页显示「重新下载本页」与进度条，连续/横向模式同样可重下；切换阅读模式补发 `ShowSingleView` 通知，修复模式切换后单页画布可见性不刷新。
+- `ViewModels/OnlineSupport.cs`、`Views/DownloadsPage.axaml`：下载卡片增加「N 页缺失 · M 页损坏」细分文案。
+- `Views/MainWindow.axaml.cs`：从阅读器返回下载页时同步任务状态，补齐后立即不再显示缺页。
+- `Core/Download/DownloadManager.Repair.cs`、`Core/Download/DownloadManager.cs`、`Core/Download/DownloadManager.PageRetry.cs`：页写入成功后清掉同页号其他扩展名的无效遗留文件。重下换容器（webp → jpg）时旧截断文件会留在目录里，导致「171 个文件全齐但仍报 1 页损坏」；只删除容器校验判定无效的文件，有效候选一律保留。
+- `Views/MainWindow.axaml`、`Views/OnlineFeedPage.axaml`、`ViewModels/ShellViewModel.cs`：删掉窗口顶端那条 2 像素全局进度条，列表页的加载条改绑 `ShowBusyBar`——启动自动刷新不再挂线，只有用户主动刷新才显示，避免标题栏下同时叠两条进度条。
+- 验证：`dotnet test tests/EhViewerForPc.Core.Tests -c Debug` 198/198 通过（新增「换容器补页后清除旧截断文件」）；`--ui-smoke` 截图确认窗口顶部无加载条（`library.png`、`online-local.png`）。真实案例 `3173749` 第 171 页：本地 49640 字节，站点返回 57930 字节（与 RIFF 声明一致），确认是导入时截断的副本。
+- 验证：`dotnet test tests/EhViewerForPc.Core.Tests -c Debug` 197/197 通过；`--ui-smoke` 的截断页断言通过（`第 2 页已损坏，可重新下载`，画布隐藏，重下按钮可见，截图 `reader-corrupt.png`）；`PublishAot` 后用 `artifacts/win-x64-aot-repair2-20261117` 实际启动并跑完 `--ui-smoke`。本机 197 页目录实测：带容器校验的冷缓存扫描 991 ms，便宜扫描 0.3–0.5 ms，`ReaderViewModel` 构造 0.4–0.8 ms（热）/34.6 ms（首次含 JIT）。
+
 ## 2026-11-16 页级下载失败按图床换源重试
 
 - `Core/Online/EhClient.cs`：`ResolveImageAsync` 在解析不到图片或拿到 509 占位图时，用页面里的 `nl` 换源键重新请求一次视图页再按新地址解析；新抽 `FetchViewerHtmlAsync` 统一串行化与节流。509 判定收紧为 `/509.gif` 与结尾 `/509`，避免把正常图床路径误判成配额错误。下载失败消息补上主机与容器识别结果，HTTP 失败不再只有状态码。

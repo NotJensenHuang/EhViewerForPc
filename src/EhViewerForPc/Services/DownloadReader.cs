@@ -23,9 +23,10 @@ public static class DownloadReader
             return null;
         }
 
-        // 下载中的副本同样要按容器校验：任务失败后残留的截断文件不能冒充完成页，
-        // 否则阅读器会静默跳过它而不给出任何提示。
-        PageScanResult scan = PageFileParser.Scan(task.FolderPath, null, out string? scanError, validateContainers: true);
+        // 只做便宜的目录扫描：这个调用发生在「阅读」按钮的 UI 线程上，
+        // 容器校验要逐页两次 seek（197 页冷缓存约 1 秒）。损坏页由阅读器
+        // 显示后的后台校验（LocalReaderSource.ValidateStatesAsync）标记。
+        PageScanResult scan = PageFileParser.Scan(task.FolderPath, null, out string? scanError);
         if (scan.PageCount == 0)
         {
             error = string.IsNullOrEmpty(scanError)

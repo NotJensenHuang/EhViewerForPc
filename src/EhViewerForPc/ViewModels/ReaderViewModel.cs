@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerForPc.Core.Format;
+using EhViewerForPc.Core.Imaging;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Services;
 
@@ -42,6 +43,10 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private IBrush _backgroundBrush = Brushes.Black;
     private bool _disposed;
     private Task? _dimensionTask;
+    private bool _isRetrying;
+    private double _retryProgress = -1;
+    private string _retryStatusText = string.Empty;
+    private int _retryPageNumber;
 
     /// <summary>
     /// While the view is being (re)positioned after a mode switch or resize,
@@ -133,6 +138,20 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         _pages[Math.Clamp(_index, 0, _pages.Count - 1)].State is PageState.Corrupt or PageState.Unreadable;
 
     public bool ShowSingleMissingPage => IsSingleMode && IsCurrentPageMissing;
+
+    /// <summary>True while a single page is being fetched again; the notice stays
+    /// up so its progress can be watched without leaving the page.</summary>
+    public bool IsRetrying => _isRetrying;
+
+    /// <summary>0–100 while a percentage is known, negative when indeterminate.</summary>
+    public double RetryProgress => _retryProgress;
+    public bool IsRetryProgressIndeterminate => _retryProgress < 0;
+    public bool ShowRetryProgress => _isRetrying;
+    public string RetryStatusText => _retryStatusText;
+    public bool HasRetryStatus => _retryStatusText.Length > 0;
+
+    /// <summary>只有能定位到在线原始页的副本才能直接重下；纯本地目录只能重载文件。</summary>
+    public bool CanRedownload => _source.CanRedownload;
 
     /// <summary>The canvas stays out of the way while the damage notice is up, so
     /// a failed decode cannot paint an error over the explanation.</summary>
@@ -335,67 +354,155 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         PreloadRequest = _index + 1 < _pages.Count ? _source.CreateRequest(_index + 1, refresh) : null;
     }
 
-    /// <summary>本地页经下载服务重下载；更新当前页候选和画面，不改变阅读位置。</summary>
+    /// <summary>当前页重下（菜单与缺页提示上的按钮共用）。</summary>
     [RelayCommand]
-    private async Task RetryCurrentAsync()
+    private Task RetryCurrentAsync()
     {
-        if (_disposed || _pages.Count == 0) return;
-        int index = Math.Clamp(_index, 0, _pages.Count - 1);
-        if (_source is LocalReaderSource local)
+        if (_pages.Count == 0) return Task.CompletedTask;
+        return RetryPageAsync(_pages[Math.Clamp(_index, 0, _pages.Count - 1)].Number);
+    }
+
+    /// <summary>
+    /// 按原始页号重下一页：本地副本经下载服务替换文件，在线页丢弃解析缓存
+    /// 重新拉取。下载过程中持续报告百分比，失败消息留在提示区供用户判断。
+    /// </summary>
+    [RelayCommand]
+    private async Task RetryPageAsync(int pageNumber)
+    {
+        if (_disposed || _isRetrying) return;
+        int index = _pages.FindIndex(page => page.Number == pageNumber);
+        if (index < 0) return;
+        if (!_source.CanRedownload)
         {
-            RestoreHint = $"正在重新下载第 {_pages[index].Number} 页…";
-            ShowRestoreHint = true;
-            _hintTimer.Stop();
-            try
-            {
-                await local.RedownloadPageAsync(index, _lifetime.Token);
-                if (_disposed) return;
-                RestoreHint = $"第 {_pages[index].Number} 页已重新下载";
-            }
-            catch (OperationCanceledException) when (_disposed) { return; }
-            catch (Exception error)
-            {
-                if (_disposed) return;
-                RestoreHint = error.Message;
-            }
-            try
-            {
-                await local.ReloadPageAsync(index, _lifetime.Token);
-                if (_disposed) return;
-                _pages[index] = _source.Pages[index];
-                OnPropertyChanged(nameof(MissingSummary));
-                if (_pages[index].Primary is { Length: > 0 } candidate &&
-                    (index < _continuousItems.Count || index < _horizontalItems.Count))
-                {
-                    var size = await _services.Decoder.ReadDimensionAsync(candidate.FilePath, _lifetime.Token);
-                    if (_disposed) return;
-                    if (size is { } dimensions) RefineDimension(index, dimensions.DisplayWidth, dimensions.DisplayHeight);
-                }
-            }
-            catch (OperationCanceledException) when (_disposed) { return; }
-            catch (Exception error)
-            {
-                if (_disposed) return;
-                RestoreHint = error.Message;
-            }
-            _hintTimer.Start();
-            UpdateLabels();
+            _retryStatusText = "此副本缺少可用的原画廊链接或原始页号，无法在线重下。";
+            OnPropertyChanged(nameof(RetryStatusText));
+            OnPropertyChanged(nameof(HasRetryStatus));
+            return;
         }
+
+        _retryPageNumber = pageNumber;
+        SetRetryState(true, -1, $"正在重新下载第 {pageNumber} 页…");
+        try
+        {
+            if (_source is LocalReaderSource local)
+            {
+                var progress = new Progress<ImageLoadStatus>(OnRetryProgress);
+                await local.RedownloadPageAsync(index, _lifetime.Token, progress).ConfigureAwait(true);
+                await local.ReloadPageAsync(index, _lifetime.Token).ConfigureAwait(true);
+                if (_disposed) return;
+                ApplyReloadedPage(index);
+                await RefineReloadedPageAsync(index).ConfigureAwait(true);
+                if (_disposed) return;
+                SetRetryState(false, -1, $"第 {pageNumber} 页已重新下载");
+            }
+            else
+            {
+                // 在线页没有本地文件可替换，刷新请求即可让图像控件重新解析。
+                SetRetryState(false, -1, $"正在重新加载第 {pageNumber} 页…");
+                UpdatePageRequest(index, refresh: true);
+            }
+        }
+        catch (OperationCanceledException) when (_disposed)
+        {
+        }
+        catch (Exception error)
+        {
+            if (_disposed) return;
+            SetRetryState(false, -1, error.Message);
+        }
+        finally
+        {
+            if (!_disposed && _isRetrying) SetRetryState(false, -1, _retryStatusText);
+        }
+    }
+
+    private void OnRetryProgress(ImageLoadStatus status)
+    {
+        if (_disposed || !_isRetrying) return;
+        double value = status.Phase == ImageLoadPhase.Downloading && status.HasPercentage
+            ? Math.Clamp(status.Fraction * 100, 0, 100)
+            : -1;
+        string text = status.Phase switch
+        {
+            ImageLoadPhase.Resolving => "正在解析页面…",
+            ImageLoadPhase.Downloading when status.HasPercentage => $"正在下载 {value:F0}%",
+            ImageLoadPhase.Downloading => "正在下载…",
+            ImageLoadPhase.Decoding => "正在校验图片…",
+            ImageLoadPhase.Failed => status.Message ?? "重新下载失败",
+            _ => "正在重新下载…",
+        };
+        SetRetryState(true, value, text);
+    }
+
+    private void SetRetryState(bool running, double progress, string text)
+    {
+        _isRetrying = running;
+        _retryProgress = progress;
+        _retryStatusText = text;
+        OnPropertyChanged(nameof(IsRetrying));
+        OnPropertyChanged(nameof(RetryProgress));
+        OnPropertyChanged(nameof(IsRetryProgressIndeterminate));
+        OnPropertyChanged(nameof(ShowRetryProgress));
+        OnPropertyChanged(nameof(RetryStatusText));
+        OnPropertyChanged(nameof(HasRetryStatus));
+        UpdateItemRetryState(running, progress, text);
+    }
+
+    /// <summary>把重下进度同步到连续/横向模式里那一页的占位块。</summary>
+    private void UpdateItemRetryState(bool running, double progress, string text)
+    {
+        int index = _pages.FindIndex(page => page.Number == _retryPageNumber);
+        if (index < 0) return;
+        if (index < _continuousItems.Count) _continuousItems[index].SetRetryState(running, progress, text);
+        if (index < _horizontalItems.Count) _horizontalItems[index].SetRetryState(running, progress, text);
+    }
+
+    /// <summary>重下完成后把新页对象同步到列表、画面与阅读项。</summary>
+    private void ApplyReloadedPage(int index)
+    {
+        _pages[index] = _source.Pages[index];
+        OnPropertyChanged(nameof(MissingSummary));
         if (index < _continuousItems.Count)
-        {
             _continuousItems[index].UpdatePage(_pages[index], _source.CreateRequest(index, refresh: true));
-        }
         if (index < _horizontalItems.Count)
-        {
             _horizontalItems[index].UpdatePage(_pages[index], _source.CreateRequest(index, refresh: true));
-        }
-        if (IsSingleMode)
+        if (index == _index)
         {
-            // 等待期间可以翻页；完成后更新当前画面，不把读者拉回被重试的页。
             UpdateCurrentRequests(refresh: true);
             OnPropertyChanged(nameof(SingleRequest));
             OnPropertyChanged(nameof(PreloadRequest));
         }
+
+        UpdateLabels();
+    }
+
+    /// <summary>重下后的文件尺寸可能不同，重新量一次，避免连续模式留白或裁切。</summary>
+    private async Task RefineReloadedPageAsync(int index)
+    {
+        if (_pages[index].Primary is not { Length: > 0 } candidate) return;
+        if (index >= _continuousItems.Count && index >= _horizontalItems.Count) return;
+        try
+        {
+            var size = await _services.Decoder.ReadDimensionAsync(candidate.FilePath, _lifetime.Token).ConfigureAwait(true);
+            if (_disposed) return;
+            if (size is { } dimensions) RefineDimension(index, dimensions.DisplayWidth, dimensions.DisplayHeight);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { _services.Log.Warn("Reader page size refresh failed: " + error.Message); }
+    }
+
+    private void UpdatePageRequest(int index, bool refresh)
+    {
+        if (index == _index)
+        {
+            UpdateCurrentRequests(refresh);
+            OnPropertyChanged(nameof(SingleRequest));
+            OnPropertyChanged(nameof(PreloadRequest));
+        }
+        if (index < _continuousItems.Count)
+            _continuousItems[index].UpdateRequest(_source.CreateRequest(index, refresh));
+        if (index < _horizontalItems.Count)
+            _horizontalItems[index].UpdateRequest(_source.CreateRequest(index, refresh));
     }
 
     private void UpdateLabels()
@@ -521,6 +628,8 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(Mode));
         OnPropertyChanged(nameof(IsSingleMode));
         OnPropertyChanged(nameof(ShowSingleMissingPage));
+        // 单页画布可见性同时取决于模式与当前页是否可读，切换模式必须重新通知。
+        OnPropertyChanged(nameof(ShowSingleView));
         OnPropertyChanged(nameof(IsContinuousMode));
         OnPropertyChanged(nameof(IsHorizontalMode));
         OnPropertyChanged(nameof(ContinuousItems));
@@ -593,6 +702,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     public async Task InitializeAsync()
     {
+        // 页面已经显示出来之后才做容器校验：打开动作只付一次目录枚举的代价，
+        // 截断/错误页会在这里被标记，随后呈现为「已损坏 + 重新下载」。
+        await ValidateLocalPagesAsync().ConfigureAwait(true);
         if (IsSingleMode) return;
         _suppressScrollSync = true;
         _relocationVersion++;
@@ -606,6 +718,48 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         {
             SuppressSyncWhileRelocating(() =>
                 HorizontalScrollToRequested?.Invoke(this, GetHorizontalOffsetForPage(_index, _pageOffset)));
+        }
+    }
+
+    /// <summary>
+    /// 后台校验本地页容器，把「文件存在但内容不完整」的页标记为损坏，并同步给
+    /// 本地库。纯读操作，失败只记日志，不影响阅读。
+    /// </summary>
+    private async Task ValidateLocalPagesAsync()
+    {
+        if (_source is not LocalReaderSource local) return;
+        try
+        {
+            PageScanResult scan = await local.ValidateStatesAsync(_lifetime.Token).ConfigureAwait(true);
+            if (_disposed) return;
+            local.Gallery.CorruptPages = scan.CorruptPages;
+            local.Gallery.IsIncomplete = scan.IsIncomplete;
+            _services.NotifyLocalCopyChecked(local.Gallery);
+            UpdateLabels();
+            OnPropertyChanged(nameof(MissingSummary));
+            RefreshPageStateItems();
+            if (IsSingleMode && IsCurrentPageCorrupt) UpdateCurrentRequests(refresh: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // 关闭阅读器时取消，无需处理。
+        }
+        catch (Exception error)
+        {
+            _services.Log.Warn("Reader page validation failed: " + error.Message);
+        }
+    }
+
+    /// <summary>
+    /// 校验可能晚于连续模式建项（用户先切了模式），把新的页状态同步到已存在
+    /// 的占位块，避免损坏页仍然尝试解码并显示成「无法加载」。
+    /// </summary>
+    private void RefreshPageStateItems()
+    {
+        for (int i = 0; i < _pages.Count; i++)
+        {
+            if (i < _continuousItems.Count) _continuousItems[i].UpdatePage(_pages[i], _source.CreateRequest(i));
+            if (i < _horizontalItems.Count) _horizontalItems[i].UpdatePage(_pages[i], _source.CreateRequest(i));
         }
     }
 
@@ -677,6 +831,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
             var vertical = new List<ContinuousPageItem>(_pages.Count);
             var horizontal = new List<ContinuousPageItem>(_pages.Count);
+            IAsyncRelayCommand<int>? retry = CanRedownload ? RetryPageCommand : null;
             for (int i = 0; i < _pages.Count; i++)
             {
                 PageDimension dimension = dimensions[i];
@@ -685,7 +840,10 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
                     _source.CreateRequest(i),
                     dimension.Width,
                     dimension.Height,
-                    dimension.Known));
+                    dimension.Known)
+                {
+                    RetryCommand = retry,
+                });
                 horizontal.Add(new ContinuousPageItem(
                     _pages[i],
                     _source.CreateRequest(i),
@@ -694,6 +852,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
                     dimension.Known)
                 {
                     ReadIndex = i,
+                    RetryCommand = retry,
                 });
             }
 

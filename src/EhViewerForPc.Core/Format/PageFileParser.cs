@@ -127,8 +127,9 @@ public static partial class PageFileParser
         int expected = hasExpected ? header!.Pages : 0;
         bool headerOutdated = hasExpected && maxPage > expected;
 
-        // 同页有可读候选时，遗留空文件只作诊断；只有整页不可读才需要补页。
-        var present = pages.Where(p => p.State == PageState.Ok).Select(p => p.Number).ToHashSet();
+        // 缺页指「没有可用字节的页」；损坏页有文件但容器不完整，单独计入
+        // CorruptPages，避免 UI 把可替换的坏文件报成缺页。
+        var present = pages.Where(p => p.State != PageState.Empty).Select(p => p.Number).ToHashSet();
         int missingUpperBound = Math.Max(expected, maxPage);
         var missing = new List<PageRange>();
         int rangeStart = 0;

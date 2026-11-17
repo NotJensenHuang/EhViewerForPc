@@ -1,6 +1,7 @@
 using System.Net;
 using EhViewerForPc.Core.Download;
 using EhViewerForPc.Core.Format;
+using EhViewerForPc.Core.Imaging;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Online;
 using EhViewerForPc.Core.Storage;
@@ -203,7 +204,7 @@ public sealed class DownloadRepairTests : IDisposable
     }
 
     [Fact]
-    public async Task ConflictingOriginalFileIsPreservedAndReportedOnce()
+    public async Task InvalidSameNameFileIsReplacedByRepairInsteadOfBlockingForever()
     {
         string conflict = Path.Combine(Folder, "00000002.png");
         byte[] broken = [1, 2, 3]; File.WriteAllBytes(conflict, broken);
@@ -212,11 +213,121 @@ public sealed class DownloadRepairTests : IDisposable
         using var manager = new DownloadManager(Paths, settings, client);
         var task = manager.EnqueueRepair(Details(), Folder, Source);
         await WaitForAsync(() => task.State is DownloadState.Completed or DownloadState.Failed);
-        Assert.Equal(DownloadState.Failed, task.State);
-        Assert.Equal(new[] { 2 }, task.FailedPages);
-        Assert.Contains("1 页下载失败", task.Message);
-        Assert.Equal(broken, File.ReadAllBytes(conflict));
+
+        // 3 字节的文件本来就不是可读页：继续保留只会让「补齐」永远失败，
+        // 因此补页允许就地替换；有效页仍然走「保留 + 报告冲突」的路径。
+        Assert.Equal(DownloadState.Completed, task.State);
+        Assert.Empty(task.FailedPages);
+        Assert.Equal(Png, File.ReadAllBytes(conflict));
+        Assert.True(ImageSignature.IsValidFile(conflict));
         Assert.Empty(Directory.GetFiles(Folder, "*.part"));
+    }
+
+    [Fact]
+    public async Task RepairRemovesStaleTruncatedFileWhenTheContainerChanges()
+    {
+        // 真实案例：目录里 171 个页文件看起来「全齐」，但其中一页是 85% 就断掉的
+        // webp（RIFF 声明 1008 字节，实际只有 32）。补回来的页是 png，写入后必须
+        // 清掉这个旧文件，否则目录继续留着坏页，别的阅读器还可能优先读到它。
+        string stale = Path.Combine(Folder, "00000002.webp");
+        var truncated = new byte[32];
+        "RIFF"u8.CopyTo(truncated);
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(truncated.AsSpan(4), 1000);
+        "WEBPVP8 "u8.CopyTo(truncated.AsSpan(8));
+        File.WriteAllBytes(stale, truncated);
+        Assert.False(ImageSignature.IsValidFile(stale));
+
+        var settings = Settings(); var handler = new FixtureHandler();
+        using var client = new EhClient(settings, new HttpClient(handler), new HttpClient(handler));
+        using var manager = new DownloadManager(Paths, settings, client);
+        var task = manager.EnqueueRepair(Details(), Folder, Source);
+        await WaitForAsync(() => task.State is DownloadState.Completed or DownloadState.Failed);
+
+        Assert.Equal(DownloadState.Completed, task.State);
+        Assert.False(File.Exists(stale));
+        Assert.True(ImageSignature.IsValidFile(Path.Combine(Folder, "00000002.png")));
+        Assert.Equal(2, task.DownloadedPages);
+    }
+
+    [Fact]
+    public async Task ReconcilingClassifiesCorruptPagesSeparatelyFromMissingOnes()
+    {
+        var settings = Settings(); using var client = new EhClient(settings);
+        using var manager = new DownloadManager(Paths, settings, client);
+        var details = new EhGalleryDetails { Gid = 42, Token = "0123456789", Title = "Fixture", Pages = 3 };
+        var task = manager.EnqueueRepair(details, Folder, Source, false);
+        task.State = DownloadState.Failed;
+        task.FailedPages = [2, 3];
+        task.CorruptPages = [];
+        task.DownloadedPages = 1;
+
+        File.WriteAllBytes(Path.Combine(Folder, "00000002.png"), [9, 9, 9]); // 有文件，但不是图片
+        // 第 3 页没有任何文件 → 缺失
+
+        Assert.True(await manager.RefreshLocalProgressAsync(task));
+
+        Assert.Equal([2], task.CorruptPages);
+        Assert.Equal([2, 3], task.FailedPages);
+        Assert.Equal("1 页缺失、1 页文件损坏（可重试）", task.Message);
+        Assert.Equal(DownloadState.Failed, task.State);
+        Assert.Equal(1, task.DownloadedPages);
+    }
+
+    [Fact]
+    public async Task ReconcileClearsCorruptStateAfterThePageWasReplaced()
+    {
+        var settings = Settings(); using var client = new EhClient(settings);
+        using var manager = new DownloadManager(Paths, settings, client);
+        var task = manager.EnqueueRepair(Details(), Folder, Source, false);
+        task.State = DownloadState.Failed;
+        task.FailedPages = [2];
+        task.CorruptPages = [2];
+        task.DownloadedPages = 1;
+
+        File.WriteAllBytes(Path.Combine(Folder, "00000002.png"), Png);
+
+        Assert.True(await manager.RefreshLocalProgressAsync(task));
+
+        Assert.Empty(task.CorruptPages);
+        Assert.Empty(task.FailedPages);
+        Assert.Equal(DownloadState.Completed, task.State);
+    }
+
+    [Fact]
+    public async Task ReaderPageRetryClearsCorruptEntryAndReportsProgress()
+    {
+        string corrupt = Path.Combine(Folder, "00000002.png");
+        File.WriteAllBytes(corrupt, [1, 2, 3]);
+        var settings = Settings(); var handler = new FixtureHandler();
+        using var client = new EhClient(settings, new HttpClient(handler), new HttpClient(handler));
+        using var manager = new DownloadManager(Paths, settings, client);
+        var task = manager.EnqueueRepair(Details(), Folder, Source, false);
+        task.State = DownloadState.Failed;
+        task.FailedPages = [2];
+        task.CorruptPages = [2];
+        task.DownloadedPages = 1;
+
+        var statuses = new CollectingProgress();
+        string page = await manager.RedownloadPageAsync(Details(), 2, Folder, Source, corrupt, CancellationToken.None, statuses);
+
+        Assert.True(ImageSignature.IsValidFile(page));
+        Assert.Empty(task.CorruptPages);
+        Assert.Empty(task.FailedPages);
+        Assert.Equal(DownloadState.Completed, task.State);
+        // 进度必须真的流出来：解析、解码与完成状态都要经过中继。
+        Assert.Contains(statuses.Values, status => status.Phase == ImageLoadPhase.Resolving);
+        Assert.Contains(statuses.Values, status => status.Phase is ImageLoadPhase.Decoding or ImageLoadPhase.Ready);
+    }
+
+    /// <summary>同步收集进度：Progress&lt;T&gt; 会投递到线程池，断言会在回调前跑。</summary>
+    private sealed class CollectingProgress : IProgress<ImageLoadStatus>
+    {
+        public List<ImageLoadStatus> Values { get; } = [];
+
+        public void Report(ImageLoadStatus value)
+        {
+            lock (Values) Values.Add(value);
+        }
     }
 
     [Fact]

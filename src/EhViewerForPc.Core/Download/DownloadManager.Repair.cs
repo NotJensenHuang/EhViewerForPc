@@ -59,16 +59,50 @@ public sealed partial class DownloadManager
             if (!PageFileParser.TryParsePageName(candidate.FileName, out int page, out _)) continue;
             if ((File.GetAttributes(candidate.FilePath) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("补页目录不能包含链接页文件。");
-            if (pages.Contains(page) || !ImageSignature.IsValidFile(candidate.FilePath)) continue;
+            if (pages.Contains(page) || !ImageSignature.IsValidFile(candidate.FilePath, FileShare.ReadWrite | FileShare.Delete)) continue;
             pages.Add(page);
         }
         return pages;
     }
 
-    private static string GetRepairPagePath(string folder, int page, string extension)
+    /// <summary>
+    /// 补页目标路径。同名有效图片必须保留并报告冲突；0 字节、截断或错误内容
+    /// 本身就是不可读文件，继续保留只会让「补齐」永远失败，因此允许就地替换。
+    /// </summary>
+    private static (string Path, bool ReplaceInvalid) GetRepairPagePath(string folder, int page, string extension)
     {
         string path = Path.Combine(folder, page.ToString("D8", CultureInfo.InvariantCulture) + extension);
-        if (File.Exists(path) || Directory.Exists(path)) throw new IOException("原目录存在同名文件，已保留，请检查后重试。");
-        return path;
+        if (Directory.Exists(path)) throw new IOException("原目录存在同名目录，已保留，请检查后重试。");
+        if (!File.Exists(path)) return (path, false);
+        // 判定要与读取方共享：文件被阅读器打开时不能误判成「可替换」。
+        if (ImageSignature.IsValidFile(path, FileShare.ReadWrite | FileShare.Delete))
+            throw new IOException("原目录存在同名文件，已保留，请检查后重试。");
+        return (path, true);
+    }
+
+    /// <summary>
+    /// 一页写入成功后，清掉同页号其他扩展名的无效遗留文件。重下换容器
+    /// （webp → jpg）时旧文件会留在目录里：目录看起来 171 个文件全齐，
+    /// 但其中一个仍是截断的；别的阅读器按扩展名挑页时还可能读到它。
+    /// 只删除容器校验判定无效的文件，有效候选一律保留。
+    /// </summary>
+    private static void RemoveInvalidSamePageFiles(string folder, int page, string keepPath)
+    {
+        string prefix = page.ToString("D8", CultureInfo.InvariantCulture);
+        foreach (string extension in new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp" })
+        {
+            string path = Path.Combine(folder, prefix + extension);
+            if (PathIdentity.Comparer.Equals(path, keepPath)) continue;
+            try
+            {
+                if (!File.Exists(path)) continue;
+                if (ImageSignature.IsValidFile(path, FileShare.ReadWrite | FileShare.Delete)) continue;
+                File.Delete(path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 清理失败不影响这一页已经写入成功的事实，下次补页还会再判一次。
+            }
+        }
     }
 }

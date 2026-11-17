@@ -279,7 +279,8 @@
         <Button Content="刷新" Command="{Binding RefreshCommand}" HorizontalAlignment="Center" Margin="0,6,0,0" />
       </StackPanel>
 
-      <ProgressBar IsIndeterminate="True" Height="3" VerticalAlignment="Top" IsVisible="{Binding IsBusy}" />
+      <!-- 只反映用户发起的加载：启动时的自动刷新不再挂一条加载条。 -->
+      <ProgressBar IsIndeterminate="True" Height="3" VerticalAlignment="Top" IsVisible="{Binding ShowBusyBar}" />
     </Grid>
 
     <!-- Status bar -->

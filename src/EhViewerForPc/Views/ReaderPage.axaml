@@ -24,12 +24,21 @@
                            MaxDimension="{Binding MaxDimension}"
                            PageTurnRequested="OnPageTurnRequested" />
       <StackPanel IsVisible="{Binding ShowSingleMissingPage}"
-                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" MaxWidth="420">
         <SelectableTextBlock Text="{Binding MissingPageText}"
                              HorizontalAlignment="Center" IsHitTestVisible="False"
                              Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
                              AutomationProperties.AutomationId="Reader.MissingPage" />
+        <!-- 重下进度：有总长度时显示百分比，没有时用不确定态，绝不留下「没有反应」的空窗。 -->
+        <ProgressBar Height="4" Minimum="0" Maximum="100" Value="{Binding RetryProgress}"
+                     IsIndeterminate="{Binding IsRetryProgressIndeterminate}"
+                     IsVisible="{Binding ShowRetryProgress}" MaxWidth="360"
+                     AutomationProperties.AutomationId="Reader.RetryProgress" />
+        <SelectableTextBlock Text="{Binding RetryStatusText}" IsVisible="{Binding HasRetryStatus}"
+                             HorizontalAlignment="Center" Classes="caption" TextWrapping="Wrap"
+                             AutomationProperties.AutomationId="Reader.RetryStatus" />
         <Button Content="重新下载本页" Command="{Binding RetryCurrentCommand}"
+                IsVisible="{Binding CanRedownload}" IsEnabled="{Binding !IsRetrying}"
                 HorizontalAlignment="Center"
                 ToolTip.Tip="按原始页号从在线画廊重新抓取这一页"
                 AutomationProperties.Name="重新下载本页" />
@@ -51,9 +60,21 @@
                       HorizontalAlignment="Center" Background="{DynamicResource AppBgAltBrush}">
                 <Grid>
                   <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
-                  <SelectableTextBlock Text="{Binding MissingPageText}" IsVisible="{Binding IsMissing}"
-                                       Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <StackPanel IsVisible="{Binding IsMissing}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                              Spacing="10" MaxWidth="320">
+                    <SelectableTextBlock Text="{Binding MissingPageText}"
+                                         Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
+                                         HorizontalAlignment="Center" />
+                    <ProgressBar Height="4" Minimum="0" Maximum="100" Value="{Binding RetryProgress}"
+                                 IsIndeterminate="{Binding IsRetryProgressIndeterminate}"
+                                 IsVisible="{Binding IsRetrying}" MinWidth="160" MaxWidth="240" />
+                    <SelectableTextBlock Text="{Binding RetryStatusText}" IsVisible="{Binding HasRetryStatus}"
+                                         Classes="caption" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                    <Button Content="重新下载本页" Command="{Binding RetryCommand}"
+                            CommandParameter="{Binding Number}"
+                            IsVisible="{Binding CanRetry}" IsEnabled="{Binding !IsRetrying}"
+                            HorizontalAlignment="Center" />
+                  </StackPanel>
                 </Grid>
               </Border>
             </DataTemplate>
@@ -78,9 +99,21 @@
                       Background="{DynamicResource AppBgAltBrush}">
                 <Grid>
                   <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
-                  <SelectableTextBlock Text="{Binding MissingPageText}" IsVisible="{Binding IsMissing}"
-                                       Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  <StackPanel IsVisible="{Binding IsMissing}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                              Spacing="10" MaxWidth="320">
+                    <SelectableTextBlock Text="{Binding MissingPageText}"
+                                         Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
+                                         HorizontalAlignment="Center" />
+                    <ProgressBar Height="4" Minimum="0" Maximum="100" Value="{Binding RetryProgress}"
+                                 IsIndeterminate="{Binding IsRetryProgressIndeterminate}"
+                                 IsVisible="{Binding IsRetrying}" MinWidth="160" MaxWidth="240" />
+                    <SelectableTextBlock Text="{Binding RetryStatusText}" IsVisible="{Binding HasRetryStatus}"
+                                         Classes="caption" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                    <Button Content="重新下载本页" Command="{Binding RetryCommand}"
+                            CommandParameter="{Binding Number}"
+                            IsVisible="{Binding CanRetry}" IsEnabled="{Binding !IsRetrying}"
+                            HorizontalAlignment="Center" />
+                  </StackPanel>
                 </Grid>
               </Border>
             </DataTemplate>

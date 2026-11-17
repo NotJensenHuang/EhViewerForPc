@@ -1,4 +1,5 @@
 using EhViewerForPc.Core.Download;
+using EhViewerForPc.Core.Imaging;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Online;
 using EhViewerForPc.Core.Storage;
@@ -17,6 +18,9 @@ public sealed record LocalRepairResult(int Added, int Continued, int Existing, I
 public sealed partial class AppServices
 {
     public event EventHandler<GalleryInfo>? LocalCopyChecked;
+
+    /// <summary>阅读器校验完页容器后回写损坏页数与完整性，供本地库刷新徽标。</summary>
+    public void NotifyLocalCopyChecked(GalleryInfo info) => LocalCopyChecked?.Invoke(this, info);
     // 损坏页与缺页同等对待：两者都只能靠补下载修复。
     public bool CanContinueLocalDownload(GalleryInfo info) => (info.IsIncomplete || info.CorruptPages > 0) &&
         info.Gid is > 0 && !info.HasGidConflict &&
@@ -113,7 +117,8 @@ public sealed partial class AppServices
         before.HasNaturalPageNames == after.HasNaturalPageNames && before.LastWriteUtc == after.LastWriteUtc &&
         before.HeaderError == after.HeaderError && before.MissingRanges.SequenceEqual(after.MissingRanges);
 
-    internal async Task RetryLocalPageAsync(GalleryInfo info, GalleryPage page, CancellationToken token)
+    internal async Task RetryLocalPageAsync(GalleryInfo info, GalleryPage page, CancellationToken token,
+        IProgress<ImageLoadStatus>? progress = null)
     {
         var task = Downloads.Tasks.FirstOrDefault(t => PathIdentity.Comparer.Equals(t.FolderPath, info.FolderPath));
         string? root = Settings.Sources.FirstOrDefault(s => s.Id == info.SourceId && s.Enabled)?.RootPath ?? task?.DestinationRoot;
@@ -123,7 +128,7 @@ public sealed partial class AppServices
         if (info.Gid is not > 0 || info.HasGidConflict || info.HasNaturalPageNames || string.IsNullOrEmpty(root) || string.IsNullOrEmpty(galleryToken))
             throw new IOException("此副本缺少可用的原画廊链接或原始页号，只能重新载入本地文件。");
         var details = new EhGalleryDetails { Gid = info.Gid.Value, Token = galleryToken, Pages = info.ExpectedPages ?? 0, Title = info.Title };
-        await Downloads.RedownloadPageAsync(details, page.Number, info.FolderPath, root, page.Primary?.FilePath, token);
+        await Downloads.RedownloadPageAsync(details, page.Number, info.FolderPath, root, page.Primary?.FilePath, token, progress);
         var source = Settings.Sources.FirstOrDefault(s => s.Id == info.SourceId && s.Enabled)?.Clone();
         if (source is null) return;
         bool qualify = Settings.ActiveSources.Count > 1;

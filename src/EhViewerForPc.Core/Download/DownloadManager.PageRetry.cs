@@ -11,19 +11,51 @@ public sealed partial class DownloadManager
     private readonly CancellationTokenSource _pageRetryStop = new();
     private readonly Dictionary<string, PageRetryOperation> _pageRetries = new(PathIdentity.Comparer);
     private sealed record PageRetryResult(string? Path, Exception? Error);
-    private sealed record PageRetryOperation(int Page, Task<PageRetryResult> Work)
+
+    /// <summary>
+    /// 同一个目录同时只跑一次单页重下，后来者加入同一个任务。进度回调按调用
+    /// 方分别挂在这个中继上：先点的人能看到字节进度，后加入的人也不会串台。
+    /// </summary>
+    private sealed class PageProgressRelay : IProgress<ImageLoadStatus>
     {
+        private readonly List<IProgress<ImageLoadStatus>> _observers = [];
+        private readonly object _gate = new();
+
+        public void Attach(IProgress<ImageLoadStatus>? observer)
+        {
+            if (observer is null) return;
+            lock (_gate) _observers.Add(observer);
+        }
+
+        public void Report(ImageLoadStatus value)
+        {
+            IProgress<ImageLoadStatus>[] snapshot;
+            lock (_gate) snapshot = _observers.ToArray();
+            foreach (IProgress<ImageLoadStatus> observer in snapshot)
+            {
+                try { observer.Report(value); }
+                catch (Exception) { /* 订阅方释放后迟到回调不能中断重下 */ }
+            }
+        }
+    }
+
+    private sealed class PageRetryOperation(int page, Task<PageRetryResult> work, PageProgressRelay relay)
+    {
+        public int Page { get; } = page;
+        public Task<PageRetryResult> Work { get; } = work;
+        public PageProgressRelay Relay { get; } = relay;
         public bool ResumeQueue { get; set; }
     }
 
     /// <summary>用户明确重试一页：等待同目录在途写入，原子替换该页，其他页及元数据保持原样。</summary>
     public async Task<string> RedownloadPageAsync(EhGalleryDetails details, int pageNumber, string folder,
-        string sourceRoot, string? existingPath, CancellationToken token)
+        string sourceRoot, string? existingPath, CancellationToken token, IProgress<ImageLoadStatus>? progress = null)
     {
         folder = Path.GetFullPath(folder);
         sourceRoot = Path.GetFullPath(sourceRoot);
         if (details.Gid <= 0 || string.IsNullOrWhiteSpace(details.Token) || pageNumber <= 0 ||
             details.Pages > 0 && pageNumber > details.Pages) throw new ArgumentException("当前页缺少有效的画廊链接或原始页号。");
+        bool attached = false;
         while (true)
         {
             token.ThrowIfCancellationRequested();
@@ -43,9 +75,19 @@ public sealed partial class DownloadManager
                     var original = tasks.FirstOrDefault() ?? active.FirstOrDefault().Download;
                     ImageQuality quality = original?.Quality ?? _settings.ImageQuality;
                     int width = original?.ResampledWidth ?? _settings.ResampledWidth;
-                    operation = new(pageNumber, Task.Run(() => RunPageRetryAsync(details, pageNumber, folder, sourceRoot, existingPath, quality, width, writers)));
+                    var relay = new PageProgressRelay();
+                    operation = new(pageNumber,
+                        Task.Run(() => RunPageRetryAsync(details, pageNumber, folder, sourceRoot, existingPath, quality, width, writers, relay)),
+                        relay);
                     _pageRetries.Add(folder, operation);
                 }
+            }
+
+            // 同目录已有别的页在重下时加入同一任务；进度只挂一次，避免重复回调。
+            if (!attached)
+            {
+                operation.Relay.Attach(progress);
+                attached = true;
             }
             var result = await operation.Work.WaitAsync(token).ConfigureAwait(false);
             if (operation.Page != pageNumber) continue;
@@ -55,7 +97,7 @@ public sealed partial class DownloadManager
     }
 
     private async Task<PageRetryResult> RunPageRetryAsync(EhGalleryDetails details, int pageNumber, string folder,
-        string root, string? existingPath, ImageQuality quality, int width, Task[] writers)
+        string root, string? existingPath, ImageQuality quality, int width, Task[] writers, IProgress<ImageLoadStatus> progress)
     {
         string temporary = Path.Combine(folder, "." + Guid.NewGuid().ToString("N") + ".retry");
         CancellationToken token = _pageRetryStop.Token;
@@ -97,18 +139,27 @@ public sealed partial class DownloadManager
             }
 
             if (page is null) throw new IOException("在线画廊中找不到当前页。");
+            progress.Report(ImageLoadStatus.Resolving());
             var resolved = await _client.ResolveImageAsync(page, quality == ImageQuality.Original, token, width, refresh: true).ConfigureAwait(false);
             // 手动重下载不命中本地副本或图片缓存，避免把坏页再次复制回来。
-            await _client.DownloadToFileAsync(resolved.Url, page.PageUrl, temporary, (IProgress<ImageLoadStatus>?)null, token).ConfigureAwait(false);
+            await _client.DownloadToFileAsync(resolved.Url, page.PageUrl, temporary, progress, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             ValidateRepairTarget(folder, root);
             string extension = ImageSignature.DetectFile(temporary) switch
             {
                 ImageKind.Png => ".png", ImageKind.Gif => ".gif", ImageKind.Webp => ".webp", _ => ".jpg"
             };
-            if (target is null) target = GetRepairPagePath(folder, pageNumber, extension);
+            progress.Report(ImageLoadStatus.Decoding(0));
+            if (target is null)
+            {
+                var destination = GetRepairPagePath(folder, pageNumber, extension);
+                target = destination.Path;
+                replace |= destination.ReplaceInvalid;
+            }
             else if (ReadRetryFileStamp(target) != before) throw new IOException("当前页文件已被其他操作修改，请重新打开后重试。");
             File.Move(temporary, target, overwrite: replace);
+            // 新文件换了容器时，旧的截断页会留在目录里继续冒充这一页。
+            RemoveInvalidSamePageFiles(folder, pageNumber, target);
             UpdateTaskAfterPageRetry(details.Gid, folder, pageNumber);
             return new(target, null);
         }
@@ -144,11 +195,14 @@ public sealed partial class DownloadManager
             // 运行中的任务由下载流程自己维护计数，这里不插手。
             if (task is null || task.State == DownloadState.Running) return;
 
-            bool wasFailed = task.FailedPages.Remove(pageNumber);
-            bool changed = wasFailed;
-            if (wasFailed && task.DownloadedPages < task.PageCount) task.DownloadedPages++;
+            // 页可能记在「失败」或「损坏」两个集合里，两者都代表这次重下前不可读。
+            bool wasUnreadable = task.FailedPages.Remove(pageNumber);
+            wasUnreadable |= task.CorruptPages.Remove(pageNumber);
+            bool changed = wasUnreadable;
+            if (wasUnreadable && task.DownloadedPages < task.PageCount) task.DownloadedPages++;
 
-            if (task.PageCount > 0 && task.FailedPages.Count == 0 && task.DownloadedPages >= task.PageCount &&
+            if (task.PageCount > 0 && task.FailedPages.Count == 0 && task.CorruptPages.Count == 0 &&
+                task.DownloadedPages >= task.PageCount &&
                 task.State is DownloadState.Failed or DownloadState.Paused)
             {
                 MarkCompletedLocked(task, "已完成");
@@ -157,6 +211,8 @@ public sealed partial class DownloadManager
             }
             else if (changed)
             {
+                int missing = Math.Max(0, task.PageCount - task.DownloadedPages - task.CorruptPages.Count);
+                task.Message = DescribePageState(missing, task.CorruptPages.Count);
                 SaveLocked();
             }
 

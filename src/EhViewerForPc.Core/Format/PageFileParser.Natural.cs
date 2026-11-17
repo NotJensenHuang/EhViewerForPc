@@ -19,7 +19,9 @@ public static partial class PageFileParser
             if (state == PageState.Corrupt) corruptPages++;
             int number = pages.Count + 1;
             pages.Add(new() { Number = number, DisplayIndex = number - 1, Candidates = candidates, State = state });
-            if (state != PageState.Ok) missing.Add(new(number, number));
+            // 损坏页不是缺页：文件就在磁盘上，只是内容不完整。两者都不可读，
+            // 但处理方式不同（损坏要替换，缺页要新增），所以分开统计。
+            if (state == PageState.Empty) missing.Add(new(number, number));
         }
         return new()
         {

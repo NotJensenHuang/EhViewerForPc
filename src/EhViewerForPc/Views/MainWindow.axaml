@@ -219,7 +219,7 @@
             BorderThickness="1" CornerRadius="8" Padding="16,10" IsVisible="{Binding ShowToast}">
       <SelectableTextBlock Text="{Binding ToastText}" MaxWidth="620" TextWrapping="Wrap" />
     </Border>
-    <!-- 只在「在线页 + 用户发起的加载」时出现，见 ShellViewModel.ShowOnlineProgress。 -->
-    <ProgressBar IsIndeterminate="True" Height="2" VerticalAlignment="Top" IsVisible="{Binding ShowOnlineProgress}" />
+    <!-- 顶端的全局进度条已移除：列表页自己在内容区顶部显示加载条，
+         避免窗口最上方压着一条永远走不完的线（见 OnlineFeedPage.ShowBusyBar）。 -->
   </Grid>
 </Window>

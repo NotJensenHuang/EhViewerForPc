@@ -56,7 +56,8 @@
                         <SelectableTextBlock Classes="caption" Text="{Binding Label}" Margin="0,0,10,4" />
                         <SelectableTextBlock Classes="caption" Text="{Binding QualityText}" Margin="0,0,10,4" />
                       </WrapPanel>
-                      <SelectableTextBlock Classes="caption" Text="{Binding Message}" IsVisible="{Binding HasMessage}" TextWrapping="Wrap" />
+                      <SelectableTextBlock Classes="caption" Text="{Binding Message}" IsVisible="{Binding HasMessage}"
+                                           TextWrapping="Wrap" ToolTip.Tip="{Binding DamageDetail}" />
                       <Border IsVisible="{Binding ConfirmDelete}" BorderThickness="1" BorderBrush="{DynamicResource AppWarningBrush}" Padding="10"><StackPanel Spacing="6"><SelectableTextBlock Text="删除该任务的全部下载文件？" TextWrapping="Wrap" /><WrapPanel Classes="actions"><Button Content="删除文件" Command="{Binding DeleteFilesCommand}" /><Button Content="取消" Command="{Binding CancelDeleteCommand}" /></WrapPanel></StackPanel></Border>
 <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}" />
                       <StackPanel Orientation="Horizontal" Spacing="12">
@@ -120,7 +121,11 @@
                         </WrapPanel>
                         <SelectableTextBlock Classes="caption" Text="{Binding Message}" TextWrapping="Wrap" />
                         <ProgressBar Height="4" Minimum="0" Maximum="1" Value="{Binding Progress}" />
-                        <SelectableTextBlock Classes="caption" Text="{Binding ProgressText}" />
+                        <WrapPanel Orientation="Horizontal">
+                          <SelectableTextBlock Classes="caption" Text="{Binding ProgressText}" Margin="0,0,10,0" />
+                          <SelectableTextBlock Classes="caption" Text="{Binding DamageText}" IsVisible="{Binding HasDamage}"
+                                               Foreground="{DynamicResource AppWarningBrush}" />
+                        </WrapPanel>
                       </StackPanel>
                       <WrapPanel Grid.Row="1" Orientation="Horizontal" VerticalAlignment="Center" Classes="actions">
                         <Button Content="阅读" Command="{Binding ReadCommand}" IsVisible="{Binding CanRead}"

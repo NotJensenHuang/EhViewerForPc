@@ -61,6 +61,8 @@ public sealed class PageScanResult
 
     public int PageCount => Pages.Count;
     public bool HasMissingPages => MissingRanges.Count > 0;
+    public bool HasCorruptPages => CorruptPages > 0;
     public bool HasZeroByteFiles => ZeroByteFiles > 0;
-    public bool IsIncomplete => PageCount == 0 || HasMissingPages;
+    /// <summary>需要补页或替换损坏页。损坏页不改变页数，但同样不可读。</summary>
+    public bool IsIncomplete => PageCount == 0 || HasMissingPages || HasCorruptPages;
 }

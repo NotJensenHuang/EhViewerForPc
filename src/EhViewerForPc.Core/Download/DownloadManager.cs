@@ -754,10 +754,11 @@ public sealed partial class DownloadManager : IDisposable
                     ImageKind.Png => ".png", ImageKind.Gif => ".gif", ImageKind.Webp => ".webp", _ => ".jpg"
                 };
                 string target = Path.Combine(task.FolderPath, page.Page.ToString("D8", CultureInfo.InvariantCulture) + extension);
+                bool replaceInvalid = false;
                 if (task.FillMissingOnly)
                 {
                     ValidateRepairTarget(task.FolderPath, task.DestinationRoot);
-                    target = GetRepairPagePath(task.FolderPath, page.Page, extension);
+                    (target, replaceInvalid) = GetRepairPagePath(task.FolderPath, page.Page, extension);
                 }
                 string temporary = task.FillMissingOnly ? target + "." + Guid.NewGuid().ToString("N") + ".part" : target + ".part";
                 try
@@ -766,9 +767,11 @@ public sealed partial class DownloadManager : IDisposable
                     await using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
                         await input.CopyToAsync(output, innerToken).ConfigureAwait(false);
                     innerToken.ThrowIfCancellationRequested();
-                    File.Move(temporary, target, overwrite: !task.FillMissingOnly);
+                    File.Move(temporary, target, overwrite: !task.FillMissingOnly || replaceInvalid);
                 }
                 finally { try { File.Delete(temporary); } catch (IOException) { } }
+                // 换容器重下时旧扩展名的坏文件会留下来，目录看着「已齐」但仍有坏页。
+                RemoveInvalidSamePageFiles(task.FolderPath, page.Page, target);
                 if (task.Quality == ImageQuality.Original && !cached.IsOriginal)
                     lock (_gate) { if (!task.ResampledPages.Contains(page.Page)) task.ResampledPages.Add(page.Page); }
 
@@ -805,13 +808,16 @@ public sealed partial class DownloadManager : IDisposable
         lock (_gate)
         {
             task.FailedPages = failed.Distinct().OrderBy(p => p).ToList();
+            // 这次已经写成功的页不再算损坏（补页允许替换无效文件）。
+            task.CorruptPages.RemoveAll(page => !task.FailedPages.Contains(page) && HasPageFile(task.FolderPath, page));
             task.DownloadedPages = pages.Count(p => remaining?.Contains(p.Page) ?? HasPageFile(task.FolderPath, p.Page));
             SaveLocked();
         }
 
         if (task.FailedPages.Count > 0)
         {
-            throw new EhException($"{task.FailedPages.Count} 页下载失败（可重试）");
+            int corrupt = task.CorruptPages.Count(page => task.FailedPages.Contains(page));
+            throw new EhException(DescribePageState(task.FailedPages.Count - corrupt, corrupt));
         }
 
         if (!task.FillMissingOnly) await WriteMetadataAsync(task, token).ConfigureAwait(false);
@@ -895,6 +901,7 @@ public sealed partial class DownloadManager : IDisposable
     {
         task.State = DownloadState.Completed;
         task.Message = message;
+        task.CorruptPages.Clear();
         task.FinishedUtc = DateTime.UtcNow.ToString("O");
         task.TotalBytes = FolderSize(task.FolderPath);
         _archive.RemoveAll(e => PathIdentity.Comparer.Equals(e.FolderPath, task.FolderPath));
@@ -915,6 +922,7 @@ public sealed partial class DownloadManager : IDisposable
     /// <summary>
     /// 按任务目录的实际页文件重算进度。用户在阅读器逐页重试或从外部补齐后，
     /// 失败页、页数与消息不应继续停留在旧状态；只读取目录，不修改任何文件。
+    /// 缺失页与损坏页分开统计：前者没有文件，后者有文件但容器不完整。
     /// 目录枚举与容器校验放在后台线程，避免大画廊卡住 UI。
     /// </summary>
     public async Task<bool> RefreshLocalProgressAsync(DownloadTask task, CancellationToken token = default)
@@ -923,26 +931,10 @@ public sealed partial class DownloadManager : IDisposable
         int expected = task.PageCount;
         if (folder.Length == 0 || expected <= 0) return false;
 
-        HashSet<int> present;
+        (HashSet<int> Present, List<int> Corrupt) state;
         try
         {
-            present = await Task.Run(() =>
-            {
-                var pages = new HashSet<int>();
-                if (!Directory.Exists(folder)) return pages;
-                var files = PageFileParser.Enumerate(folder, out string? error);
-                if (error is not null) throw new IOException(error);
-                foreach (var candidate in files)
-                {
-                    token.ThrowIfCancellationRequested();
-                    if (!PageFileParser.TryParsePageName(candidate.FileName, out int page, out _)) continue;
-                    if (page <= 0 || page > expected || pages.Contains(page)) continue;
-                    if (!ImageSignature.IsValidFile(candidate.FilePath)) continue;
-                    pages.Add(page);
-                }
-
-                return pages;
-            }, token).ConfigureAwait(false);
+            state = await Task.Run(() => ClassifyLocalPages(folder, expected, token), token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -954,22 +946,34 @@ public sealed partial class DownloadManager : IDisposable
             return false;
         }
 
+        HashSet<int> present = state.Present;
+        List<int> corruptPages = state.Corrupt;
+        var corruptSet = corruptPages.ToHashSet();
+        var missing = Enumerable.Range(1, expected).Where(page => !present.Contains(page) && !corruptSet.Contains(page)).ToList();
+        // 补页要覆盖两类页：没有任何文件的，以及文件损坏需要替换的。
+        var failed = corruptPages.Concat(missing).OrderBy(page => page).ToList();
+
         bool completed = false;
         lock (_gate)
         {
             // 运行中的任务由写入流程自己维护计数，核对会与在途文件冲突。
             if (!_tasks.Contains(task) || task.State == DownloadState.Running) return false;
-            bool changed = task.DownloadedPages != present.Count;
+            bool changed = task.DownloadedPages != present.Count ||
+                           !task.CorruptPages.SequenceEqual(corruptPages) ||
+                           !task.FailedPages.SequenceEqual(failed);
             task.DownloadedPages = present.Count;
-            // 只移除目录里确实已经有效的失败页；页号越界的旧记录一并清掉。
-            changed |= task.FailedPages.RemoveAll(page => page <= 0 || page > expected || present.Contains(page)) > 0;
-            if (present.Count >= expected && task.State is DownloadState.Failed or DownloadState.Paused)
+            task.CorruptPages = corruptPages;
+            task.FailedPages = failed;
+            if (present.Count >= expected)
             {
                 MarkCompletedLocked(task, "已完成（按本地页文件核对）");
                 completed = true;
             }
             else if (changed)
             {
+                // 失败任务的文案必须跟着实际分类走；暂停任务可能带着 509 说明，
+                // 不能用「N 页缺失」覆盖掉配额提示。
+                if (task.State == DownloadState.Failed) task.Message = DescribePageState(missing.Count, corruptPages.Count);
                 SaveLocked();
             }
 
@@ -981,6 +985,48 @@ public sealed partial class DownloadManager : IDisposable
         RaiseChanged();
         return true;
     }
+
+    /// <summary>
+    /// 目录里每一页的真实状态：有效页、损坏页（有字节但容器不完整）。0 字节
+    /// 文件按缺失处理——它没有任何可恢复内容，重下就是新增。
+    /// </summary>
+    private static (HashSet<int> Present, List<int> Corrupt) ClassifyLocalPages(string folder, int expected, CancellationToken token)
+    {
+        var present = new HashSet<int>();
+        var corrupt = new HashSet<int>();
+        if (!Directory.Exists(folder)) return (present, []);
+
+        var files = PageFileParser.Enumerate(folder, out string? error);
+        if (error is not null) throw new IOException(error);
+        foreach (PageCandidate candidate in files)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!PageFileParser.TryParsePageName(candidate.FileName, out int page, out _)) continue;
+            if (page <= 0 || page > expected || present.Contains(page)) continue;
+            if (candidate.Length <= 0) continue;
+            // 共享读：正在被阅读器或另一个写入方打开的文件不是损坏页。
+            if (ImageSignature.IsValidFile(candidate.FilePath, FileShare.ReadWrite | FileShare.Delete))
+            {
+                present.Add(page);
+                corrupt.Remove(page);
+            }
+            else
+            {
+                corrupt.Add(page);
+            }
+        }
+
+        return (present, corrupt.OrderBy(page => page).ToList());
+    }
+
+    /// <summary>失败页数量到卡片文案的唯一映射，下载、核对、补页共用。</summary>
+    public static string DescribePageState(int missing, int corrupt) => (missing, corrupt) switch
+    {
+        (0, 0) => "已完成",
+        (0, _) => $"{corrupt} 页文件损坏（可重试）",
+        (_, 0) => $"{missing} 页下载失败（可重试）",
+        _ => $"{missing} 页缺失、{corrupt} 页文件损坏（可重试）",
+    };
 
     /// <summary>VERSION2 header understood by EhViewer and by this app's parser.</summary>
     private static string BuildEhviewerHeader(DownloadTask task)
@@ -1161,6 +1207,7 @@ public sealed partial class DownloadManager : IDisposable
                 // 被跳过的等待任务永远轮不到调度。
                 if (task.GalleryUnavailable && task.State != DownloadState.Failed) task.GalleryUnavailable = false;
                 task.FailedPages ??= [];
+                task.CorruptPages ??= [];
                 task.ResampledPages ??= [];
                 _tasks.Add(task);
             }
