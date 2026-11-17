@@ -108,7 +108,7 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
                     var updated = await Task.Run(() =>
                     {
                         var result = _services.Scanner.Scan(root, null, true, null, token,
-                            sourceId, sourceName, qualify, original.FolderPath);
+                            sourceId, sourceName, qualify, original.FolderPath, validatePages: true);
                         var info = result.Galleries.Single();
                         // 单目录检测没有同源重复 GID 的上下文，身份未变时沿用完整扫描的副本标识。
                         if (info.WorkId == original.WorkId && info.HasGidConflict == original.HasGidConflict)
@@ -119,11 +119,12 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
                         int? expected = info.ExpectedPages ?? knownPages;
                         if (expected is > 0 && info.ExpectedPages != expected)
                         {
-                            var scan = PageFileParser.Scan(info.FolderPath, new SpiderHeader { HasPages = true, Pages = expected.Value }, out string? error);
+                            var scan = PageFileParser.Scan(info.FolderPath, new SpiderHeader { HasPages = true, Pages = expected.Value }, out string? error, validateContainers: true);
                             if (error is not null) throw new IOException(error);
                             info.ExpectedPages = expected;
                             info.IsIncomplete = scan.IsIncomplete;
                             info.MissingRanges = scan.MissingRanges;
+                            info.CorruptPages = scan.CorruptPages;
                             info.HasHeaderPageCountOutdated = scan.HeaderPageCountOutdated;
                         }
                         if (!Directory.Exists(info.FolderPath) || (info.PageCount == 0 && info.HeaderError is not null))

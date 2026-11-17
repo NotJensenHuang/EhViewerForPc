@@ -41,6 +41,7 @@ public sealed class GalleryCacheEntry
     public string[] Tags { get; set; } = [];
     public string ExtensionSummary { get; set; } = string.Empty;
     public int ZeroByteFiles { get; set; }
+    public int CorruptPages { get; set; }
     public string? HeaderError { get; set; }
 
     public GalleryCacheEntry Clone() => (GalleryCacheEntry)MemberwiseClone();

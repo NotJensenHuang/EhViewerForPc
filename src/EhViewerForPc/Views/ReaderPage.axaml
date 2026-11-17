@@ -15,7 +15,7 @@
   <Grid RowDefinitions="*,Auto" Background="{Binding BackgroundBrush}">
     <Grid Grid.Row="0">
       <controls:ZoomPanView x:Name="SingleView"
-                           IsVisible="{Binding IsSingleMode}"
+                           IsVisible="{Binding ShowSingleView}"
                            Request="{Binding SingleRequest}"
                            PreloadRequest="{Binding PreloadRequest}"
                            FitMode="{Binding FitMode}"
@@ -23,10 +23,17 @@
                            MaxMegapixels="{Binding MaxMegapixels}"
                            MaxDimension="{Binding MaxDimension}"
                            PageTurnRequested="OnPageTurnRequested" />
-      <SelectableTextBlock Text="{Binding MissingPageText}" IsVisible="{Binding ShowSingleMissingPage}"
-                           HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"
-                           Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
-                           AutomationProperties.AutomationId="Reader.MissingPage" />
+      <StackPanel IsVisible="{Binding ShowSingleMissingPage}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+        <SelectableTextBlock Text="{Binding MissingPageText}"
+                             HorizontalAlignment="Center" IsHitTestVisible="False"
+                             Foreground="{DynamicResource AppWarningBrush}" FontSize="16"
+                             AutomationProperties.AutomationId="Reader.MissingPage" />
+        <Button Content="重新下载本页" Command="{Binding RetryCurrentCommand}"
+                HorizontalAlignment="Center"
+                ToolTip.Tip="按原始页号从在线画廊重新抓取这一页"
+                AutomationProperties.Name="重新下载本页" />
+      </StackPanel>
 
       <ScrollViewer x:Name="ContinuousScroll"
                     IsVisible="{Binding IsContinuousMode}"

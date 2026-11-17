@@ -411,7 +411,8 @@ public sealed partial class GalleryVersionViewModel : ObservableObject
     public bool IsPrimary { get; private set; }
 
     public string DetectionText => IsChecking ? "正在检测缺页…" : _detectionError is not null ? "检测失败：" + _detectionError : !_hasChecked ? "尚未检测缺页" :
-        $"缺页：{(Info.MissingRanges.Count == 0 ? "无" : string.Join(", ", Info.MissingRanges))} · 0 字节：{Info.ZeroByteFiles} 个 · " +
+        $"缺页：{(Info.MissingRanges.Count == 0 ? "无" : string.Join(", ", Info.MissingRanges))} · " +
+        $"损坏：{Info.CorruptPages} 页 · 0 字节：{Info.ZeroByteFiles} 个 · " +
         (Info.ExpectedPages is int expected ? $"预期 {expected} 页" : "未记录总页数，无法核对尾部缺页");
 
     public void ApplyInfo(GalleryInfo info, bool isPrimary, bool detected = false)
@@ -445,14 +446,18 @@ public sealed partial class GalleryVersionViewModel : ObservableObject
         get
         {
             if (Info.PageCount == 0) return "无图片";
-            if (Info.ZeroByteFiles > 0) return $"{Info.ZeroByteFiles} 个损坏页";
+            // 损坏页优先于缺页显示：它解释了下页为什么打不开，也说明该副本仍可修复。
+            if (Info.CorruptPages > 0) return $"{Info.CorruptPages} 页损坏";
+            if (Info.ZeroByteFiles > 0) return $"{Info.ZeroByteFiles} 个空文件";
             if (Info.HasMissingPages) return "缺页 " + string.Join(",", Info.MissingRanges.Select(r => r.ToString()));
             if (Info.HasHeaderPageCountOutdated) return "页数过期";
             return "完整";
         }
     }
 
-    public bool IsIncomplete => Info.IsIncomplete;
+    /// <summary>Damage that the reader will report also makes the copy repairable,
+    /// even when the page count itself looks complete.</summary>
+    public bool IsIncomplete => Info.IsIncomplete || Info.CorruptPages > 0;
     public bool CanContinueDownload => !IsChecking && IsIncomplete && Info.Gid is > 0 && !Info.HasGidConflict;
 
     public string LastWriteText => Info.LastWriteUtc == default

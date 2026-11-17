@@ -61,14 +61,15 @@ public sealed partial class MainViewModel
         bool qualifyStableId = ResolveSources().Count > 1;
         var completed = await Task.Run(() =>
         {
-            var result = _services.Scanner.Scan(root, null, false, null, _lifetime.Token, source.Id, source.DisplayName, qualifyStableId, onlyFolder: folder);
+            var result = _services.Scanner.Scan(root, null, false, null, _lifetime.Token, source.Id, source.DisplayName, qualifyStableId, onlyFolder: folder, validatePages: true);
             foreach (var gallery in result.Galleries)
             {
                 if (expected <= 0 || gallery.ExpectedPages == expected) continue;
-                var pages = PageFileParser.Scan(gallery.FolderPath, new SpiderHeader { HasPages = true, Pages = expected }, out _);
+                var pages = PageFileParser.Scan(gallery.FolderPath, new SpiderHeader { HasPages = true, Pages = expected }, out _, validateContainers: true);
                 gallery.ExpectedPages = expected;
                 gallery.IsIncomplete = pages.IsIncomplete;
                 gallery.MissingRanges = pages.MissingRanges;
+                gallery.CorruptPages = pages.CorruptPages;
                 gallery.HasHeaderPageCountOutdated = pages.HeaderPageCountOutdated;
             }
             return result.Galleries;

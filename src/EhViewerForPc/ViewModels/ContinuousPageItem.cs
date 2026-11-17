@@ -47,14 +47,29 @@ public sealed class ContinuousPageItem : ObservableObject
         Page = page;
         OnPropertyChanged(nameof(Page));
         OnPropertyChanged(nameof(IsMissing));
+        OnPropertyChanged(nameof(IsCorrupt));
+        OnPropertyChanged(nameof(MissingPageText));
         Request = request;
     }
     public int OriginalWidth => _originalWidth;
     public int OriginalHeight => _originalHeight;
     public bool Known { get; private set; }
     public int Number => Page.Number;
-    public bool IsMissing => Page is { State: PageState.Empty, Candidates.Count: 0 };
-    public string MissingPageText => $"第 {Number} 页缺失";
+
+    /// <summary>A page the reader must not attempt to decode. Empty and corrupt
+    /// look the same to the layout but differ in what the user can do about it.</summary>
+    public bool IsMissing => Page.State is PageState.Empty or PageState.Corrupt or PageState.Unreadable;
+
+    /// <summary>Just the present-but-unreadable case: retrying the download is
+    /// the actionable fix, whereas a missing page has nothing to replace.</summary>
+    public bool IsCorrupt => Page.State is PageState.Corrupt or PageState.Unreadable;
+
+    public string MissingPageText => Page.State switch
+    {
+        PageState.Corrupt => $"第 {Number} 页已损坏",
+        PageState.Unreadable => $"第 {Number} 页无法读取",
+        _ => $"第 {Number} 页缺失",
+    };
 
     /// <summary>
     /// Replaces the estimated aspect ratio with the real one once the page has

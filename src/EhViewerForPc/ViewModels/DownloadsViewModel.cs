@@ -27,6 +27,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _libraryTimer;
     private readonly Dictionary<string, DownloadTask> _libraryUpdates = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (int Pages, string Folder, int Total, bool Complete)> _imported = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _reconciledUtc = new(StringComparer.Ordinal);
     private bool _importing;
 
     public DownloadsViewModel(AppServices services, MainViewModel library)
@@ -129,6 +130,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         {
             QueueLibraryUpdate(task);
             if (task.State == DownloadState.Completed) continue;
+            QueueLocalReconcile(task);
             ids.Add(task.Id);
             ApplyTask(task, newestFirst: false);
         }
@@ -144,6 +146,38 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 
         RefreshStatus();
         _library.ApplyDownloadStates(_services.Downloads.Tasks);
+    }
+
+    /// <summary>
+    /// 失败 / 暂停任务可能已经被用户在阅读器或外部补齐。进入下载页时按目录
+    /// 实际页文件核对一次，避免继续显示已经不存在的失败页；同一任务 15 秒内
+    /// 只核对一次，目录枚举与容器校验都在后台线程完成。
+    /// </summary>
+    private void QueueLocalReconcile(DownloadTask task)
+    {
+        if (task.State is not (DownloadState.Failed or DownloadState.Paused)) return;
+        if (task.PageCount <= 0 || task.FolderPath.Length == 0) return;
+        if (task.DownloadedPages >= task.PageCount && task.FailedPages.Count == 0) return;
+        if (_reconciledUtc.TryGetValue(task.Id, out DateTime last) &&
+            DateTime.UtcNow - last < TimeSpan.FromSeconds(15)) return;
+        _reconciledUtc[task.Id] = DateTime.UtcNow;
+        _ = ReconcileAsync(task);
+    }
+
+    private async Task ReconcileAsync(DownloadTask task)
+    {
+        try
+        {
+            await _services.Downloads.RefreshLocalProgressAsync(task).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // 应用退出或任务被移除；下次进入下载页会重新核对。
+        }
+        catch (Exception error)
+        {
+            _services.Log.Warn("Reconcile download pages: " + error.Message);
+        }
     }
 
     /// <summary>

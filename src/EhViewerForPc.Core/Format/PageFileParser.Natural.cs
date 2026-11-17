@@ -4,25 +4,27 @@ namespace EhViewerForPc.Core.Format;
 
 public static partial class PageFileParser
 {
-    private static PageScanResult ScanNaturalPages(IReadOnlyList<PageCandidate> files)
+    private static PageScanResult ScanNaturalPages(IReadOnlyList<PageCandidate> files, bool validateContainers)
     {
         var pages = new List<GalleryPage>();
         var missing = new List<PageRange>();
+        int corruptPages = 0;
         foreach (var group in files.Where(file => IsSupportedExtension(file.Extension))
             .GroupBy(file => Path.GetFileNameWithoutExtension(file.FileName), StringComparer.OrdinalIgnoreCase)
             .OrderBy(group => group.Key, NaturalNameComparer.Instance))
         {
             var candidates = group.OrderByDescending(c => c.Length > 0).ThenBy(c => GetExtensionPriority(c.Extension))
                 .ThenBy(c => c.FileName, StringComparer.OrdinalIgnoreCase).ToArray();
-            bool empty = candidates.All(c => c.Length == 0);
+            PageState state = ClassifyPage(candidates, validateContainers);
+            if (state == PageState.Corrupt) corruptPages++;
             int number = pages.Count + 1;
-            pages.Add(new() { Number = number, DisplayIndex = number - 1, Candidates = candidates, State = empty ? PageState.Empty : PageState.Ok });
-            if (empty) missing.Add(new(number, number));
+            pages.Add(new() { Number = number, DisplayIndex = number - 1, Candidates = candidates, State = state });
+            if (state != PageState.Ok) missing.Add(new(number, number));
         }
         return new()
         {
             HasNaturalPageNames = true, Pages = pages, MaxPageNumber = pages.Count, MinPageNumber = pages.Count > 0 ? 1 : 0,
-            MissingRanges = missing, ZeroByteFiles = files.Count(f => f.Length == 0),
+            MissingRanges = missing, ZeroByteFiles = files.Count(f => f.Length == 0), CorruptPages = corruptPages,
             ExtensionSummary = string.Join(", ", files.GroupBy(f => f.Extension, StringComparer.OrdinalIgnoreCase)
                 .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(g => $"{g.Key.TrimStart('.').ToLowerInvariant()}: {g.Count()}")),

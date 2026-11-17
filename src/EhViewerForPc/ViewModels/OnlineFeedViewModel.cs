@@ -38,6 +38,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
     private string _nextUrl = string.Empty;
     private int _urlIndex;
     private bool _busy;
+    private bool _autoLoading;
     private int _requestGeneration;
     private bool _hasMore;
     private string _statusText = string.Empty;
@@ -304,6 +305,7 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
             {
                 OnPropertyChanged(nameof(IsIdle));
                 OnPropertyChanged(nameof(ShowEmpty));
+                OnPropertyChanged(nameof(ShowBusyBar));
                 NotifyLoadMoreState();
             }
         }
@@ -490,6 +492,30 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ListRevision));
         NotifyLoadMoreState();
     }
+
+    /// <summary>
+    /// 启动时的自动刷新。与 <see cref="LoadAsync"/> 只差一点：它不表示「用户在
+    /// 等」。网络卡住时窗口顶端那条不确定进度条不该一直挂着，否则整个程序看
+    /// 起来像卡死了；页面自己的状态文字仍会显示「载入中…」。
+    /// </summary>
+    public async Task AutoLoadAsync()
+    {
+        if (_disposed || _busy) return;
+        _autoLoading = true;
+        OnPropertyChanged(nameof(ShowBusyBar));
+        try
+        {
+            await LoadAsync(reset: true).ConfigureAwait(true);
+        }
+        finally
+        {
+            _autoLoading = false;
+            OnPropertyChanged(nameof(ShowBusyBar));
+        }
+    }
+
+    /// <summary>窗口顶端的进度条是否该显示：只有用户主动发起的加载才算。</summary>
+    public bool ShowBusyBar => _busy && !_autoLoading;
 
     public async Task LoadAsync(bool reset)
     {

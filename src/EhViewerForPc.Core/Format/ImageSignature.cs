@@ -67,12 +67,14 @@ public static class ImageSignature
     };
 
     /// <summary>Cheap container validation before an image is committed or reused.
-    /// Rejects HTML, empty and truncated transfers without allocating image pixels.</summary>
-    public static bool IsValidFile(string path)
+    /// Rejects HTML, empty and truncated transfers without allocating image pixels.
+    /// <paramref name="share"/> lets a reader tolerate files another process holds
+    /// open: a locked page must not be reported as corrupt.</summary>
+    public static bool IsValidFile(string path, FileShare share = FileShare.Read)
     {
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, share, 64);
             if (stream.Length < 16) return false;
             Span<byte> header = stackalloc byte[32];
             int read = stream.Read(header);

@@ -44,6 +44,11 @@ public sealed class GalleryInfo
     public DateTime LastWriteUtc { get; set; }
     public string ExtensionSummary { get; set; } = string.Empty;
     public int ZeroByteFiles { get; set; }
+
+    /// <summary>Pages that exist on disk but fail the container check. Only
+    /// populated by scans that requested validation (reader open, repair).</summary>
+    public int CorruptPages { get; set; }
+
     public string? HeaderError { get; set; }
     public string? CoverSource { get; set; }
 

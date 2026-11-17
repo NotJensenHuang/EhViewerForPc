@@ -20,7 +20,8 @@ public sealed partial class LibraryScanner
         string? sourceId = null,
         string? sourceName = null,
         bool qualifyStableId = false,
-        string? onlyFolder = null)
+        string? onlyFolder = null,
+        bool validatePages = false)
     {
         string root = Path.GetFullPath(rootPath);
         if (!Directory.Exists(root))
@@ -84,7 +85,8 @@ public sealed partial class LibraryScanner
                     ehFile,
                     thumbFile,
                     files,
-                    enumError);
+                    enumError,
+                    validatePages);
                 scanned++;
                 if (gallery.PageCount == 0 && !gallery.HasEhviewer)
                 {
@@ -172,7 +174,8 @@ public sealed partial class LibraryScanner
         FileInfo? ehFile,
         FileInfo? thumbFile,
         IReadOnlyList<PageCandidate> files,
-        string? enumError)
+        string? enumError,
+        bool validatePages)
     {
         bool hasEh = ehFile is not null;
         bool hasThumb = thumbFile is { Length: > 0 };
@@ -185,7 +188,7 @@ public sealed partial class LibraryScanner
             if (parseError is not null) headerError ??= parseError;
         }
 
-        PageScanResult pages = PageFileParser.Scan(files, header, out string? pageError);
+        PageScanResult pages = PageFileParser.Scan(files, header, out string? pageError, validatePages);
         if (pageError is not null) headerError ??= pageError;
 
         string? coverPath = null;
@@ -250,6 +253,7 @@ public sealed partial class LibraryScanner
             LastWriteUtc = folderWriteUtc,
             ExtensionSummary = pages.ExtensionSummary,
             ZeroByteFiles = pages.ZeroByteFiles,
+            CorruptPages = pages.CorruptPages,
             HeaderError = header?.IsValid == true ? null : headerError ?? header?.Error,
         };
     }
@@ -287,6 +291,7 @@ public sealed partial class LibraryScanner
                 : Directory.GetLastWriteTimeUtc(folderPath),
             ExtensionSummary = entry.ExtensionSummary,
             ZeroByteFiles = entry.ZeroByteFiles,
+            CorruptPages = entry.CorruptPages,
             HeaderError = entry.HeaderError,
         };
     }
@@ -324,6 +329,7 @@ public sealed partial class LibraryScanner
             Tags = gallery.Tags,
             ExtensionSummary = gallery.ExtensionSummary,
             ZeroByteFiles = gallery.ZeroByteFiles,
+            CorruptPages = gallery.CorruptPages,
             HeaderError = gallery.HeaderError,
         };
     }

@@ -143,6 +143,66 @@ public sealed class DownloadRepairTests : IDisposable
     }
 
     [Fact]
+    public async Task ReconcilingLocalPagesCompletesATaskWhosePagesWereFilledElsewhere()
+    {
+        var settings = Settings(); using var client = new EhClient(settings);
+        using var manager = new DownloadManager(Paths, settings, client);
+        var task = manager.EnqueueRepair(Details(), Folder, Source, false);
+        task.State = DownloadState.Failed;
+        task.Message = "1 页下载失败（可重试）";
+        task.FailedPages = [2];
+        task.DownloadedPages = 1;
+        File.WriteAllBytes(Path.Combine(Folder, "00000002.png"), Png);
+
+        Assert.True(await manager.RefreshLocalProgressAsync(task));
+
+        Assert.Empty(task.FailedPages);
+        Assert.Equal(2, task.DownloadedPages);
+        Assert.Equal(DownloadState.Completed, task.State);
+        Assert.Equal("已完成（按本地页文件核对）", task.Message);
+    }
+
+    [Fact]
+    public async Task ReconcilingLocalPagesKeepsPagesThatAreStillMissing()
+    {
+        var settings = Settings(); using var client = new EhClient(settings);
+        using var manager = new DownloadManager(Paths, settings, client);
+        var details = new EhGalleryDetails { Gid = 42, Token = "0123456789", Title = "Fixture", Pages = 3 };
+        var task = manager.EnqueueRepair(details, Folder, Source, false);
+        task.State = DownloadState.Failed;
+        task.FailedPages = [2, 3];
+        task.DownloadedPages = 1;
+        File.WriteAllBytes(Path.Combine(Folder, "00000002.png"), Png);
+
+        Assert.True(await manager.RefreshLocalProgressAsync(task));
+
+        Assert.Equal([3], task.FailedPages);
+        Assert.Equal(2, task.DownloadedPages);
+        Assert.Equal(DownloadState.Failed, task.State);
+    }
+
+    [Fact]
+    public async Task ReaderPageRetryUpdatesTheQueuedTaskAndCompletesIt()
+    {
+        var settings = Settings(); var handler = new FixtureHandler();
+        using var client = new EhClient(settings, new HttpClient(handler), new HttpClient(handler));
+        using var manager = new DownloadManager(Paths, settings, client);
+        var task = manager.EnqueueRepair(Details(), Folder, Source, false);
+        task.State = DownloadState.Failed;
+        task.Message = "1 页下载失败（可重试）";
+        task.FailedPages = [2];
+        task.DownloadedPages = 1;
+        Assert.False(File.Exists(Path.Combine(Folder, "00000002.png")));
+
+        string page = await manager.RedownloadPageAsync(Details(), 2, Folder, Source, null, CancellationToken.None);
+
+        Assert.True(File.Exists(page));
+        Assert.Empty(task.FailedPages);
+        Assert.Equal(2, task.DownloadedPages);
+        Assert.Equal(DownloadState.Completed, task.State);
+    }
+
+    [Fact]
     public async Task ConflictingOriginalFileIsPreservedAndReportedOnce()
     {
         string conflict = Path.Combine(Folder, "00000002.png");

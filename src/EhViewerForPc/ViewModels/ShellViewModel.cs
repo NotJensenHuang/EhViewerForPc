@@ -93,6 +93,11 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         Downloads = new DownloadsViewModel(services, Library);
         Settings = new SettingsViewModel(services);
         Settings.AccountChanged += (_, _) => RaiseAccount();
+        // 进度条只关心「用户发起的在线加载」，所以订阅的是那个组合属性。
+        Online.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(OnlineFeedViewModel.ShowBusyBar)) OnPropertyChanged(nameof(ShowOnlineProgress));
+        };
         Library.LocalIndexChanged += OnImageIndexLibraryChanged;
         Library.PropertyChanged += OnImageIndexLibraryPropertyChanged;
         services.Downloads.TaskCompleted += OnImageIndexDownloadCompleted;
@@ -169,6 +174,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentPage));
             OnPropertyChanged(nameof(CurrentPageTitle));
+            OnPropertyChanged(nameof(ShowOnlineProgress));
             ActivatePage(value.Page);
             NavigationRequested?.Invoke(this, value);
         }
@@ -177,6 +183,13 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     public object? CurrentPage => _selectedNav?.Page;
 
     public string CurrentPageTitle => _selectedNav?.Label ?? string.Empty;
+
+    /// <summary>
+    /// 窗口顶端那条 2 像素的不确定进度条。只有「正在看在线页」且「加载是本页
+    /// 发起的」时才成立：启动时的自动刷新不显示，切到别的页面也不显示，避免
+    /// 一条永远走不完的线挂在标题栏下面。
+    /// </summary>
+    public bool ShowOnlineProgress => Online.ShowBusyBar && ReferenceEquals(CurrentPage, Online);
 
     public string SiteLabel => EhUrls.SiteName(_services.Online.Site);
 
@@ -292,7 +305,11 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         _ = ResumeImageIndexAsync();
         Settings.RefreshAccount();
         MaybeRefreshImageLimits();
-        await Online.LoadAsync(reset: true).ConfigureAwait(true);
+
+        // 首屏不等在线列表：站点不可达时这次请求会把「初始化完成」一起挂住，
+        // 而首页本地部分本来可以立刻用。排到后台优先级，先让窗口完成一次布局
+        // 与绘制，再发起网络请求。
+        Dispatcher.UIThread.Post(() => _ = Online.AutoLoadAsync(), DispatcherPriority.Background);
     }
 
     private void ActivatePage(object page)

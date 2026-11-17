@@ -50,20 +50,30 @@ public static partial class PageFileParser
         return files;
     }
 
-    public static PageScanResult Scan(string folderPath, SpiderHeader? header, out string? error)
+    public static PageScanResult Scan(string folderPath, SpiderHeader? header, out string? error, bool validateContainers = false)
     {
         var files = Enumerate(folderPath, out error);
         header ??= SpiderInfoParser.TryParseFile(Path.Combine(folderPath, ".ehviewer"), out _);
-        return Scan(files, header, out _);
+        return Scan(files, header, out _, validateContainers);
     }
 
-    public static PageScanResult Scan(IReadOnlyList<PageCandidate> files, SpiderHeader? header, out string? error)
+    /// <summary>
+    /// <paramref name="validateContainers"/> opens every non-empty candidate and
+    /// checks its container (JPEG tail marker, PNG IEND, GIF trailer, WebP RIFF
+    /// length). Off by default: a library scan touches thousands of galleries and
+    /// must not pay two seeks per page. Callers that decide "is this page
+    /// downloadable/re-readable" — the reader and the repair queue — turn it on so
+    /// a truncated file is classified as <see cref="PageState.Corrupt"/> instead of
+    /// passing as a healthy page.
+    /// </summary>
+    public static PageScanResult Scan(IReadOnlyList<PageCandidate> files, SpiderHeader? header, out string? error,
+        bool validateContainers = false)
     {
         error = null;
         bool numbered = files.Any(file => TryParsePageName(file.FileName, out _, out _));
         // 编号页本身就是原始页号的依据；缺少元数据或额外封面不能压缩缺页位置。
         if (files.Count > 0 && !numbered)
-            return ScanNaturalPages(files);
+            return ScanNaturalPages(files, validateContainers);
         var grouped = new Dictionary<int, List<PageCandidate>>();
         int zeroByteFiles = 0;
 
@@ -91,6 +101,7 @@ public static partial class PageFileParser
 
         var pages = new List<GalleryPage>(grouped.Count);
         int displayIndex = 0;
+        int corruptPages = 0;
         foreach (var pair in grouped.OrderBy(p => p.Key))
         {
             var candidates = pair.Value
@@ -99,13 +110,14 @@ public static partial class PageFileParser
                 .ThenBy(c => c.FileName, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            bool allEmpty = candidates.All(c => c.Length == 0);
+            PageState state = ClassifyPage(candidates, validateContainers);
+            if (state == PageState.Corrupt) corruptPages++;
             pages.Add(new GalleryPage
             {
                 Number = pair.Key,
                 DisplayIndex = displayIndex++,
                 Candidates = candidates,
-                State = allEmpty ? PageState.Empty : PageState.Ok,
+                State = state,
             });
         }
 
@@ -115,8 +127,8 @@ public static partial class PageFileParser
         int expected = hasExpected ? header!.Pages : 0;
         bool headerOutdated = hasExpected && maxPage > expected;
 
-        // 同页有可读候选时，遗留空文件只作诊断；只有整页为空才需要补页。
-        var present = pages.Where(p => p.State != PageState.Empty).Select(p => p.Number).ToHashSet();
+        // 同页有可读候选时，遗留空文件只作诊断；只有整页不可读才需要补页。
+        var present = pages.Where(p => p.State == PageState.Ok).Select(p => p.Number).ToHashSet();
         int missingUpperBound = Math.Max(expected, maxPage);
         var missing = new List<PageRange>();
         int rangeStart = 0;
@@ -154,8 +166,36 @@ public static partial class PageFileParser
             MinPageNumber = minPage,
             ExtensionSummary = string.Join(", ", extensionCounts),
             ZeroByteFiles = zeroByteFiles,
+            CorruptPages = corruptPages,
             HeaderPageCountOutdated = headerOutdated,
         };
+    }
+
+    /// <summary>
+    /// Three-way readability verdict for one page. Any candidate that parses as a
+    /// complete container wins; a page that only has non-empty but unreadable
+    /// bytes is <see cref="PageState.Corrupt"/> (repairable, worth a message), and
+    /// a page with no bytes at all is <see cref="PageState.Empty"/>.
+    /// With <paramref name="validateContainers"/> off every non-empty file counts
+    /// as readable so a library scan stays cheap.
+    /// </summary>
+    private static PageState ClassifyPage(IReadOnlyList<PageCandidate> candidates, bool validateContainers)
+    {
+        bool hasBytes = false;
+        foreach (PageCandidate candidate in candidates)
+        {
+            if (candidate.Length <= 0) continue;
+            hasBytes = true;
+            if (!validateContainers) return PageState.Ok;
+            // Shared read: a page being written or held open by another reader is
+            // not corruption.
+            if (ImageSignature.IsValidFile(candidate.FilePath, FileShare.ReadWrite | FileShare.Delete))
+            {
+                return PageState.Ok;
+            }
+        }
+
+        return hasBytes ? PageState.Corrupt : PageState.Empty;
     }
 
     public static bool TryParsePageName(string fileName, out int number, out string extension)

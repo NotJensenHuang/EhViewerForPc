@@ -109,6 +109,7 @@ public sealed partial class DownloadManager
             if (target is null) target = GetRepairPagePath(folder, pageNumber, extension);
             else if (ReadRetryFileStamp(target) != before) throw new IOException("当前页文件已被其他操作修改，请重新打开后重试。");
             File.Move(temporary, target, overwrite: replace);
+            UpdateTaskAfterPageRetry(details.Gid, folder, pageNumber);
             return new(target, null);
         }
         catch (Exception error)
@@ -127,6 +128,46 @@ public sealed partial class DownloadManager
             }
             if (resume) SchedulePump();
         }
+    }
+
+    /// <summary>
+    /// 阅读器单页重试成功后立即回填任务：移除该失败页、推进页数；全部补齐时
+    /// 直接完成任务，避免下载页继续显示旧的失败页与失败消息。
+    /// </summary>
+    private void UpdateTaskAfterPageRetry(long gid, string folder, int pageNumber)
+    {
+        DownloadTask? updated = null;
+        bool completed = false;
+        lock (_gate)
+        {
+            var task = _tasks.FirstOrDefault(t => t.Gid == gid && PathIdentity.Comparer.Equals(t.FolderPath, folder));
+            // 运行中的任务由下载流程自己维护计数，这里不插手。
+            if (task is null || task.State == DownloadState.Running) return;
+
+            bool wasFailed = task.FailedPages.Remove(pageNumber);
+            bool changed = wasFailed;
+            if (wasFailed && task.DownloadedPages < task.PageCount) task.DownloadedPages++;
+
+            if (task.PageCount > 0 && task.FailedPages.Count == 0 && task.DownloadedPages >= task.PageCount &&
+                task.State is DownloadState.Failed or DownloadState.Paused)
+            {
+                MarkCompletedLocked(task, "已完成");
+                completed = true;
+                changed = true;
+            }
+            else if (changed)
+            {
+                SaveLocked();
+            }
+
+            if (!changed) return;
+            updated = task;
+        }
+
+        if (updated is null) return;
+        RaiseTask(updated);
+        if (completed) TaskCompleted?.Invoke(this, updated);
+        RaiseChanged();
     }
 
     private static (long Length, long Mtime)? ReadRetryFileStamp(string? path)

@@ -29,6 +29,9 @@ public sealed class GalleryPage
     public PageCandidate? Primary => Candidates.Count == 0 ? null : Candidates[0];
 
     public bool IsReadableCandidate => Candidates.Any(c => c.Length > 0);
+
+    /// <summary>Page is present but no candidate parses as a complete image.</summary>
+    public bool IsCorrupt => State == PageState.Corrupt;
 }
 
 public readonly record struct PageRange(int Start, int End)
@@ -49,6 +52,11 @@ public sealed class PageScanResult
     public int MinPageNumber { get; init; }
     public string ExtensionSummary { get; init; } = string.Empty;
     public int ZeroByteFiles { get; init; }
+
+    /// <summary>Pages whose files exist but whose container check failed. Only
+    /// filled in when the scan ran with container validation requested.</summary>
+    public int CorruptPages { get; init; }
+
     public bool HeaderPageCountOutdated { get; init; }
 
     public int PageCount => Pages.Count;

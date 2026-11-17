@@ -53,6 +53,8 @@ Online browsing is available on first launch. To use the local library, point "L
   - Single page (fit page / width / height / original, 1x–8x zoom, dragging, wheel / click / keyboard paging), vertical continuous and horizontal continuous modes (the whole strip is reversed for RTL); double-page spreads keep their original aspect ratio
   - Progress is stored as "original page number + in-page offset"; online reading and local copies share one progress key, so reading continues after a download
   - Local and downloaded copies retain missing-page slots and the original total; missing pages show a placeholder while later page numbers and progress stay aligned
+  - A page file that exists but is corrupt (truncated transfer, an HTML error page saved as an image) is treated exactly like a missing page: the reader draws no blank canvas, reports "page N is corrupt" and offers "Redownload this page", hiding the canvas in single-page mode so the notice never sits on an empty frame
+  - The download page, version check and reader share one container-validation rule (header plus tail structure), so "missing here, fine there" cannot happen; the startup library scan skips it to keep large libraries fast and validates per page only when the reader opens or a check is requested
   - The More menu lists both left-to-right and right-to-left options, controlling horizontal continuous layout only and disabled in other modes. Arrow keys, the wheel and single-page click zones keep fixed directions
   - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
   - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
@@ -113,6 +115,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - FluentAvaloniaUI `FANavigationView` + `FAFrame` history with back, forward and Alt+← / Alt+→
   - System / light / dark themes; the sidebar can collapse and remembers its state, collapses automatically in narrow windows, and list and scroll positions are preserved
   - Online and local details share `GalleryDetailsView`; descriptive text in Settings, details and the status bar can be selected and copied
+  - Startup waits only for the local library: the online first page is issued at background priority after the window has painted, so the window stays usable when the network is unreachable. The indeterminate bar under the title appears only on the online page for a user-initiated load — never during the startup refresh, never on other pages
 
 ## 🧩 Feature Matrix
 

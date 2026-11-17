@@ -52,7 +52,9 @@ public sealed class LocalReaderSource : IReaderSource
         services.Works.Upsert(new WorkRecord { WorkId = gallery.WorkId, Gid = gallery.Gid, Token = gallery.Token,
             Title = gallery.DisplayTitle, PageCount = gallery.ExpectedPages ?? gallery.PageCount });
 
-        PageScanResult scan = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError);
+        // 容器校验与下载/补页用同一标准：文件存在但截断的页必须判为损坏，
+        // 否则下载页认定缺页、阅读器却当成正常页显示空白。
+        PageScanResult scan = PageFileParser.Scan(gallery.FolderPath, null, out string? scanError, validateContainers: true);
         // 文件扫描只返回实际文件；阅读序列按原始页号补齐，避免缺页改变进度与总页数。
         int count = Math.Max(gallery.ExpectedPages ?? 0, Math.Max(gallery.MaxPageNumber, scan.MaxPageNumber));
         var pages = new GalleryPage[count];
@@ -92,7 +94,9 @@ public sealed class LocalReaderSource : IReaderSource
         : "缺页 " + string.Join(", ", _missingRanges.Select(r => r.ToString()));
 
     public IImageRequest CreateRequest(int index, bool refresh = false) =>
-        Pages[index].Candidates.Count == 0 ? NullImageRequest.Instance
+        // Corrupt pages must not reach the decoder: a failed decode paints the
+        // network-error overlay on top of the "this page is damaged" notice.
+        Pages[index].State != PageState.Ok ? NullImageRequest.Instance
             : new PageImageRequest(Pages[index].Candidates, _services.Images);
 
     internal Task RedownloadPageAsync(int index, CancellationToken token) =>
@@ -112,7 +116,7 @@ public sealed class LocalReaderSource : IReaderSource
                 header.HasPages = true;
                 header.Pages = expected.Value;
             }
-            return PageFileParser.Scan(folder, header, out _);
+            return PageFileParser.Scan(folder, header, out _, validateContainers: true);
         }, token);
         var page = scan.Pages.FirstOrDefault(p => p.Number == number);
         _pages[index] = new GalleryPage
@@ -120,7 +124,7 @@ public sealed class LocalReaderSource : IReaderSource
             Number = number, DisplayIndex = index,
             Candidates = page?.Candidates ?? [], State = page?.State ?? PageState.Empty,
         };
-        IsComplete = Pages.Count > 0 && Pages.All(p => p.IsReadableCandidate);
+        IsComplete = Pages.Count > 0 && Pages.All(p => p.State == PageState.Ok);
         _missingRanges = scan.MissingRanges;
     }
 

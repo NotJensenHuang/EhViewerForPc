@@ -121,10 +121,30 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     public bool HasSourceText => !string.IsNullOrEmpty(_source.SourceLabel);
     public int PageCount => _pages.Count;
     public bool HasPages => _pages.Count > 0;
+
+    /// <summary>True for a page the reader cannot draw: no file at all, or a file
+    /// whose container check failed. Both are reported instead of silently
+    /// showing an empty canvas.</summary>
     public bool IsCurrentPageMissing => _pages.Count > 0 &&
-        _pages[_index] is { State: PageState.Empty, Candidates.Count: 0 };
+        _pages[Math.Clamp(_index, 0, _pages.Count - 1)].State is PageState.Empty or PageState.Corrupt or PageState.Unreadable;
+
+    /// <summary>The present-but-unreadable case: a re-download can replace it.</summary>
+    public bool IsCurrentPageCorrupt => _pages.Count > 0 &&
+        _pages[Math.Clamp(_index, 0, _pages.Count - 1)].State is PageState.Corrupt or PageState.Unreadable;
+
     public bool ShowSingleMissingPage => IsSingleMode && IsCurrentPageMissing;
-    public string MissingPageText => $"第 {CurrentPageNumber} 页缺失";
+
+    /// <summary>The canvas stays out of the way while the damage notice is up, so
+    /// a failed decode cannot paint an error over the explanation.</summary>
+    public bool ShowSingleView => IsSingleMode && !IsCurrentPageMissing;
+    public string MissingPageText => _pages.Count == 0
+        ? string.Empty
+        : _pages[Math.Clamp(_index, 0, _pages.Count - 1)].State switch
+        {
+            PageState.Corrupt => $"第 {CurrentPageNumber} 页已损坏，可重新下载",
+            PageState.Unreadable => $"第 {CurrentPageNumber} 页无法读取",
+            _ => $"第 {CurrentPageNumber} 页缺失",
+        };
     public ReadingMode Mode => _mode;
     public bool IsSingleMode => _mode == ReadingMode.Single;
     public bool IsContinuousMode => _mode == ReadingMode.Continuous;
@@ -381,7 +401,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     private void UpdateLabels()
     {
         OnPropertyChanged(nameof(IsCurrentPageMissing));
+        OnPropertyChanged(nameof(IsCurrentPageCorrupt));
         OnPropertyChanged(nameof(ShowSingleMissingPage));
+        OnPropertyChanged(nameof(ShowSingleView));
         OnPropertyChanged(nameof(MissingPageText));
         if (_pages.Count == 0)
         {

@@ -17,7 +17,9 @@ public sealed record LocalRepairResult(int Added, int Continued, int Existing, I
 public sealed partial class AppServices
 {
     public event EventHandler<GalleryInfo>? LocalCopyChecked;
-    public bool CanContinueLocalDownload(GalleryInfo info) => info.IsIncomplete && info.Gid is > 0 && !info.HasGidConflict &&
+    // 损坏页与缺页同等对待：两者都只能靠补下载修复。
+    public bool CanContinueLocalDownload(GalleryInfo info) => (info.IsIncomplete || info.CorruptPages > 0) &&
+        info.Gid is > 0 && !info.HasGidConflict &&
         Settings.Sources.Any(source => source.Id == info.SourceId && source.Enabled);
 
     /// <summary>由明确的用户操作授权为该副本补页；捕获路径后交给既有下载服务，不修改全局下载根目录。</summary>
@@ -40,7 +42,8 @@ public sealed partial class AppServices
         foreach (var task in Downloads.Tasks) queued.TryAdd(task.FolderPath, task);
         foreach (var info in copies)
         {
-            if (!info.IsIncomplete || !folders.Add(info.FolderPath)) continue;
+            // 损坏页不改变页数，但同样需要进入补页流程。
+            if ((!info.IsIncomplete && info.CorruptPages == 0) || !folders.Add(info.FolderPath)) continue;
             if (queued.TryGetValue(info.FolderPath, out var task) && task.State is DownloadState.Pending or DownloadState.Running)
             {
                 existing++;
@@ -69,12 +72,12 @@ public sealed partial class AppServices
                     var info = candidate.Info;
                     if (!PathIdentity.IsDescendantOf(info.FolderPath, candidate.Source.RootPath)) throw new IOException("副本路径已变化，请重新扫描本地库。");
                     var copy = Scanner.Scan(candidate.Source.RootPath, null, true, null, token, candidate.Source.Id,
-                        candidate.Source.DisplayName, qualify, info.FolderPath).Galleries.Single();
+                        candidate.Source.DisplayName, qualify, info.FolderPath, validatePages: true).Galleries.Single();
                     copy.StableId = info.StableId;
                     if (!Directory.Exists(copy.FolderPath) || copy.HeaderError is not null && copy.PageCount == 0) throw new IOException("原副本目录不可用。");
                     if (candidate.Expected is > 0 && candidate.Expected != copy.ExpectedPages)
                     {
-                        var scan = PageFileParser.Scan(copy.FolderPath, new SpiderHeader { HasPages = true, Pages = candidate.Expected.Value }, out string? error);
+                        var scan = PageFileParser.Scan(copy.FolderPath, new SpiderHeader { HasPages = true, Pages = candidate.Expected.Value }, out string? error, validateContainers: true);
                         if (error is not null) throw new IOException(error);
                         copy.ExpectedPages = candidate.Expected;
                         copy.IsIncomplete = scan.IsIncomplete;
@@ -105,7 +108,8 @@ public sealed partial class AppServices
     private static bool SameLocalPageState(GalleryInfo before, GalleryInfo after) =>
         before.PageCount == after.PageCount && before.MaxPageNumber == after.MaxPageNumber &&
         before.ExpectedPages == after.ExpectedPages && before.IsIncomplete == after.IsIncomplete &&
-        before.ZeroByteFiles == after.ZeroByteFiles && before.HasHeaderPageCountOutdated == after.HasHeaderPageCountOutdated &&
+        before.ZeroByteFiles == after.ZeroByteFiles && before.CorruptPages == after.CorruptPages &&
+        before.HasHeaderPageCountOutdated == after.HasHeaderPageCountOutdated &&
         before.HasNaturalPageNames == after.HasNaturalPageNames && before.LastWriteUtc == after.LastWriteUtc &&
         before.HeaderError == after.HeaderError && before.MissingRanges.SequenceEqual(after.MissingRanges);
 
@@ -124,13 +128,13 @@ public sealed partial class AppServices
         if (source is null) return;
         bool qualify = Settings.ActiveSources.Count > 1;
         var copy = await Task.Run(() => Scanner.Scan(source.RootPath, null, true, null, token, source.Id,
-            source.DisplayName, qualify, info.FolderPath).Galleries.Single(), token);
+            source.DisplayName, qualify, info.FolderPath, validatePages: true).Galleries.Single(), token);
         copy.StableId = info.StableId;
         // 无头信息的旧下载也继续保留已知尾页，不能因只下载一页而丢失剩余缺页。
         if (info.ExpectedPages is > 0 && copy.ExpectedPages != info.ExpectedPages)
         {
             var pages = await Task.Run(() => PageFileParser.Scan(info.FolderPath,
-                new SpiderHeader { HasPages = true, Pages = info.ExpectedPages.Value }, out _), token);
+                new SpiderHeader { HasPages = true, Pages = info.ExpectedPages.Value }, out _, validateContainers: true), token);
             copy.ExpectedPages = info.ExpectedPages;
             copy.IsIncomplete = pages.IsIncomplete;
             copy.MissingRanges = pages.MissingRanges;

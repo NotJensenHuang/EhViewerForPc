@@ -569,6 +569,37 @@ public static class UiSmokeService
             await Task.Delay(300);
         }
 
+        // Truncated page regression: a file that exists but cannot be decoded must
+        // be reported as damaged — silently painting an empty canvas is the bug.
+        GalleryItemViewModel? truncated = viewModel.Galleries.FirstOrDefault(g =>
+            g.FolderName.StartsWith("900025-", StringComparison.Ordinal));
+        if (truncated is not null)
+        {
+            var truncatedViewModel = new ReaderViewModel(viewModel.Services, truncated.Info);
+            var truncatedWindow = new ReaderPage(truncatedViewModel);
+            window.ShowDiagnosticPage(truncatedWindow);
+            await Task.Delay(1200);
+            await truncatedViewModel.SetModeAsync(ReadingMode.Single);
+            await Task.Delay(400);
+            truncatedViewModel.GoToIndex(1, scrollContinuous: false);
+            await Task.Delay(900);
+
+            string notice = truncatedViewModel.MissingPageText;
+            report["corruptPageNotice"] = new
+            {
+                page = truncatedViewModel.PageLabel,
+                missing = truncatedViewModel.IsCurrentPageMissing,
+                corrupt = truncatedViewModel.IsCurrentPageCorrupt,
+                canvasHidden = !truncatedViewModel.ShowSingleView,
+                notice,
+                ok = truncatedViewModel.IsCurrentPageCorrupt &&
+                     notice.Contains("损坏", StringComparison.Ordinal) &&
+                     !truncatedViewModel.ShowSingleView,
+            };
+            truncatedWindow.Close();
+            await Task.Delay(300);
+        }
+
         // Virtualization stress: 6,315 metadata-only galleries (no images).
         string stressRoot = Path.Combine(Path.GetTempPath(), "EhReaderStressLib-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(stressRoot);
@@ -1156,6 +1187,14 @@ public static class UiSmokeService
                 }
 
                 byte[] image = RenderPage(page, pageCount, i, 620, 880);
+                if (i == 25 && page == 2)
+                {
+                    // Truncated container: the header still identifies a PNG, so a
+                    // length-only scan passes it. Only the reader's container check
+                    // can tell the user why this page is blank.
+                    image = image[..(image.Length / 3)];
+                }
+
                 File.WriteAllBytes(Path.Combine(folder, $"{page:00000000}.png"), image);
             }
 

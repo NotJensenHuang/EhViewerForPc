@@ -129,6 +129,103 @@ public class PageFileParserTests : IDisposable
         Assert.False(PageFileParser.TryParsePageName("00000001.txt", out _, out _));
         Assert.False(PageFileParser.TryParsePageName("00000000.jpg", out _, out _));
     }
+
+    // ---------------------------------------------------- container validation
+
+    private void WriteBytes(string name, byte[] bytes) => File.WriteAllBytes(Path.Combine(_root, name), bytes);
+
+    private static byte[] CompleteJpeg()
+    {
+        var bytes = new byte[32];
+        bytes[0] = 0xFF; bytes[1] = 0xD8; bytes[2] = 0xFF;
+        bytes[^2] = 0xFF; bytes[^1] = 0xD9;
+        return bytes;
+    }
+
+    /// <summary>Valid SOI header, no EOI trailer — what an interrupted transfer leaves.</summary>
+    private static byte[] TruncatedJpeg()
+    {
+        var bytes = new byte[32];
+        bytes[0] = 0xFF; bytes[1] = 0xD8; bytes[2] = 0xFF;
+        return bytes;
+    }
+
+    private static byte[] CompletePng()
+    {
+        var bytes = new byte[32];
+        bytes[0] = 0x89; bytes[1] = 0x50; bytes[2] = 0x4E; bytes[3] = 0x47;
+        bytes[4] = 0x0D; bytes[5] = 0x0A; bytes[6] = 0x1A; bytes[7] = 0x0A;
+        "IEND"u8.CopyTo(bytes.AsSpan(24));
+        return bytes;
+    }
+
+    [Fact]
+    public void ContainerValidationClassifiesTruncatedPageAsCorrupt()
+    {
+        WriteBytes("00000001.jpg", CompleteJpeg());
+        WriteBytes("00000002.jpg", TruncatedJpeg());
+
+        // The cheap scan used by the library must keep its old behaviour…
+        var fast = PageFileParser.Scan(_root, null, out _);
+        Assert.All(fast.Pages, page => Assert.Equal(PageState.Ok, page.State));
+        Assert.Empty(fast.MissingRanges);
+        Assert.False(fast.IsIncomplete);
+
+        // …while the validated scan used by the reader and repair queue must not
+        // let a truncated file pass as a healthy page.
+        var validated = PageFileParser.Scan(_root, null, out _, validateContainers: true);
+        Assert.Equal(PageState.Ok, validated.Pages[0].State);
+        Assert.Equal(PageState.Corrupt, validated.Pages[1].State);
+        Assert.True(validated.Pages[1].IsCorrupt);
+        Assert.Equal(1, validated.CorruptPages);
+        Assert.Equal(new PageRange(2, 2), validated.MissingRanges[0]);
+        Assert.True(validated.IsIncomplete);
+        Assert.Equal(0, validated.ZeroByteFiles);
+    }
+
+    [Fact]
+    public void ValidAlternativeCandidateHidesCorruptSibling()
+    {
+        WriteBytes("00000001.jpg", TruncatedJpeg());
+        WriteBytes("00000001.png", CompletePng());
+
+        var result = PageFileParser.Scan(_root, null, out _, validateContainers: true);
+
+        Assert.Equal(PageState.Ok, result.Pages[0].State);
+        Assert.Equal(0, result.CorruptPages);
+        Assert.Empty(result.MissingRanges);
+    }
+
+    [Fact]
+    public void ZeroBytePageStaysEmptyNotCorrupt()
+    {
+        WriteBytes("00000001.jpg", CompleteJpeg());
+        Touch("00000002.jpg", 0);
+
+        var result = PageFileParser.Scan(_root, null, out _, validateContainers: true);
+
+        Assert.Equal(PageState.Empty, result.Pages[1].State);
+        Assert.Equal(0, result.CorruptPages);
+        Assert.Equal(1, result.ZeroByteFiles);
+        Assert.Single(result.MissingRanges);
+    }
+
+    [Fact]
+    public void NaturalNamedGalleryDetectsCorruption()
+    {
+        WriteBytes("001.jpg", CompleteJpeg());
+        WriteBytes("002.jpg", TruncatedJpeg());
+
+        var result = PageFileParser.Scan(_root, null, out _, validateContainers: true);
+
+        // The natural-order path has its own page builder; the corrupt verdict
+        // must survive there too, not just on numbered pages.
+        Assert.True(result.HasNaturalPageNames);
+        Assert.Equal(2, result.PageCount);
+        Assert.Equal(PageState.Corrupt, result.Pages[1].State);
+        Assert.Equal(1, result.CorruptPages);
+        Assert.Equal(new PageRange(2, 2), result.MissingRanges[0]);
+    }
 }
 
 public class SignatureTests

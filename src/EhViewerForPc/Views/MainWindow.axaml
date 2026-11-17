@@ -219,6 +219,7 @@
             BorderThickness="1" CornerRadius="8" Padding="16,10" IsVisible="{Binding ShowToast}">
       <SelectableTextBlock Text="{Binding ToastText}" MaxWidth="620" TextWrapping="Wrap" />
     </Border>
-    <ProgressBar IsIndeterminate="True" Height="2" VerticalAlignment="Top" IsVisible="{Binding Online.IsBusy}" />
+    <!-- 只在「在线页 + 用户发起的加载」时出现，见 ShellViewModel.ShowOnlineProgress。 -->
+    <ProgressBar IsIndeterminate="True" Height="2" VerticalAlignment="Top" IsVisible="{Binding ShowOnlineProgress}" />
   </Grid>
 </Window>

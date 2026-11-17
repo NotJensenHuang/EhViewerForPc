@@ -23,7 +23,9 @@ public static class DownloadReader
             return null;
         }
 
-        PageScanResult scan = PageFileParser.Scan(task.FolderPath, null, out string? scanError);
+        // 下载中的副本同样要按容器校验：任务失败后残留的截断文件不能冒充完成页，
+        // 否则阅读器会静默跳过它而不给出任何提示。
+        PageScanResult scan = PageFileParser.Scan(task.FolderPath, null, out string? scanError, validateContainers: true);
         if (scan.PageCount == 0)
         {
             error = string.IsNullOrEmpty(scanError)
@@ -51,6 +53,7 @@ public static class DownloadReader
             LastWriteUtc = Directory.GetLastWriteTimeUtc(task.FolderPath),
             ExtensionSummary = scan.ExtensionSummary,
             ZeroByteFiles = scan.ZeroByteFiles,
+            CorruptPages = scan.CorruptPages,
             HeaderError = scanError,
         };
     }

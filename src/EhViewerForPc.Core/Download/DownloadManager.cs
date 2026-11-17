@@ -619,23 +619,9 @@ public sealed partial class DownloadManager : IDisposable
             {
                 token.ThrowIfCancellationRequested();
                 if (!_tasks.Contains(task)) return;
-                task.State = DownloadState.Completed;
-                task.Message = task.ResampledPages.Count == 0 ? "已完成" : $"已完成（{task.ResampledPages.Count} 页使用压缩图）";
-                task.FinishedUtc = DateTime.UtcNow.ToString("O");
-                task.TotalBytes = FolderSize(task.FolderPath);
-                _archive.RemoveAll(e => PathIdentity.Comparer.Equals(e.FolderPath, task.FolderPath));
-                _archive.Insert(0, new DownloadArchiveEntry
-                {
-                    Gid = task.Gid,
-                    Title = task.Title,
-                    Category = task.Category,
-                    Label = task.Label,
-                    FolderPath = task.FolderPath,
-                    PageCount = task.PageCount,
-                    TotalBytes = task.TotalBytes,
-                    FinishedUtc = task.FinishedUtc!,
-                });
-                SaveLocked();
+                MarkCompletedLocked(task, task.ResampledPages.Count == 0
+                    ? "已完成"
+                    : $"已完成（{task.ResampledPages.Count} 页使用压缩图）");
             }
 
             RaiseTask(task);
@@ -899,6 +885,101 @@ public sealed partial class DownloadManager : IDisposable
             await File.WriteAllTextAsync(Path.Combine(task.FolderPath, ".ehviewer"), header, new UTF8Encoding(false), token)
                 .ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// 标记任务完成并写入归档。调用方必须已持有 <see cref="_gate"/>。
+    /// 正常收尾与「本地页文件已补齐」的核对共用这一段，避免两套完成语义。
+    /// </summary>
+    private void MarkCompletedLocked(DownloadTask task, string message)
+    {
+        task.State = DownloadState.Completed;
+        task.Message = message;
+        task.FinishedUtc = DateTime.UtcNow.ToString("O");
+        task.TotalBytes = FolderSize(task.FolderPath);
+        _archive.RemoveAll(e => PathIdentity.Comparer.Equals(e.FolderPath, task.FolderPath));
+        _archive.Insert(0, new DownloadArchiveEntry
+        {
+            Gid = task.Gid,
+            Title = task.Title,
+            Category = task.Category,
+            Label = task.Label,
+            FolderPath = task.FolderPath,
+            PageCount = task.PageCount,
+            TotalBytes = task.TotalBytes,
+            FinishedUtc = task.FinishedUtc!,
+        });
+        SaveLocked();
+    }
+
+    /// <summary>
+    /// 按任务目录的实际页文件重算进度。用户在阅读器逐页重试或从外部补齐后，
+    /// 失败页、页数与消息不应继续停留在旧状态；只读取目录，不修改任何文件。
+    /// 目录枚举与容器校验放在后台线程，避免大画廊卡住 UI。
+    /// </summary>
+    public async Task<bool> RefreshLocalProgressAsync(DownloadTask task, CancellationToken token = default)
+    {
+        string folder = task.FolderPath;
+        int expected = task.PageCount;
+        if (folder.Length == 0 || expected <= 0) return false;
+
+        HashSet<int> present;
+        try
+        {
+            present = await Task.Run(() =>
+            {
+                var pages = new HashSet<int>();
+                if (!Directory.Exists(folder)) return pages;
+                var files = PageFileParser.Enumerate(folder, out string? error);
+                if (error is not null) throw new IOException(error);
+                foreach (var candidate in files)
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!PageFileParser.TryParsePageName(candidate.FileName, out int page, out _)) continue;
+                    if (page <= 0 || page > expected || pages.Contains(page)) continue;
+                    if (!ImageSignature.IsValidFile(candidate.FilePath)) continue;
+                    pages.Add(page);
+                }
+
+                return pages;
+            }, token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log?.Invoke($"Reconcile local pages failed ({task.Gid}): {ex.Message}");
+            return false;
+        }
+
+        bool completed = false;
+        lock (_gate)
+        {
+            // 运行中的任务由写入流程自己维护计数，核对会与在途文件冲突。
+            if (!_tasks.Contains(task) || task.State == DownloadState.Running) return false;
+            bool changed = task.DownloadedPages != present.Count;
+            task.DownloadedPages = present.Count;
+            // 只移除目录里确实已经有效的失败页；页号越界的旧记录一并清掉。
+            changed |= task.FailedPages.RemoveAll(page => page <= 0 || page > expected || present.Contains(page)) > 0;
+            if (present.Count >= expected && task.State is DownloadState.Failed or DownloadState.Paused)
+            {
+                MarkCompletedLocked(task, "已完成（按本地页文件核对）");
+                completed = true;
+            }
+            else if (changed)
+            {
+                SaveLocked();
+            }
+
+            if (!changed && !completed) return false;
+        }
+
+        RaiseTask(task);
+        if (completed) TaskCompleted?.Invoke(this, task);
+        RaiseChanged();
+        return true;
     }
 
     /// <summary>VERSION2 header understood by EhViewer and by this app's parser.</summary>
