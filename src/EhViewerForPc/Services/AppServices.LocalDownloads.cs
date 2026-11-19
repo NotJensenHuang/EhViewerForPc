@@ -18,9 +18,10 @@ public sealed record LocalRepairResult(int Added, int Continued, int Existing, I
 public sealed partial class AppServices
 {
     public event EventHandler<GalleryInfo>? LocalCopyChecked;
+    public event EventHandler<(GalleryInfo Copy, PageScanResult Pages)>? LocalReaderPagesValidated;
 
-    /// <summary>阅读器校验完页容器后回写损坏页数与完整性，供本地库刷新徽标。</summary>
-    public void NotifyLocalCopyChecked(GalleryInfo info) => LocalCopyChecked?.Invoke(this, info);
+    /// <summary>阅读器提交校验结果，资料库只更新仍使用该快照的已登记副本。</summary>
+    public void NotifyLocalReaderPagesValidated(GalleryInfo copy, PageScanResult pages) => LocalReaderPagesValidated?.Invoke(this, (copy, pages));
     // 损坏页与缺页同等对待：两者都只能靠补下载修复。
     public bool CanContinueLocalDownload(GalleryInfo info) => (info.IsIncomplete || info.CorruptPages > 0) &&
         info.Gid is > 0 && !info.HasGidConflict &&
@@ -109,7 +110,7 @@ public sealed partial class AppServices
         return summary;
     }
 
-    private static bool SameLocalPageState(GalleryInfo before, GalleryInfo after) =>
+    internal static bool SameLocalPageState(GalleryInfo before, GalleryInfo after) =>
         before.PageCount == after.PageCount && before.MaxPageNumber == after.MaxPageNumber &&
         before.ExpectedPages == after.ExpectedPages && before.IsIncomplete == after.IsIncomplete &&
         before.ZeroByteFiles == after.ZeroByteFiles && before.CorruptPages == after.CorruptPages &&

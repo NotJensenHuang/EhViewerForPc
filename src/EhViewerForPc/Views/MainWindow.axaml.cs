@@ -36,6 +36,7 @@ public partial class MainWindow : Window
     private bool _closing;
     private bool? _lastNarrow;
     private bool _syncingNavigation;
+    private ReaderViewModel? _displayedReader;
 
     public MainWindow()
     {
@@ -547,11 +548,17 @@ public partial class MainWindow : Window
         DocumentTitle.Text = view is ReaderPage ? "阅读" : view is OnlineGalleryPage or GalleryDetailsPage ? "详情"
             : view is DocumentPage document ? document.Title : target.Section.Label;
         UpdateHeaderForContent();
-        _shell?.Library.RefreshAllProgress();
-        _shell?.History.Reload();
+        var previousReader = _displayedReader;
+        _displayedReader = (view as ReaderPage)?.ViewModel;
+        if (previousReader is not null && !ReferenceEquals(previousReader, _displayedReader))
+        {
+            previousReader.SaveProgress();
+            _shell?.Library.RefreshWorkProgress(previousReader.Source.ProgressKey);
+            _shell?.History.Reload();
+        }
         // 从阅读器返回下载页时 SelectedNav 没有变化，ActivatePage 不会被调用；
         // 这里补一次同步，让刚补齐或重下过的页立刻从「缺页」里消失。
-        if (target.Section.Page is DownloadsViewModel downloads) downloads.SyncAll();
+        if (view is DownloadsPage && previousReader is not null && target.Section.Page is DownloadsViewModel downloads) downloads.SyncAll();
         UpdateAdaptiveLayout();
     }
 
@@ -572,8 +579,6 @@ public partial class MainWindow : Window
         _imageReadSequence++;
         if (_shell?.Settings.IsSaving == true) return;
         ContentHost.GoBack();
-        _shell?.Library.RefreshAllProgress();
-        _shell?.History.Reload();
     }
     private void CloseDocument(DocumentPage page)
     {
@@ -601,6 +606,7 @@ public partial class MainWindow : Window
     private void ClearDocuments()
     {
         _bookmarksDialog?.Hide();
+        _displayedReader = null;
         ContentHost.Content = null;
         ContentHost.BackStack.Clear();
         ContentHost.ForwardStack.Clear();

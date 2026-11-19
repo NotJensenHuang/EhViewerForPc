@@ -494,30 +494,40 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// 启动时的自动刷新。与 <see cref="LoadAsync"/> 只差一点：它不表示「用户在
-    /// 等」。网络卡住时窗口顶端那条不确定进度条不该一直挂着，否则整个程序看
-    /// 起来像卡死了；页面自己的状态文字仍会显示「载入中…」。
+    /// 窗口打开后自动刷新首页。等待时在当前页显示「载入中…」。
     /// </summary>
     public async Task AutoLoadAsync()
     {
-        if (_disposed || _busy) return;
+        if (_disposed || _busy || _listRevision != 0 || IsEditingBookmark) return;
         _autoLoading = true;
         OnPropertyChanged(nameof(ShowBusyBar));
         try
         {
-            await LoadAsync(reset: true).ConfigureAwait(true);
+            await LoadCoreAsync(reset: true).ConfigureAwait(true);
         }
         finally
         {
-            _autoLoading = false;
-            OnPropertyChanged(nameof(ShowBusyBar));
+            EndAutoLoad();
         }
     }
 
-    /// <summary>窗口顶端的进度条是否该显示：只有用户主动发起的加载才算。</summary>
+    /// <summary>用户主动发起加载时显示页内进度条。</summary>
     public bool ShowBusyBar => _busy && !_autoLoading;
 
-    public async Task LoadAsync(bool reset)
+    private void EndAutoLoad()
+    {
+        if (!_autoLoading) return;
+        _autoLoading = false;
+        if (!_disposed) OnPropertyChanged(nameof(ShowBusyBar));
+    }
+
+    public Task LoadAsync(bool reset)
+    {
+        if (reset) EndAutoLoad();
+        return LoadCoreAsync(reset);
+    }
+
+    private async Task LoadCoreAsync(bool reset)
     {
         if (_disposed || (!reset && (_busy || !HasMore))) return;
         if (reset) ResetList();

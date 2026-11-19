@@ -732,9 +732,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         {
             PageScanResult scan = await local.ValidateStatesAsync(_lifetime.Token).ConfigureAwait(true);
             if (_disposed) return;
-            local.Gallery.CorruptPages = scan.CorruptPages;
-            local.Gallery.IsIncomplete = scan.IsIncomplete;
-            _services.NotifyLocalCopyChecked(local.Gallery);
+            if (local.Gallery.SourceId.Length != 0) _services.NotifyLocalReaderPagesValidated(local.Gallery, scan);
             UpdateLabels();
             OnPropertyChanged(nameof(MissingSummary));
             RefreshPageStateItems();

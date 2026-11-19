@@ -17,6 +17,8 @@ public sealed class ImageIndexBuildCheckpoint
     public bool BackendPrepared { get; set; }
     public bool SourcesVerified { get; set; }
     public ImageIndexGalleryCheckpoint[] Galleries { get; set; } = [];
+    /// <summary>下载完成触发的定向任务。旧任务和手动建库沿用全库计划。</summary>
+    public string[]? ChangedFolders { get; set; }
 }
 
 public enum ImageIndexBuildPhase { Preparing, Extracting, Training, Building, CheckingSources }

@@ -23,9 +23,7 @@ public static class DownloadReader
             return null;
         }
 
-        // 只做便宜的目录扫描：这个调用发生在「阅读」按钮的 UI 线程上，
-        // 容器校验要逐页两次 seek（197 页冷缓存约 1 秒）。损坏页由阅读器
-        // 显示后的后台校验（LocalReaderSource.ValidateStatesAsync）标记。
+        // 只枚举该任务目录，损坏页由阅读器显示后的后台校验标记。
         PageScanResult scan = PageFileParser.Scan(task.FolderPath, null, out string? scanError);
         if (scan.PageCount == 0)
         {

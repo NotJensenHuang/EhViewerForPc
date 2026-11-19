@@ -23,6 +23,40 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 public sealed class OnlineParityIntegrationTests
 {
     [AvaloniaFact]
+    public async Task ColdStartShowsTheShellBeforeSendingAndCanNavigateWhileNetworkSetupWaits()
+    {
+        using var transport = new BlockingStartupTransport();
+        using var scope = new Fixture(settings => new EhClient(settings, new HttpClient(transport, disposeHandler: false)));
+        string source = Directory.CreateDirectory(Path.Combine(scope.Root, "library")).FullName;
+        scope.Services.Settings.AddSource(Path.Combine(scope.Root, "disconnected"));
+        using var shell = new ShellViewModel(scope.Services);
+        Assert.False(transport.Started.Task.IsCompleted);
+
+        var window = new MainWindow(shell);
+        try
+        {
+            window.Show();
+            Task<bool> startup = shell.InitializeAsync(source);
+            Assert.False(await transport.Started.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(window.IsVisible);
+            Assert.True(shell.Online.IsBusy);
+            Assert.False(shell.Online.ShowBusyBar);
+
+            shell.Navigate("library");
+            Assert.True(await startup.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.IsType<LibraryPage>(window.NavigationFrame.Content);
+            Assert.Equal(source, shell.Library.RootDisplay);
+            Assert.Equal(1, shell.Library.SourceCount);
+            Assert.True(shell.Online.IsBusy);
+        }
+        finally
+        {
+            transport.Release.TrySetResult();
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void EmptyFilteredBatchesPauseAutomaticLoadsAndRepeatedContinuationStops()
     {
         using var scope = new Fixture(); using var shell = new ShellViewModel(scope.Services);
@@ -278,16 +312,30 @@ public sealed class OnlineParityIntegrationTests
     {
         internal string Root { get; } = Path.Combine(Path.GetTempPath(), "EhOnlineParityUI-" + Guid.NewGuid().ToString("N"));
         internal AppServices Services { get; }
-        internal Fixture()
+        internal Fixture(Func<AppSettings, EhClient>? createOnline = null)
         {
             var paths = new AppPaths(Path.Combine(Root, "data")); paths.EnsureCreated();
             var settings = new AppSettings(); settings.Download.RootPath = Path.Combine(Root, "downloads");
             settings.Download.AutoStart = false; settings.Download.AddAsSource = false;
             settings.Network.ProxyMode = ProxyMode.None;
             settings.Network.HostsOverride = "127.0.0.1 e-hentai.org\n127.0.0.1 exhentai.org";
-            new SettingsStore(paths).Save(settings, out _); Services = AppServices.Initialize(paths);
+            new SettingsStore(paths).Save(settings, out _);
+            Services = createOnline is null ? AppServices.Initialize(paths) : AppServices.Initialize(paths, createOnline);
         }
         public void Dispose() { Services.Dispose(); Directory.Delete(Root, true); }
+    }
+
+    private sealed class BlockingStartupTransport : HttpMessageHandler
+    {
+        internal TaskCompletionSource<bool> Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult(Dispatcher.UIThread.CheckAccess());
+            if (!Release.Task.Wait(TimeSpan.FromSeconds(5), cancellationToken)) throw new TimeoutException();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html></html>") });
+        }
     }
 
     private sealed class ListServer : IDisposable

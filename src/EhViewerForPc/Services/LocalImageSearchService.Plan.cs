@@ -68,6 +68,59 @@ public sealed partial class LocalImageSearchService
         transaction.Commit();
     }
 
+    private static void SeedUnchangedDownloadIndex(SqliteConnection manifest, string previous, ImageSearchGallery[] galleries,
+        Dictionary<string, LibrarySource> sources, HashSet<string> affectedFolders, CancellationToken token)
+    {
+        // 复用发布代的清单与别名，未变副本无需再次遍历图片目录。
+        using var backgroundIo = BackgroundIoScope.Enter();
+        string previousManifest = ManifestUri(previous) + "?mode=ro";
+        Execute(manifest, "ATTACH DATABASE $path AS previous_index", ("$path", previousManifest));
+        try
+        {
+            using var transaction = manifest.BeginTransaction(deferred: true);
+            using var command = manifest.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "CREATE TEMP TABLE retained_gallery(source TEXT,stable TEXT,work TEXT,folder TEXT,PRIMARY KEY(source,stable))";
+            command.ExecuteNonQuery();
+            command.CommandText = "INSERT OR IGNORE INTO temp.retained_gallery VALUES($source,$stable,$work,$folder)";
+            var source = command.Parameters.Add("$source", SqliteType.Text);
+            var stable = command.Parameters.Add("$stable", SqliteType.Text);
+            var work = command.Parameters.Add("$work", SqliteType.Text);
+            var folder = command.Parameters.Add("$folder", SqliteType.Text);
+            foreach (var gallery in galleries)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!sources.ContainsKey(gallery.SourceId) || affectedFolders.Contains(gallery.Folder)) continue;
+                source.Value = gallery.SourceId;
+                stable.Value = gallery.StableId;
+                work.Value = gallery.WorkId;
+                folder.Value = gallery.Folder;
+                command.ExecuteNonQuery();
+            }
+
+            command.Parameters.Clear();
+            command.CommandText = """
+                DELETE FROM build.plan_gallery WHERE signature='' AND NOT EXISTS(
+                    SELECT 1 FROM temp.retained_gallery r WHERE r.source=plan_gallery.source AND r.stable=plan_gallery.stable);
+                INSERT OR IGNORE INTO member
+                    SELECT m.alias,m.source_id,m.stable_id,m.page,m.path,m.length,m.mtime,m.state
+                    FROM previous_index.member m JOIN temp.retained_gallery r ON r.source=m.source_id AND r.stable=m.stable_id
+                    WHERE m.state IN ('indexed','skipped');
+                INSERT OR IGNORE INTO build.plan_gallery
+                    SELECT r.source,r.stable,r.work,r.folder,'',1 FROM temp.retained_gallery r
+                    WHERE EXISTS(SELECT 1 FROM member m WHERE m.source_id=r.source AND m.stable_id=r.stable);
+                INSERT OR IGNORE INTO build.plan_page(source,stable,page,done)
+                    SELECT m.source_id,m.stable_id,m.page,1 FROM member m
+                    JOIN temp.retained_gallery r ON r.source=m.source_id AND r.stable=m.stable_id;
+                DROP TABLE temp.retained_gallery;
+                """;
+            command.ExecuteNonQuery();
+            token.ThrowIfCancellationRequested();
+            transaction.Commit();
+        }
+        finally { Execute(manifest, "DETACH DATABASE previous_index"); }
+    }
+
     private static bool HasPlannedGallery(SqliteConnection manifest, ImageSearchGallery gallery, SqliteTransaction transaction)
     {
         using var command = manifest.CreateCommand();

@@ -1,5 +1,22 @@
 # 变更记录
 
+## 2026-11-19 修复下载首图入库和阅读触发重复扫描
+
+- `DownloadsViewModel.cs`、`MainViewModel.Downloads.cs` 和 `LibraryScanner.cs` 按归一化后的副本路径发布首图和完成状态。扫描进行中也可入库，后来完成的扫描合并定向更新。
+- `DownloadManager.cs`、`MainWindow.axaml.cs` 和 `ReaderViewModel.cs` 修正并发落盘的页数回退，并将普通下载事件、阅读校验和返回下载页的更新限定在相关作品或副本。
+- `ShellViewModel.cs`、`LocalImageSearchService*.cs` 和 `ImageIndexBuildCheckpoint.cs` 在下载完成后只检查相应副本，复用其余索引清单。定向任务可从检查点接续。
+- `SettingsPage.axaml` 和双语 README 标明首张图片保存时自动入库。
+- 合成 HTTP 测试复现旧版首图落盘后仍缺卡片、打开阅读器才登记的顺序。新版覆盖新作品和已有另一份副本的作品，验证首图、阅读和下载完成均保留同一目录的单一副本，资料库全量扫描时间戳保持原值。
+- Core 198 项通过，UI 156 项通过。两项既有阅读器重试失败已在 `62691d9` 上复现。Windows x64 NativeAOT 的导航、冒烟及图片索引探针通过。默认排序审计选中不同作品时报告了横向滚动区内 8 个视口外按钮；固定标题排序复测时旧版与新版各生成 122 张截图，均无越界标记。报告位于 `.qa/download-refresh-20261119/`。
+
+## 2026-11-19 修复冷启动窗口无响应
+
+- `App.axaml.cs`、`ViewModels/ShellViewModel.cs`、`ViewModels/OnlineFeedViewModel.cs`：窗口显示后再启动在线首页加载，在线与本地分别就绪，保留先到达的用户刷新或搜索请求。
+- `Core/Online/EhClient.cs`：网页请求从 UI 调用时先切到线程池，避免系统代理同步查找阻塞消息循环。
+- `Services/AppServices.cs`、`ViewModels/MainViewModel*.cs`：下载目录准备、资料库目录检查和缓存卡片数据生成在后台执行，取消或退出时丢弃过期结果。
+- `OnlineParityIntegrationTests.cs`：模拟进入 HTTP 请求时同步阻塞，验证窗口先打开，且等待期间可以切到本地库并完成资料库初始化。
+- 验证：Core 198 项通过。Avalonia UI 153 项通过，另两项阅读器重试失败在变更前的 `62691d9` 上复现。Windows x64 NativeAOT 新产物通过 `--ui-smoke` 和 `--navigation-regression`，本机回环服务挂起 TLS 握手的 3 次独立进程启动中窗口均持续响应，记录见 `.qa/startup-native-20261119/slow-handshake/result.json`。
+
 ## 2026-11-17 修复缺页状态、损坏页分类与阅读器重下进度
 
 - `Core/Format/PageFileParser.cs`、`Core/Format/PageFileParser.Natural.cs`、`Core/Models/GalleryPage.cs`：损坏页不再计入 `MissingRanges`，`PageScanResult.IsIncomplete` 同时考虑损坏页；缺页只表示没有可用字节的页。

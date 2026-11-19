@@ -21,7 +21,8 @@ public sealed partial class LibraryScanner
         string? sourceName = null,
         bool qualifyStableId = false,
         string? onlyFolder = null,
-        bool validatePages = false)
+        bool validatePages = false,
+        int? expectedPages = null)
     {
         string root = Path.GetFullPath(rootPath);
         if (!Directory.Exists(root))
@@ -68,7 +69,7 @@ public sealed partial class LibraryScanner
             // 旧版曾因额外封面把编号副本缓存成自然页号；只重查命中此特征的条目。
             bool recheckPageNames = cached is { HasNaturalPageNames: true } &&
                 files.Any(file => PageFileParser.TryParsePageName(file.FileName, out _, out _));
-            if (!forceRefresh && !recheckLegacyPages && !recheckPageNames && cached is not null && snapshot.Matches(cached))
+            if (!forceRefresh && expectedPages is null && !recheckLegacyPages && !recheckPageNames && cached is not null && snapshot.Matches(cached))
             {
                 gallery = FromCache(cached, directory.FullName);
                 cacheHits++;
@@ -86,7 +87,8 @@ public sealed partial class LibraryScanner
                     thumbFile,
                     files,
                     enumError,
-                    validatePages);
+                    validatePages,
+                    expectedPages);
                 scanned++;
                 if (gallery.PageCount == 0 && !gallery.HasEhviewer)
                 {
@@ -175,7 +177,8 @@ public sealed partial class LibraryScanner
         FileInfo? thumbFile,
         IReadOnlyList<PageCandidate> files,
         string? enumError,
-        bool validatePages)
+        bool validatePages,
+        int? expectedPages)
     {
         bool hasEh = ehFile is not null;
         bool hasThumb = thumbFile is { Length: > 0 };
@@ -186,6 +189,13 @@ public sealed partial class LibraryScanner
         {
             header = SpiderInfoParser.TryParseFile(ehPath, out string? parseError);
             if (parseError is not null) headerError ??= parseError;
+        }
+
+        if (expectedPages is > 0)
+        {
+            header ??= new SpiderHeader();
+            header.HasPages = true;
+            header.Pages = expectedPages.Value;
         }
 
         PageScanResult pages = PageFileParser.Scan(files, header, out string? pageError, validatePages);

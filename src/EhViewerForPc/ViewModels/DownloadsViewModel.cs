@@ -73,17 +73,22 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     /// be read up to its last valid page.
     /// </summary>
     [RelayCommand]
-    private void ReadTask(DownloadTaskViewModel? item)
+    private async Task ReadTaskAsync(DownloadTaskViewModel? item)
     {
         if (item is null) return;
-        GalleryInfo? info = DownloadReader.TryBuildGalleryInfo(item.Task, out string? error);
+        var (info, error) = await Task.Run(() =>
+        {
+            GalleryInfo? gallery = DownloadReader.TryBuildGalleryInfo(item.Task, out string? failure);
+            return (gallery, failure);
+        });
+        if (_disposed) return;
         if (info is null)
         {
             NotifyRequested?.Invoke(this, error ?? "无法打开该下载任务");
             return;
         }
 
-        ReadRequested?.Invoke(this, new DownloadReadRequest(item.Task, info));
+        ReadRequested?.Invoke(this, new DownloadReadRequest(item.Task, _library.FindLocalCopy(info.FolderPath) ?? info));
     }
 
     public string RootPath => _services.Downloads.RootPath;
@@ -123,14 +128,14 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RootPathDisplay));
     }
 
-    public void SyncAll()
+    public void SyncAll(bool reconcileLocal = false)
     {
         var ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (DownloadTask task in _services.Downloads.Tasks)
         {
             QueueLibraryUpdate(task);
             if (task.State == DownloadState.Completed) continue;
-            QueueLocalReconcile(task);
+            if (reconcileLocal) QueueLocalReconcile(task);
             ids.Add(task.Id);
             ApplyTask(task, newestFirst: false);
         }
@@ -274,13 +279,18 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         if ((!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) ||
             (!_services.Settings.Download.RefreshLibraryOnComplete && !task.FillMissingOnly) || task.DownloadedPages == 0) return;
-        var stamp = (task.DownloadedPages, task.FolderPath, task.PageCount, task.State == DownloadState.Completed);
-        if (_imported.TryGetValue(task.Id, out var previous) && previous == stamp) return;
+        var stamp = (task.DownloadedPages, task.FolderPath, task.PageCount, Complete: task.State == DownloadState.Completed);
+        bool known = _imported.TryGetValue(task.Id, out var previous);
+        if (known && previous == stamp) return;
         _libraryUpdates[task.Id] = task;
-        if (!_importing) _libraryTimer.Start();
+        if (_importing) return;
+        if (!known || stamp.Complete) _ = ImportPendingLibraryUpdatesAsync();
+        else _libraryTimer.Start();
     }
 
-    private async void OnLibraryTick(object? sender, EventArgs e)
+    private void OnLibraryTick(object? sender, EventArgs e) => _ = ImportPendingLibraryUpdatesAsync();
+
+    private async Task ImportPendingLibraryUpdatesAsync()
     {
         _libraryTimer.Stop();
         if (_disposed || _importing) return;
@@ -293,10 +303,10 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
             {
                 if (_disposed || (!_services.Downloads.IsQueued(task) && task.State != DownloadState.Completed)) continue;
                 var stamp = (task.DownloadedPages, task.FolderPath, task.PageCount, task.State == DownloadState.Completed);
+                if (_imported.TryGetValue(task.Id, out var previous) && previous == stamp) continue;
                 try
                 {
-                    await _library.ImportDownloadAsync(task);
-                    if (!_disposed) _imported[task.Id] = stamp;
+                    if (await _library.ImportDownloadAsync(task) && !_disposed) _imported[task.Id] = stamp;
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex) { _services.Log.Warn("Live library update failed", ex); }

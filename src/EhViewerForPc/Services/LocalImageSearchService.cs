@@ -119,11 +119,13 @@ public sealed partial class LocalImageSearchService : IDisposable
         => await BuildCoreAsync(galleries, progress, token, rebuild, resumeExisting: !rebuild, options: options).ConfigureAwait(false);
 
     /// <summary>自动维护沿用建库管线，但不能恢复用户显式暂停的任务。</summary>
-    public Task<LocalImageSearchStatus> UpdateAutomaticallyAsync(IReadOnlyList<ImageSearchGallery> galleries, CancellationToken token)
-        => BuildCoreAsync(galleries, null, token, rebuild: false, resumeExisting: true, automatic: true);
+    public Task<LocalImageSearchStatus> UpdateAutomaticallyAsync(IReadOnlyList<ImageSearchGallery> galleries, CancellationToken token,
+        string[]? changedFolders = null)
+        => BuildCoreAsync(galleries, null, token, rebuild: false, resumeExisting: true, automatic: true, changedFolders: changedFolders);
 
     private async Task<LocalImageSearchStatus> BuildCoreAsync(IReadOnlyList<ImageSearchGallery> galleries, IProgress<LocalImageSearchStatus>? progress,
-        CancellationToken token, bool rebuild, bool resumeExisting, bool automatic = false, IndexBuildOptions? options = null)
+        CancellationToken token, bool rebuild, bool resumeExisting, bool automatic = false, IndexBuildOptions? options = null,
+        string[]? changedFolders = null)
     {
         options ??= new IndexBuildOptions();
         options.Validate();
@@ -147,7 +149,7 @@ public sealed partial class LocalImageSearchService : IDisposable
             var snapshot = galleries.ToArray();
             PublishBuildStatus(new("正在准备图片索引…", Indexed: BuildStatus?.Indexed ?? 0));
             var status = await Task.Run(() => Build(root, snapshot, sources, allSources,
-                new BuildProgress(this, progress), job.Token, rebuild, resumeExisting, automatic, options)).ConfigureAwait(false);
+                new BuildProgress(this, progress), job.Token, rebuild, resumeExisting, automatic, options, changedFolders)).ConfigureAwait(false);
             PublishBuildStatus(status);
             return status;
         }
@@ -198,7 +200,7 @@ public sealed partial class LocalImageSearchService : IDisposable
         }
     }
 
-    private async Task<LocalImageSearchStatus> Build(string root, ImageSearchGallery[] galleries, LibrarySource[] sources, LibrarySource[] allSources, IProgress<LocalImageSearchStatus>? progress, CancellationToken token, bool rebuild, bool resumeExisting, bool automatic, IndexBuildOptions options)
+    private async Task<LocalImageSearchStatus> Build(string root, ImageSearchGallery[] galleries, LibrarySource[] sources, LibrarySource[] allSources, IProgress<LocalImageSearchStatus>? progress, CancellationToken token, bool rebuild, bool resumeExisting, bool automatic, IndexBuildOptions options, string[]? changedFolders)
     {
         ValidateStorage(root, allSources);
         if (sources.Length == 0 || galleries.Length == 0) throw new InvalidOperationException("请先添加本地数据源并扫描图库。");
@@ -208,14 +210,18 @@ public sealed partial class LocalImageSearchService : IDisposable
         using var lease = new FileStream(Path.Combine(root, "writer.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var current = LoadAvailablePointer(root);
         string configuration = ConfigurationId(root, sources);
-        var checkpoint = resumeExisting ? LoadBuildCheckpoint(root) ?? FindLegacyPendingBuild(root, galleries, sources) : null;
+        var checkpoint = resumeExisting ? LoadBuildCheckpoint(root) : null;
+        if (checkpoint is null && resumeExisting && changedFolders is null) checkpoint = FindLegacyPendingBuild(root, galleries, sources);
         if (checkpoint is not null && checkpoint.GenerationId == current?.GenerationId)
         {
             CompleteBuildCheckpoint(root);
-            return new($"已索引 {current.Pages:N0} 页", Indexed: current.Pages);
+            checkpoint = null;
+            if (changedFolders is null) return new($"已索引 {current.Pages:N0} 页", Indexed: current.Pages);
         }
         if (automatic && checkpoint is { ResumeOnStartup: false })
             return new("索引已暂停，点击继续建立索引", Indexed: current?.Pages ?? 0, CanResume: true);
+        if (changedFolders is not null && checkpoint is { ChangedFolders: null })
+            return new("已有未完成的索引任务", Indexed: current?.Pages ?? 0, CanResume: true);
         bool resumed = checkpoint is not null && checkpoint.ConfigurationId == configuration &&
             checkpoint.PreviousGenerationId == (current?.GenerationId ?? string.Empty);
         if (!resumed)
@@ -227,6 +233,20 @@ public sealed partial class LocalImageSearchService : IDisposable
             };
         }
         var job = checkpoint!;
+        if (resumed && job.ChangedFolders is null) changedFolders = null;
+        else if (job.ChangedFolders is { } priorFolders)
+            changedFolders = changedFolders is null ? priorFolders : priorFolders.Union(changedFolders, PathIdentity.Comparer).ToArray();
+        if (changedFolders is not null && current is null) return new("尚未建立图片索引");
+        var affectedFolders = changedFolders?.ToHashSet(PathIdentity.Comparer);
+        var galleriesToScan = affectedFolders is null ? galleries : galleries.Where(g => affectedFolders.Contains(g.Folder)).ToArray();
+        if (!resumed && affectedFolders is not null && !galleriesToScan.Any(g => selected.ContainsKey(g.SourceId)))
+            return new($"已索引 {current!.Pages:N0} 页", Indexed: current.Pages);
+        if (changedFolders is not null && !(job.ChangedFolders ?? []).SequenceEqual(changedFolders, PathIdentity.Comparer))
+        {
+            job.PlanPrepared = false;
+            job.SourcesVerified = false;
+        }
+        job.ChangedFolders = changedFolders;
         var requestedGalleries = galleries.Select(g => new ImageIndexGalleryCheckpoint(g.SourceId, g.StableId, g.WorkId, g.Folder)).ToArray();
         if (resumed && !job.Galleries.SequenceEqual(requestedGalleries)) job.PlanPrepared = false;
         job.Galleries = requestedGalleries;
@@ -254,14 +274,16 @@ public sealed partial class LocalImageSearchService : IDisposable
             }
             var previous = job.Rebuild ? null : current;
             string? previousDirectory = previous is null ? null : Path.Combine(root, "generations", previous.GenerationId);
-            using var manifest = OpenManifest(generation, writable: true);
+            using var manifest = OpenManifest(generation, writable: true, enableUri: affectedFolders is not null);
             Execute(manifest, "CREATE TABLE IF NOT EXISTS member(alias TEXT NOT NULL,source_id TEXT NOT NULL,stable_id TEXT NOT NULL,page INTEGER NOT NULL,path TEXT NOT NULL,length INTEGER NOT NULL,mtime INTEGER NOT NULL,state TEXT NOT NULL,PRIMARY KEY(source_id,stable_id,page)); CREATE INDEX IF NOT EXISTS member_state ON member(state); PRAGMA user_version=1;");
             AttachBuildPlan(manifest, generation);
             progress?.Report(new(resumed ? "正在读取未完成索引任务…" : "正在枚举本地页图…"));
             if (!job.PlanPrepared)
             {
                 ReconcilePlanMembership(manifest, galleries, token);
-                PrepareBuildPlan(manifest, galleries, selected, verify: false, token,
+                if (affectedFolders is not null)
+                    SeedUnchangedDownloadIndex(manifest, previousDirectory!, galleries, selected, affectedFolders, token);
+                PrepareBuildPlan(manifest, galleriesToScan, selected, verify: false, token,
                     (done, total) => progress?.Report(new($"正在枚举本地页图 {done:N0} / {total:N0}")));
                 Execute(manifest, "DELETE FROM member WHERE NOT EXISTS(SELECT 1 FROM build.plan_page p WHERE p.source=member.source_id AND p.stable=member.stable_id AND p.page=member.page)");
                 job.PlanPrepared = true;
@@ -275,7 +297,7 @@ public sealed partial class LocalImageSearchService : IDisposable
                 job.PlanPrepared = false;
                 throw new InvalidOperationException("选中的本地库中没有可索引页图。");
             }
-            if (!resumed && previousDirectory is not null && TryReuseUnchangedIndex(previousDirectory,
+            if (!resumed && affectedFolders is null && previousDirectory is not null && TryReuseUnchangedIndex(previousDirectory,
                 ReadPlannedPages(generation, selected, pendingOnly: false, token), job.TotalPages, selected, token) is { } unchanged)
             {
                 token.ThrowIfCancellationRequested();
@@ -328,7 +350,7 @@ public sealed partial class LocalImageSearchService : IDisposable
                 job.Phase = ImageIndexBuildPhase.CheckingSources;
                 SaveBuildCheckpoint(root, job);
                 progress?.Report(new("正在核对源目录变更…", extraction.Processed, job.TotalPages, extraction.Indexed, extraction.Skipped, extraction.Failed, extraction.Reused));
-                PrepareBuildPlan(manifest, galleries, selected, verify: true, token,
+                PrepareBuildPlan(manifest, galleriesToScan, selected, verify: true, token,
                     (done, total) => progress?.Report(new($"正在核对源目录变更 {done:N0} / {total:N0}", extraction.Processed, job.TotalPages, extraction.Indexed, extraction.Skipped, extraction.Failed, extraction.Reused)));
                 job.TotalPages = PlanCount(manifest);
                 job.SourcesVerified = true;
@@ -567,9 +589,20 @@ public sealed partial class LocalImageSearchService : IDisposable
             throw new InvalidDataException("图片索引无法恢复，请重新提取重建。", error);
         }
     }
-    private static SqliteConnection OpenManifest(string generation, bool writable)
+    private static string ManifestUri(string generation)
     {
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(generation, "manifest.db"), Mode = writable ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
+        var uri = new Uri(Path.Combine(generation, "manifest.db"));
+        return uri.IsUnc ? "file:////" + uri.Host + uri.AbsolutePath : uri.AbsoluteUri;
+    }
+
+    private static SqliteConnection OpenManifest(string generation, bool writable, bool enableUri = false)
+    {
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = enableUri ? ManifestUri(generation) : Path.Combine(generation, "manifest.db"),
+            Mode = writable ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
         try { connection.Open(); return connection; }
         catch { connection.Dispose(); throw; }
     }

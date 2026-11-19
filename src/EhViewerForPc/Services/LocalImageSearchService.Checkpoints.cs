@@ -90,7 +90,8 @@ public sealed partial class LocalImageSearchService
             return false;
         }
         var galleries = job.Galleries.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.Folder)).ToArray();
-        await BuildCoreAsync(galleries, null, token, job.Rebuild, resumeExisting: true, automatic: true).ConfigureAwait(true);
+        await BuildCoreAsync(galleries, null, token, job.Rebuild, resumeExisting: true, automatic: true,
+            changedFolders: job.ChangedFolders).ConfigureAwait(true);
         return true;
     }
 }

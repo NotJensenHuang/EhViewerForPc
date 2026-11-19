@@ -16,6 +16,60 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
 public sealed class ReaderRetryIntegrationTests
 {
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DownloadAppearsAfterFirstWrittenPageAndReadingKeepsTheLibraryCopy(bool anotherCopyExists)
+    {
+        using var fixture = new Fixture();
+        var settings = fixture.Services.Settings.Download;
+        settings.AddAsSource = true;
+        settings.MaxConcurrentPages = 1;
+        settings.WriteThumb = false;
+        fixture.Handler.PauseAfterFirstPage = true;
+        if (!anotherCopyExists) fixture.Services.Settings.Sources.Clear();
+        using var shell = new ShellViewModel(fixture.Services);
+        await shell.Library.InitializeAsync();
+        string? scanAt = fixture.Services.Settings.LastScanCompletedUtc;
+
+        await shell.DownloadDetailsAsync(new() { Gid = 42, Token = "0123456789", Title = "downloaded", Pages = 4 }, ImageQuality.Resampled);
+        var task = Assert.Single(fixture.Services.Downloads.Tasks);
+        string folder = AppSettings.NormalizeRoot(task.FolderPath);
+        await fixture.Handler.SecondPageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, task.DownloadedPages);
+        GalleryInfo? copy = null;
+        for (int attempt = 0; attempt < 100 && copy is null; attempt++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            copy = shell.Library.SnapshotAllWorks().SelectMany(item => item.Versions)
+                .SingleOrDefault(version => version.FolderPath == folder);
+            if (copy is null) await Task.Delay(30);
+        }
+        Assert.NotNull(copy);
+        Assert.Equal(1, copy.PageCount);
+        Assert.True(copy.IsIncomplete);
+        Assert.Equal(scanAt, fixture.Services.Settings.LastScanCompletedUtc);
+
+        DownloadReadRequest? requested = null;
+        shell.Downloads.ReadRequested += (_, request) => requested = request;
+        await shell.Downloads.ReadTaskCommand.ExecuteAsync(Assert.Single(shell.Downloads.Tasks));
+        Assert.Same(copy, requested?.Info);
+        using var reader = new ReaderViewModel(fixture.Services, new LocalReaderSource(fixture.Services, requested!.Info));
+        int changes = 0;
+        shell.Library.LocalIndexChanged += (_, _) => changes++;
+        await reader.InitializeAsync();
+        Assert.Equal(0, changes);
+        Assert.Same(copy, shell.Library.FindLocalCopy(folder));
+        Assert.Equal(scanAt, fixture.Services.Settings.LastScanCompletedUtc);
+
+        fixture.Handler.Release.TrySetResult();
+        for (int attempt = 0; attempt < 150 && shell.Library.FindLocalCopy(folder)?.PageCount != 4; attempt++)
+            await Task.Delay(30);
+        Assert.Equal(4, shell.Library.FindLocalCopy(folder)?.PageCount);
+        Assert.Single(shell.Library.SnapshotAllWorks().SelectMany(item => item.Versions), version => version.FolderPath == folder);
+        Assert.Equal(scanAt, fixture.Services.Settings.LastScanCompletedUtc);
+    }
+
     [AvaloniaFact]
     public async Task RetryMenuBindsTheAsyncCommandAndDisablesItDuringDownload()
     {
@@ -249,14 +303,20 @@ public sealed class ReaderRetryIntegrationTests
         internal byte[] Image { get; } = SyntheticImages.Create(99, 200, 280).EncodePng();
         internal readonly System.Collections.Concurrent.ConcurrentQueue<string> Requests = new();
         internal readonly TaskCompletionSource ImageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource SecondPageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool FailImage, BlockImage, IgnoreImageCancellation;
+        internal bool FailImage, BlockImage, IgnoreImageCancellation, PauseAfterFirstPage;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             string path = request.RequestUri!.AbsolutePath; Requests.Enqueue(path);
             if (path.EndsWith(".png"))
             {
                 ImageStarted.TrySetResult();
+                if (PauseAfterFirstPage && path == "/2.png")
+                {
+                    SecondPageStarted.TrySetResult();
+                    await Release.Task.WaitAsync(cancellationToken);
+                }
                 if (BlockImage) await Release.Task.WaitAsync(IgnoreImageCancellation ? CancellationToken.None : cancellationToken);
                 return new(FailImage ? HttpStatusCode.InternalServerError : HttpStatusCode.OK) { Content = new ByteArrayContent(Image) };
             }

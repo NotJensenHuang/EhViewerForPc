@@ -43,6 +43,16 @@ internal static class LocalImageSearchAppProbe
             byte[] query = File.ReadAllBytes(Path.Combine(galleries[0].FolderPath, "00000005.png"));
             var hits = await services.ImageSearch.SearchAsync(query, null, galleries, CancellationToken.None);
             checks.Add(new("exact-copy-mapping", hits.Any(h => h.Gallery.SourceId == galleries[1].SourceId && h.PageNumber == 5)));
+            string downloaded = Path.Combine(galleries[0].FolderPath, "00000006.png");
+            byte[] newPage = SyntheticImages.Create(20261119, 240, 320).EncodePng();
+            File.WriteAllBytes(downloaded, newPage);
+            var targetCopies = galleries.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+            var automatic = await services.ImageSearch.UpdateAutomaticallyAsync(targetCopies, CancellationToken.None, [galleries[0].FolderPath]);
+            checks.Add(new("download-index-targeted", automatic.Indexed == 9 && services.ImageSearch.PlanStatistics?.EnumeratedGalleries == 2));
+            var newHits = await services.ImageSearch.SearchAsync(newPage, null, galleries, CancellationToken.None);
+            checks.Add(new("download-index-new-page", newHits.Any(hit => hit.FilePath == downloaded)));
+            hits = await services.ImageSearch.SearchAsync(query, null, galleries, CancellationToken.None);
+            checks.Add(new("download-index-retains-other-copy", hits.Any(hit => hit.Gallery.SourceId == galleries[1].SourceId && hit.PageNumber == 5)));
             services.Progress.Set("42", new ReadingProgress { PageNumber = 3, PageOffset = .8, Completed = true });
             using (var reader = new ReaderViewModel(services, galleries[1], initialPageNumber: 5))
             {

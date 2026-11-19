@@ -336,7 +336,7 @@ public sealed partial class DownloadTaskViewModel : ObservableObject
     public bool CanDeleteFiles => !Task.FillMissingOnly;
     [RelayCommand(CanExecute = nameof(CanDeleteFiles))] private void RequestDelete() => ConfirmDelete = true;
     [RelayCommand] private void CancelDelete() => ConfirmDelete = false;
-    [RelayCommand] private void Read() => _owner.ReadTaskCommand.Execute(this);
+    [RelayCommand] private Task ReadAsync() => _owner.ReadTaskCommand.ExecuteAsync(this);
 
     public string Title => Task.DisplayTitle;
     public string GidText => "#" + Task.Gid;

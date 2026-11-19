@@ -1152,6 +1152,12 @@ public sealed class EhClient : IDisposable
 
     public async Task<string> GetStringAsync(string url, string? referer, CancellationToken cancellationToken)
     {
+        // Windows 的系统代理可以在 SendAsync 返回前同步查找 PAC。
+        // 从 UI 调用时先切到线程池，避免首次请求和后续代理探测阻塞消息循环。
+        if (SynchronizationContext.Current is not null)
+            await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+
+        cancellationToken.ThrowIfCancellationRequested();
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
         if (!string.IsNullOrEmpty(referer)) request.Headers.Referrer = new Uri(referer);

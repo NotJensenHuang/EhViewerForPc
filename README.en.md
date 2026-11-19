@@ -65,7 +65,7 @@ Online browsing is available on first launch. To use the local library, point "L
 - ⬇️ **Downloads**
   - A download engine independent of the local library: the queue is persisted in `downloads.json`, resumes from its last state after exit or a crash, and completed tasks appear only under "Completed", leaving the "Gallery downloads" queue
   - When the site answers "This gallery is unavailable", the task moves to the "Gallery unavailable" page and automatic starts and retries stop. Downloaded pages, folders and reading progress are kept; clearing the marker returns the task to the queue for a manual retry
-  - Configurable download root and subdirectory rules; with "register download directory as source" and automatic updates enabled, a gallery is indexed as soon as its first image lands, without rescanning other sources
+  - Configurable download root and subdirectory rules. With "register download directory as source" and "automatically update local library" enabled, a copy appears when its first image is saved, even during an existing library scan. Further downloads and reading update the affected copy and work progress
   - Incomplete copies remain readable and reaching the current last page does not mark the whole work as finished; gallery concurrency 1–8, per-gallery page concurrency 1–8, with serialized throttling on pagination requests
   - Local cards, details and version rows offer "Continue download" for the selected copy's exact original folder without changing the global download root; a GID and token are required. Conflicting original files are preserved and reported as failed pages. Repair tasks can be removed from the queue, but cannot delete the original folder
   - Repeated repair requests reuse existing tasks. Unchanged page checks do not rebuild the local lookup or trigger image-index maintenance; pause/running transitions do not rescan unchanged folders
@@ -95,7 +95,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - Building shows actual feature-assignment counts, merged partitions, checksum bytes and the current stage percentage. Stages without a known total use an activity indicator; extracted-page counts are not presented as build progress
   - The CPU index pipeline defaults to logical processor count minus 2 (1–32 workers), with a 128–1024 MiB workspace and separate reader/index quotas. On Windows, the app automatically tries ComputeSharp / DirectX 12 for FAST scores and large training Hamming-distance assignments, falling back to CPU if unavailable or failed. Grayscale and blur retain SIMD. CPU and GPU share the original extraction identity; existing indexes do not need rebuilding; area resizing reuses geometric weights while retaining identical pixels
   - Page tasks and completion states are persisted in batches. New jobs resume directly from their pending queue; training/building resumes do not first fall back to a full source-page scan. Before publication, source changes are checked in a separate, checkpointed stage. Source-image reads are serialized and synchronous I/O uses Windows background priority, while decoding and computation remain bounded and parallel. Unchanged updates skip snapshots and extraction
-  - Features are stored once per content hash and extraction profile in `features.db`; incremental updates share immutable index files and reclaim unused snapshots after publication. Legacy `generations` are migrated without retaining duplicate feature databases
+  - Features are stored once per content hash and extraction profile in `features.db`. An automatic index update after a download completes checks only that copy and reuses the published manifest for other copies. Incremental updates share immutable index files and reclaim unused snapshots after publication. Legacy `generations` are migrated without retaining duplicate feature databases
   - Accepts a file picker, drag and drop, clipboard images and rectangle cropping; results show the matched page, source copy and original page number, and "Read from this page" overrides history restoration while the query survives navigation back
   - The backend is pure C#, reusing SkiaSharp and SQLite with no additional runtime; a separate windowless host exists for build and verification. Source galleries are never written to
   - Validated quantizers and bucket tables are reused per immutable generation; file changes or a new publication trigger validation again. Initial loading shows checksum progress before the 30-second search budget starts. Descriptors are decompressed in batches and hit aliases are matched in one pass over legacy manifests, preserving existing index compatibility
@@ -115,7 +115,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - FluentAvaloniaUI `FANavigationView` + `FAFrame` history with back, forward and Alt+← / Alt+→
   - System / light / dark themes; the sidebar can collapse and remembers its state, collapses automatically in narrow windows, and list and scroll positions are preserved
   - Online and local details share `GalleryDetailsView`; descriptive text in Settings, details and the status bar can be selected and copied
-  - Startup waits only for the local library: the online first page is issued at background priority after the window has painted, so the window stays usable when the network is unreachable. The indeterminate bar under the title appears only on the online page for a user-initiated load — never during the startup refresh, never on other pages
+  - On cold start, the main window opens before the online home page and local library load independently. System proxy lookup, download folder preparation, and library folder checks run in the background so navigation stays available. The online page shows status text during its automatic load and a progress bar for a manual refresh
 
 ## 🧩 Feature Matrix
 
@@ -315,7 +315,7 @@ The online parser is covered by fixtures captured from fixed page structures; `-
 - Image access is subject to account and IP quotas. View-page requests are serialized, but bulk downloads can still trigger rate limiting
 - Favourite category names are local display labels and are not written back to the account
 - Continuous and horizontal modes fit whole pages to the viewport and have no in-page zoom (single-page mode supports 1x–8x)
-- There is no global bitmap cache; page and cover bitmaps are owned by their controls. Scanning does not watch the file system in real time; downloads refresh automatically per settings or on manual refresh
+- Page and cover bitmaps are owned by their controls. Download events update the affected copy, and a manual refresh picks up external file changes
 - Recall on a real image library and full-library search performance for local image search are not verified
 
 ## 💖 Dependencies and Credits

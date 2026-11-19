@@ -775,10 +775,9 @@ public sealed partial class DownloadManager : IDisposable
                 if (task.Quality == ImageQuality.Original && !cached.IsOriginal)
                     lock (_gate) { if (!task.ResampledPages.Contains(page.Page)) task.ResampledPages.Add(page.Page); }
 
-                int done = Interlocked.Increment(ref completed);
                 lock (_gate)
                 {
-                    task.DownloadedPages = done;
+                    task.DownloadedPages = ++completed;
                 }
 
                 RaiseTask(task);

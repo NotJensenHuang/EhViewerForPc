@@ -101,14 +101,6 @@ public partial class App : Application
                 services.Settings.Network.HostsOverride = "127.0.0.1 e-hentai.org\n127.0.0.1 exhentai.org";
                 services.ReloadNetwork();
             }
-            if (!string.IsNullOrWhiteSpace(options.Root) && Directory.Exists(options.Root))
-            {
-                // --root adds (or enables) a source instead of replacing the
-                // configured list, so a debug run cannot wipe a user's sources.
-                services.Settings.AddSource(Path.GetFullPath(options.Root));
-                services.TrySaveSettings(out _);
-            }
-
             ApplyTheme(services.Settings.Theme);
 
             var shell = new ShellViewModel(services);
@@ -165,7 +157,7 @@ public partial class App : Application
                     return;
                 }
 
-                await shell.InitializeAsync();
+                if (!await shell.InitializeAsync(options.Root)) return;
                 libraryReady = true;
                 if (!string.IsNullOrWhiteSpace(options.Gallery))
                 {

@@ -43,40 +43,71 @@ public sealed partial class MainViewModel
         finally { if (!_disposed) IsFillingMissingPages = false; }
     }
 
-    public async Task ImportDownloadAsync(DownloadTask task)
+    public async Task<bool> ImportDownloadAsync(DownloadTask task)
     {
-        if (!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) return;
-        while (IsScanning) await Task.Delay(50, _lifetime.Token);
-        string folder = task.FolderPath;
-        if (!Directory.Exists(folder)) return;
-        string root = string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot;
-        var source = _services.Settings.Sources.FirstOrDefault(s => PathIdentity.Comparer.Equals(s.RootPath, root));
-        if (source is null && task.FillMissingOnly) return;
-        if (source is null)
+        if (_disposed || !ShouldImportDownload(task)) return false;
+        CancellationToken token = _lifetime.Token;
+        if (string.IsNullOrWhiteSpace(task.FolderPath)) return false;
+        string folder = AppSettings.NormalizeRoot(task.FolderPath);
+        string root = AppSettings.NormalizeRoot(string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot);
+        if (!PathIdentity.IsDescendantOf(folder, root)) return false;
+
+        var source = FindDownloadSource(root)?.Clone();
+        if (source is { Enabled: false } || (source is null && task.FillMissingOnly)) return false;
+        bool qualifyStableId = _availableSources.Any(other => !PathIdentity.Comparer.Equals(other.RootPath, root));
+        bool validatePages = task.FillMissingOnly || task.State != DownloadState.Running;
+        int expected = task.PageCount;
+        var copy = await Task.Run(() =>
         {
-            source = _services.Settings.AddSource(root, "下载目录");
+            if (!Directory.Exists(folder)) return null;
+            return _services.Scanner.Scan(root, null, cancellationToken: token, sourceId: source?.Id,
+                sourceName: source?.DisplayName, qualifyStableId: qualifyStableId, onlyFolder: folder,
+                validatePages: validatePages, expectedPages: expected).Galleries.Single();
+        }, token);
+        if (_disposed || !ShouldImportDownload(task) || !PathIdentity.Comparer.Equals(AppSettings.NormalizeRoot(task.FolderPath), folder) ||
+            (!_services.Downloads.IsQueued(task) && task.State != DownloadState.Completed) || copy is not { PageCount: > 0 }) return false;
+
+        LibrarySource? current = FindDownloadSource(root);
+        if (current is { Enabled: false } || (source is not null && current?.Id != source.Id)) return false;
+        if (current is null)
+        {
+            current = _services.Settings.AddSource(root, "下载目录");
             _services.TrySaveSettings(out _);
         }
-        int expected = task.PageCount;
-        bool qualifyStableId = ResolveSources().Count > 1;
-        var completed = await Task.Run(() =>
+        if (!_availableSources.Any(s => s.Id == current.Id)) UpdateSourceDisplay([.. _availableSources, current.Clone()]);
+
+        if (copy.SourceId.Length == 0)
         {
-            var result = _services.Scanner.Scan(root, null, false, null, _lifetime.Token, source.Id, source.DisplayName, qualifyStableId, onlyFolder: folder, validatePages: true);
-            foreach (var gallery in result.Galleries)
-            {
-                if (expected <= 0 || gallery.ExpectedPages == expected) continue;
-                var pages = PageFileParser.Scan(gallery.FolderPath, new SpiderHeader { HasPages = true, Pages = expected }, out _, validateContainers: true);
-                gallery.ExpectedPages = expected;
-                gallery.IsIncomplete = pages.IsIncomplete;
-                gallery.MissingRanges = pages.MissingRanges;
-                gallery.CorruptPages = pages.CorruptPages;
-                gallery.HasHeaderPageCountOutdated = pages.HeaderPageCountOutdated;
-            }
-            return result.Galleries;
-        });
-        while (IsScanning) await Task.Delay(50, _lifetime.Token);
-        if (_disposed || !_services.Settings.Sources.Any(s => s.Id == source.Id && s.Enabled && PathIdentity.Comparer.Equals(s.RootPath, root))) return;
-        ApplyDownloadedCopies(completed, folder);
+            copy.SourceId = current.Id;
+            copy.SourceName = current.DisplayName;
+            if (SourceCount > 1) copy.StableId += "@" + current.Id;
+        }
+        if (FindLocalCopy(folder) is { } previous && previous.SourceId == copy.SourceId && previous.Gid == copy.Gid)
+        {
+            copy.StableId = previous.StableId;
+            copy.IsDuplicateGid = previous.IsDuplicateGid;
+            if (AppServices.SameLocalPageState(previous, copy) && previous.Token == copy.Token &&
+                previous.HasEhviewer == copy.HasEhviewer && previous.HasThumb == copy.HasThumb &&
+                PathIdentity.Comparer.Equals(previous.CoverPath, copy.CoverPath) && previous.CoverKind == copy.CoverKind)
+                return true;
+        }
+        ApplyDownloadedCopies([copy], folder);
+        return true;
+    }
+
+    private bool ShouldImportDownload(DownloadTask task) => task.FillMissingOnly ||
+        (_services.Settings.Download.AddAsSource && _services.Settings.Download.RefreshLibraryOnComplete);
+
+    private LibrarySource? FindDownloadSource(string root) => _services.Settings.Sources.FirstOrDefault(source =>
+        PathIdentity.Comparer.Equals(source.RootPath, root));
+
+    internal GalleryInfo? FindLocalCopy(string folder)
+    {
+        folder = AppSettings.NormalizeRoot(folder);
+        foreach (var item in _all)
+        foreach (var copy in item.Versions)
+            if (PathIdentity.Comparer.Equals(copy.FolderPath, folder)) return copy;
+        return null;
     }
 
     internal void ApplyScannedCopy(GalleryInfo copy) => ApplyDownloadedCopies([copy], copy.FolderPath);
@@ -86,8 +117,19 @@ public sealed partial class MainViewModel
         if (!_disposed) ApplyScannedCopy(copy);
     }
 
+    private void OnLocalReaderPagesValidated(object? sender, (GalleryInfo Copy, PageScanResult Pages) result)
+    {
+        var (copy, pages) = result;
+        if (_disposed || (copy.CorruptPages == pages.CorruptPages && copy.IsIncomplete == pages.IsIncomplete) ||
+            !ReferenceEquals(FindLocalCopy(copy.FolderPath), copy)) return;
+        copy.CorruptPages = pages.CorruptPages;
+        copy.IsIncomplete = pages.IsIncomplete;
+        ApplyScannedCopy(copy);
+    }
+
     private void ApplyDownloadedCopies(IReadOnlyList<GalleryInfo> copies, string folder)
     {
+        if (_scanFolderUpdates is not null) _scanFolderUpdates[folder] = copies;
         // 只重新合并受影响的作品；其他卡片、封面请求和可见控件保持原实例。
         var workIds = copies.Select(g => g.WorkId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var affected = _all.Where(item => workIds.Contains(item.WorkId) ||
@@ -120,9 +162,8 @@ public sealed partial class MainViewModel
         _all.InsertRange(insertion, updated);
         TotalGalleryCount = _all.Count;
         TotalPageCount = _all.Sum(i => (long)i.PageCount);
-        ShowWelcome = ShouldShowWelcome;
+        ShowWelcome = SourceCount == 0 && _all.Count == 0;
         if (languagesChanged) RebuildLanguageOptions();
-        UpdateSourceDisplay();
         RebuildLocalIndex();
         ApplyFilter(updateInPlace: true);
         ApplyDownloadStates(_services.Downloads.Tasks);

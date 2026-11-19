@@ -282,7 +282,7 @@
               <ToggleSwitch IsChecked="{Binding AutoStart}" OnContent="" OffContent="" AutomationProperties.Name="启动时自动继续" />
             </controls:SettingsRow.Action>
           </controls:SettingsRow>
-          <controls:SettingsRow Header="自动更新本地库" Description="下载完成后刷新列表与进度。">
+          <controls:SettingsRow Header="自动更新本地库" Description="首张图片保存后显示作品，并随下载更新页数。">
             <controls:SettingsRow.Action>
               <ToggleSwitch IsChecked="{Binding RefreshAfterDownload}" OnContent="" OffContent="" AutomationProperties.Name="自动更新本地库" />
             </controls:SettingsRow.Action>

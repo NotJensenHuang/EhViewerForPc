@@ -158,16 +158,36 @@ public sealed partial class AppServices : IDisposable
         if (!Settings.Download.AddAsSource) return null;
 
         string root = Downloads.RootPath;
+        return TryCreateDownloadDirectory(root) ? RegisterDownloadSource(root) : null;
+    }
+
+    public async Task<LibrarySource?> EnsureDownloadSourceAsync(CancellationToken token)
+    {
+        if (!Settings.Download.AddAsSource) return null;
+
+        string root = Downloads.RootPath;
+        bool created = await Task.Run(() => TryCreateDownloadDirectory(root), token);
+        token.ThrowIfCancellationRequested();
+        if (!created || !Settings.Download.AddAsSource || !PathIdentity.Comparer.Equals(root, Downloads.RootPath)) return null;
+        return RegisterDownloadSource(root);
+    }
+
+    private bool TryCreateDownloadDirectory(string root)
+    {
         try
         {
             Directory.CreateDirectory(root);
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Log.Warn("Create download root failed: " + root + " | " + ex.Message);
-            return null;
+            return false;
         }
+    }
 
+    private LibrarySource RegisterDownloadSource(string root)
+    {
         LibrarySource source = Settings.AddSource(root, "下载目录");
         TrySaveSettings(out _);
         return source;

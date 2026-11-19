@@ -587,6 +587,30 @@ public sealed class ImageSearchIntegrationTests
     }
 
     [AvaloniaFact]
+    public async Task AutomaticDownloadIndexEnumeratesOnlyTheChangedCopyAndKeepsOtherMatches()
+    {
+        using var scope = new Fixture();
+        var copies = scope.CreateCopies();
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var snapshot = copies.Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
+        await scope.Services.ImageSearch.BuildAsync(snapshot, null, CancellationToken.None,
+            options: new IndexBuildOptions { Workers = 2, UseGpu = false });
+        int previousPages = scope.Services.ImageSearch.BuildStatus!.Indexed;
+        string downloaded = Path.Combine(copies[0].FolderPath, "00000006.png");
+        byte[] image = SyntheticImages.Create(97, 200, 280).EncodePng();
+        File.WriteAllBytes(downloaded, image);
+        string retained = Path.Combine(copies[1].FolderPath, "00000001.png");
+
+        var updated = await scope.Services.ImageSearch.UpdateAutomaticallyAsync(snapshot, CancellationToken.None, [copies[0].FolderPath]);
+        Assert.Equal(previousPages + 1, updated.Indexed);
+        Assert.Equal(2, scope.Services.ImageSearch.PlanStatistics!.EnumeratedGalleries);
+        var newHits = await scope.Services.ImageSearch.SearchAsync(image, null, copies, CancellationToken.None);
+        Assert.Contains(newHits, hit => hit.FilePath == downloaded);
+        var oldHits = await scope.Services.ImageSearch.SearchAsync(File.ReadAllBytes(retained), null, copies, CancellationToken.None);
+        Assert.Contains(oldHits, hit => hit.FilePath == retained);
+    }
+
+    [AvaloniaFact]
     public async Task FailedPagesUseMetadataBatchesAndProgressReportsFailures()
     {
         using var scope = new Fixture(); var copies = scope.CreateCopies();

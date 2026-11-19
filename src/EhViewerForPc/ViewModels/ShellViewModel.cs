@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.Input;
 using EhViewerForPc.Core.Download;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Online;
+using EhViewerForPc.Core.Storage;
 using EhViewerForPc.Services;
 using FluentAvalonia.UI.Controls;
 
@@ -48,12 +49,13 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
 {
     private readonly AppServices _services;
     private readonly DispatcherTimer _toastTimer;
+    private readonly CancellationTokenSource _lifetime = new();
     private NavItem? _selectedNav;
     private string _toastText = string.Empty;
     private bool _showToast;
     private bool _disposed;
-    private CancellationTokenSource? _imageUpdateCancellation;
-    private bool _imageUpdateRunning, _imageUpdateDirty, _imageMaintenanceReady;
+    private readonly HashSet<string> _imageUpdateFolders = new(PathIdentity.Comparer);
+    private bool _imageUpdateRunning, _imageMaintenanceReady;
     private bool _imageResumeRunning, _imageResumeChecked;
     private EhImageLimits? _imageLimits;
     private DateTime _imageLimitsFetchedUtc = DateTime.MinValue;
@@ -123,7 +125,8 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             ShowToast = false;
         };
 
-        SelectedNav = NavItems[0];
+        // 只设定默认页，避免构造窗口时走导航副作用并发起在线请求。
+        _selectedNav = NavItems[0];
     }
 
     public event EventHandler<EhGallerySummary>? GalleryRequested;
@@ -231,19 +234,22 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     [RelayCommand]
     private async Task RefreshImageLimitsAsync()
     {
-        if (_imageLimitsBusy || !IsSignedIn) return;
+        if (_disposed || _imageLimitsBusy || !IsSignedIn) return;
+        CancellationToken token = _lifetime.Token;
         _imageLimitsBusy = true;
         RaiseImageLimits();
         try
         {
-            EhImageLimits? limits = await _services.Online.GetImageLimitsAsync(CancellationToken.None).ConfigureAwait(true);
+            EhImageLimits? limits = await _services.Online.GetImageLimitsAsync(token).ConfigureAwait(true);
+            if (token.IsCancellationRequested) return;
             _imageLimitsFetchedUtc = DateTime.UtcNow;
             if (limits is not null) _imageLimits = limits;
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         finally
         {
             _imageLimitsBusy = false;
-            RaiseImageLimits();
+            if (!_disposed) RaiseImageLimits();
         }
     }
 
@@ -281,22 +287,42 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         private set => SetProperty(ref _showToast, value);
     }
 
-    public async Task InitializeAsync()
+    public async Task<bool> InitializeAsync(string? additionalSource = null)
     {
+        if (_disposed) return false;
+        CancellationToken token = _lifetime.Token;
+        // Opened 后以后台优先级排队，让窗口先完成布局和绘制。
+        // 本地目录的可用性与在线首页无关，两边可分别就绪。
+        Dispatcher.UIThread.Post(() => _ = Online.AutoLoadAsync(), DispatcherPriority.Background);
         _services.OnlineImages.StartBackgroundMaintenance();
         _ = Task.Run(BrowserLoginSession.CleanupStaleProfiles);
-        _services.EnsureDownloadSource();
-        _services.Downloads.AutoStart();
-        await Library.InitializeAsync().ConfigureAwait(true);
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(additionalSource) &&
+                await Task.Run(() => Directory.Exists(additionalSource), token))
+            {
+                token.ThrowIfCancellationRequested();
+                // --root 追加或启用该目录，保留已配置的其它来源。
+                _services.Settings.AddSource(additionalSource);
+                _services.TrySaveSettings(out _);
+            }
+
+            await _services.EnsureDownloadSourceAsync(token);
+            token.ThrowIfCancellationRequested();
+            _services.Downloads.AutoStart();
+            await Library.InitializeAsync();
+            token.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            return false;
+        }
+
         _imageMaintenanceReady = true;
         _ = ResumeImageIndexAsync();
         Settings.RefreshAccount();
         MaybeRefreshImageLimits();
-
-        // 首屏不等在线列表：站点不可达时这次请求会把「初始化完成」一起挂住，
-        // 而首页本地部分本来可以立刻用。排到后台优先级，先让窗口完成一次布局
-        // 与绘制，再发起网络请求。
-        Dispatcher.UIThread.Post(() => _ = Online.AutoLoadAsync(), DispatcherPriority.Background);
+        return true;
     }
 
     private void ActivatePage(object page)
@@ -311,7 +337,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
                 Settings.RefreshSources();
                 break;
             case DownloadsViewModel downloads:
-                downloads.SyncAll();
+                downloads.SyncAll(reconcileLocal: true);
                 break;
             case HistoryViewModel history:
                 history.Reload();
@@ -431,7 +457,6 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         _services.Works.Upsert(WorkRecord.FromDetails(details));
         bool existed = _services.Downloads.IsQueued(details.Gid);
         var queued = await Task.Run(() => _services.Downloads.Enqueue(details, quality: quality));
-        _services.EnsureDownloadSource();
         Notify(queued.IsFinished ? "下载已完成，可从本地库阅读" : existed ? "该作品已在下载队列中" : $"已加入下载队列：{details.DisplayTitle}");
         Downloads.SyncAll();
     }
@@ -475,11 +500,12 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     {
         if (_disposed) return;
         _disposed = true;
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         Library.LocalIndexChanged -= OnImageIndexLibraryChanged;
         Library.PropertyChanged -= OnImageIndexLibraryPropertyChanged;
         _services.Downloads.TaskCompleted -= OnImageIndexDownloadCompleted;
         _services.Downloads.TaskChanged -= OnDownloadTaskChanged;
-        _imageUpdateCancellation?.Cancel();
         _toastTimer.Stop();
         Downloads.Dispose();
         History.Dispose();
@@ -492,7 +518,6 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     {
         if (!_imageMaintenanceReady) return;
         _ = ResumeImageIndexAsync();
-        QueueImageIndexUpdate();
     }
     private void OnImageIndexLibraryPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -515,38 +540,40 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         catch (Exception error) { _services.Log.Warn("Resume image index: " + error.Message); }
         finally { _imageResumeRunning = false; }
     }
-    private void OnImageIndexDownloadCompleted(object? sender, EhViewerForPc.Core.Download.DownloadTask task)
-        => Dispatcher.UIThread.Post(QueueImageIndexUpdate);
-    private void QueueImageIndexUpdate()
+    private void OnImageIndexDownloadCompleted(object? sender, DownloadTask task)
     {
-        if (!Dispatcher.UIThread.CheckAccess()) { Dispatcher.UIThread.Post(QueueImageIndexUpdate); return; }
-        if (_disposed || !_services.Settings.ImageSearch.Enabled || !_services.Settings.ImageSearch.AutoUpdateAfterDownload) return;
+        string folder = task.FolderPath;
+        Dispatcher.UIThread.Post(() => QueueImageIndexUpdate(folder));
+    }
+
+    private void QueueImageIndexUpdate(string folder)
+    {
+        if (_disposed || string.IsNullOrWhiteSpace(folder) || !_services.Settings.ImageSearch.Enabled || !_services.Settings.ImageSearch.AutoUpdateAfterDownload) return;
         // Automatic maintenance starts only after an explicit first build.
         if (!File.Exists(Path.Combine(_services.ImageSearch.DirectoryPath, "current.json"))) return;
-        _imageUpdateDirty = true;
+        _imageUpdateFolders.Add(AppSettings.NormalizeRoot(folder));
         if (_imageUpdateRunning) return;
-        _imageUpdateCancellation?.Cancel(); _imageUpdateCancellation = new();
-        _ = UpdateImageIndexAfterQuietPeriodAsync(_imageUpdateCancellation.Token);
+        _imageUpdateRunning = true;
+        _ = UpdateImageIndexAfterQuietPeriodAsync(_lifetime.Token);
     }
     private async Task UpdateImageIndexAfterQuietPeriodAsync(CancellationToken token)
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(10), token);
-            if (_disposed || !_services.Settings.ImageSearch.Enabled || !_services.Settings.ImageSearch.AutoUpdateAfterDownload) return;
-            _imageUpdateRunning = true;
-            while (_imageUpdateDirty && !token.IsCancellationRequested)
+            while (_imageUpdateFolders.Count != 0)
             {
-                _imageUpdateDirty = false;
-                while (_services.ImageSearch.IsBuilding) await Task.Delay(500, token);
+                await Task.Delay(TimeSpan.FromSeconds(10), token);
+                while (_services.ImageSearch.IsBuilding || Library.IsScanning) await Task.Delay(500, token);
+                if (_disposed || !_services.Settings.ImageSearch.Enabled || !_services.Settings.ImageSearch.AutoUpdateAfterDownload) return;
+                string[] folders = _imageUpdateFolders.ToArray();
+                _imageUpdateFolders.Clear();
                 var copies = Library.SnapshotAllWorks().SelectMany(item => item.Versions).DistinctBy(g => (g.SourceId, g.StableId))
                     .Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
-                await _services.ImageSearch.UpdateAutomaticallyAsync(copies, token);
-                if (_imageUpdateDirty) await Task.Delay(TimeSpan.FromSeconds(10), token);
+                if (copies.Length > 0) await _services.ImageSearch.UpdateAutomaticallyAsync(copies, token, folders);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception error) { _services.Log.Warn("Image index update: " + error.GetType().Name); }
-        finally { _imageUpdateRunning = false; }
+        finally { _imageUpdateFolders.Clear(); _imageUpdateRunning = false; }
     }
 }
