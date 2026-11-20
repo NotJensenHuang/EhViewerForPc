@@ -298,7 +298,7 @@ public sealed partial class LibraryScanner
             Tags = entry.Tags,
             LastWriteUtc = entry.FolderMtimeTicks > 0
                 ? new DateTime(entry.FolderMtimeTicks, DateTimeKind.Utc)
-                : Directory.GetLastWriteTimeUtc(folderPath),
+                : DateTime.MinValue,
             ExtensionSummary = entry.ExtensionSummary,
             ZeroByteFiles = entry.ZeroByteFiles,
             CorruptPages = entry.CorruptPages,
@@ -345,8 +345,7 @@ public sealed partial class LibraryScanner
     }
 
     /// <summary>
-    /// Materializes a gallery list from the on-disk cache without touching the
-    /// library. Used for the instant first paint before the background scan.
+    /// 从缓存恢复作品列表，不访问源目录。
     /// </summary>
     public static List<GalleryInfo> FromCacheOnly(
         LibraryCache cache,

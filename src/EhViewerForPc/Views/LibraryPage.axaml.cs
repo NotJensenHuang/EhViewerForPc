@@ -197,9 +197,11 @@ public partial class LibraryPage : UserControl
         if (sender is not Control { DataContext: GalleryItemViewModel item } control) return;
 
         var menu = new ContextMenu();
-        menu.Items.Add(CreateMenuItem("阅读", () => _viewModel.OpenGalleryCommand.Execute(item)));
+        var read = CreateMenuItem("阅读", () => _viewModel.OpenGalleryCommand.Execute(item));
+        read.IsEnabled = item.CanRead;
+        menu.Items.Add(read);
         menu.Items.Add(CreateMenuItem("查看详情", () => _viewModel.OpenDetailsCommand.Execute(item)));
-        if (item.IsIncomplete)
+        if (item.ShowContinueDownload)
         {
             var resume = CreateMenuItem("继续下载缺页", () => _viewModel.ContinueDownloadCommand.Execute(item));
             resume.IsEnabled = item.CanContinueDownload;

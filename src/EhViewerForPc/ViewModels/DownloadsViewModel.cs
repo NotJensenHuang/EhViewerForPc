@@ -24,9 +24,9 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     private bool _disposed;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DownloadTask> _dirtyTasks = new();
     private int _updateQueued;
-    private readonly DispatcherTimer _libraryTimer;
+    private readonly CancellationTokenSource _lifetime = new();
     private readonly Dictionary<string, DownloadTask> _libraryUpdates = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, (int Pages, string Folder, int Total, bool Complete)> _imported = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (int Pages, string Folder, int Total, DownloadState State)> _imported = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTime> _reconciledUtc = new(StringComparer.Ordinal);
     private bool _importing;
 
@@ -34,8 +34,6 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         _services = services;
         _library = library;
-        _libraryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        _libraryTimer.Tick += OnLibraryTick;
 
         _services.Downloads.TaskChanged += OnTaskChanged;
         _services.Downloads.Changed += OnChanged;
@@ -131,7 +129,9 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     public void SyncAll(bool reconcileLocal = false)
     {
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        foreach (DownloadTask task in _services.Downloads.Tasks)
+        var tasks = _services.Downloads.Tasks;
+        _library.SyncQueuedDownloadCopies(tasks);
+        foreach (DownloadTask task in tasks)
         {
             QueueLibraryUpdate(task);
             if (task.State == DownloadState.Completed) continue;
@@ -150,7 +150,7 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
         ApplyArchive(_services.Downloads.Archive);
 
         RefreshStatus();
-        _library.ApplyDownloadStates(_services.Downloads.Tasks);
+        _library.ApplyDownloadStates(tasks);
     }
 
     /// <summary>
@@ -279,43 +279,48 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         if ((!_services.Settings.Download.AddAsSource && !task.FillMissingOnly) ||
             (!_services.Settings.Download.RefreshLibraryOnComplete && !task.FillMissingOnly) || task.DownloadedPages == 0) return;
-        var stamp = (task.DownloadedPages, task.FolderPath, task.PageCount, Complete: task.State == DownloadState.Completed);
-        bool known = _imported.TryGetValue(task.Id, out var previous);
-        if (known && previous == stamp) return;
+        if (_imported.TryGetValue(task.Id, out var previous) && previous == GetLibraryStamp(task)) return;
         _libraryUpdates[task.Id] = task;
-        if (_importing) return;
-        if (!known || stamp.Complete) _ = ImportPendingLibraryUpdatesAsync();
-        else _libraryTimer.Start();
+        if (!_importing) _ = ImportPendingLibraryUpdatesAsync(_lifetime.Token);
     }
 
-    private void OnLibraryTick(object? sender, EventArgs e) => _ = ImportPendingLibraryUpdatesAsync();
+    private static (int Pages, string Folder, int Total, DownloadState State) GetLibraryStamp(DownloadTask task)
+        => (task.DownloadedPages, task.FolderPath, task.PageCount, task.State);
 
-    private async Task ImportPendingLibraryUpdatesAsync()
+    private async Task ImportPendingLibraryUpdatesAsync(CancellationToken token)
     {
-        _libraryTimer.Stop();
-        if (_disposed || _importing) return;
         _importing = true;
         try
         {
-            var pending = _libraryUpdates.Values.ToArray();
-            _libraryUpdates.Clear();
-            foreach (var task in pending)
+            while (_libraryUpdates.Count > 0 && !token.IsCancellationRequested)
             {
-                if (_disposed || (!_services.Downloads.IsQueued(task) && task.State != DownloadState.Completed)) continue;
-                var stamp = (task.DownloadedPages, task.FolderPath, task.PageCount, task.State == DownloadState.Completed);
-                if (_imported.TryGetValue(task.Id, out var previous) && previous == stamp) continue;
-                try
+                // 首次入库和结束状态立即处理，同一副本写入后续页时合并更新。
+                if (_libraryUpdates.Values.All(task => task.State == DownloadState.Running && _imported.ContainsKey(task.Id)))
+                    await Task.Delay(500, token);
+
+                var pending = _libraryUpdates.Values.ToArray();
+                _libraryUpdates.Clear();
+                foreach (var task in pending)
                 {
-                    if (await _library.ImportDownloadAsync(task) && !_disposed) _imported[task.Id] = stamp;
+                    if (_disposed || (!_services.Downloads.IsQueued(task) && task.State != DownloadState.Completed)) continue;
+                    var stamp = GetLibraryStamp(task);
+                    bool known = _imported.TryGetValue(task.Id, out var previous);
+                    if (known && previous == stamp) continue;
+                    bool persist = !known || previous.Folder != stamp.Folder || stamp.State == DownloadState.Completed ||
+                        (stamp.State is DownloadState.Paused or DownloadState.Failed && previous.State != stamp.State);
+                    try
+                    {
+                        if (await _library.ImportDownloadAsync(task, persist) && !_disposed) _imported[task.Id] = stamp;
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex) { _services.Log.Warn("Live library update failed", ex); }
                 }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { _services.Log.Warn("Live library update failed", ex); }
             }
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         finally
         {
             _importing = false;
-            if (!_disposed && _libraryUpdates.Count > 0) _libraryTimer.Start();
         }
     }
 
@@ -370,7 +375,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _libraryTimer.Stop();
+        _lifetime.Cancel();
+        _lifetime.Dispose();
         _libraryUpdates.Clear();
         foreach (var session in ArchiveTransfers) session.Dispose();
         _services.Downloads.TaskChanged -= OnTaskChanged;

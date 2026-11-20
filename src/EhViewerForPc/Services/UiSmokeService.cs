@@ -958,6 +958,42 @@ public static class UiSmokeService
                 status = updatedShell.Settings.DownloadStatus };
             SelectSettingsCategory(window, 3);
             await Task.Delay(300); SaveScreenshot(window, Path.Combine(output, "settings-download-moved.png"));
+
+            // 走真实入队和绑定链路，首图之前不访问站点。
+            updatedShell.Navigate("library");
+            await WaitUntilAsync(() => window.LibraryScroll is { IsEffectivelyVisible: true }, TimeSpan.FromSeconds(5));
+            var scroller = window.LibraryScroll;
+            if (scroller is not null) scroller.Offset = default;
+            var queued = viewModel.Services.Downloads.Enqueue(new EhGalleryDetails
+                { Gid = 680001, Token = "fixture", Title = "合成排队画廊", Pages = 4 }, startImmediately: false);
+            string? lastScan = viewModel.Services.Settings.LastScanCompletedUtc;
+            updatedShell.Downloads.SyncAll();
+            var queuedCard = viewModel.SnapshotAllWorks().SingleOrDefault(card => card.Gid == queued.Gid);
+            bool readDisabledInViewport = false;
+            bool coverHidden = false;
+            await WaitUntilAsync(() =>
+            {
+                if (scroller is not { IsEffectivelyVisible: true } || queuedCard is null) return false;
+                var card = scroller.GetVisualDescendants().OfType<Border>().FirstOrDefault(border =>
+                    border.IsEffectivelyVisible && border.Classes.Contains("card") && ReferenceEquals(border.DataContext, queuedCard) &&
+                    border.TranslatePoint(default, scroller) is { X: >= 0, Y: >= 0 } point &&
+                    point.X < scroller.Bounds.Width && point.Y < scroller.Bounds.Height);
+                readDisabledInViewport = card?.GetVisualDescendants().OfType<Button>().Any(button =>
+                    button.IsEffectivelyVisible && !button.IsEnabled && Equals(button.Content, "阅读")) == true;
+                coverHidden = card?.GetVisualDescendants().OfType<AsyncImage>().Any(image => image.Opacity == 0) == true;
+                return readDisabledInViewport && coverHidden;
+            }, TimeSpan.FromSeconds(5));
+            bool hasQueueStatus = queuedCard is { HasActiveDownload: true, DownloadStatusText: "等待下载 · 0/4" };
+            bool beforeFirstPage = !Directory.Exists(queued.FolderPath);
+            bool visibleBeforeFirstPage = hasQueueStatus && readDisabledInViewport && coverHidden && beforeFirstPage;
+            SaveScreenshot(window, Path.Combine(output, "library-queued-download.png"));
+            viewModel.Services.Downloads.Remove(queued, deleteFiles: false);
+            updatedShell.Downloads.SyncAll();
+            bool removed = viewModel.SnapshotAllWorks().All(card => card.Gid != queued.Gid);
+            bool noRescan = lastScan == viewModel.Services.Settings.LastScanCompletedUtc && !viewModel.IsScanning;
+            report["queuedDownloadInLibrary"] = new { visibleBeforeFirstPage, removed, noRescan, hasQueueStatus, readDisabledInViewport,
+                coverHidden, beforeFirstPage, libraryVisible = scroller?.IsEffectivelyVisible };
+            succeeded &= visibleBeforeFirstPage && removed && noRescan;
         }
 
         report["pageScreenshots"] = pageShots;

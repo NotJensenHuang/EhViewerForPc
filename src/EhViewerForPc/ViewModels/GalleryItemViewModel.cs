@@ -21,9 +21,9 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
         nameof(Info), nameof(StableId), nameof(WorkId), nameof(Title), nameof(FolderName),
         nameof(FolderPath), nameof(FolderPathDisplay), nameof(Gid), nameof(GidText),
         nameof(PageCount), nameof(CanRead), nameof(PageCountText), nameof(LanguageText), nameof(HasLanguages),
-        nameof(IsIncomplete), nameof(HasMissingPages), nameof(HasZeroByteFiles), nameof(IsEmpty), nameof(CanContinueDownload),
+        nameof(IsIncomplete), nameof(HasMissingPages), nameof(HasZeroByteFiles), nameof(IsEmpty), nameof(ShowContinueDownload), nameof(CanContinueDownload),
         nameof(IsDuplicateGid), nameof(IncompleteText), nameof(MissingText), nameof(ExtensionSummary),
-        nameof(ExpectedPagesText), nameof(LastWriteText), nameof(CoverSourceText), nameof(HeaderErrorText),
+        nameof(ExpectedPagesText), nameof(LastWriteText), nameof(CoverSourceText), nameof(CoverOpacity), nameof(HeaderErrorText),
         nameof(ProgressDetail), nameof(TooltipText), nameof(Details), nameof(CoverRequest),
         nameof(SourceName), nameof(HasSourceName), nameof(IsPrimaryVersionPreferred),
         nameof(VersionText), nameof(VersionBadge), nameof(VersionSummary),
@@ -70,6 +70,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public GalleryInfo Info => _info;
     public IImageRequest CoverRequest => _coverRequest;
+    public double CoverOpacity => Info.IsQueuedDownload ? 0 : 1;
 
     public bool HasMultipleVersions => Versions.Count > 1;
 
@@ -112,7 +113,8 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
 
     public bool HasLanguages => Info.Languages.Length > 0;
     public bool IsIncomplete => Info.IsIncomplete;
-    public bool CanContinueDownload => IsIncomplete && Gid is > 0 && !Info.HasGidConflict && !(_downloadIsPrimary && IsDownloadActive);
+    public bool ShowContinueDownload => IsIncomplete && !Info.IsQueuedDownload;
+    public bool CanContinueDownload => ShowContinueDownload && Gid is > 0 && !Info.HasGidConflict && !(_downloadIsPrimary && IsDownloadActive);
     public bool HasMissingPages => Info.HasMissingPages;
     public bool HasZeroByteFiles => Info.ZeroByteFiles > 0;
     public bool IsEmpty => Info.PageCount == 0;
@@ -122,6 +124,7 @@ public sealed class GalleryItemViewModel : CommunityToolkit.Mvvm.ComponentModel.
     {
         get
         {
+            if (Info.IsQueuedDownload) return string.Empty;
             if (Info.PageCount == 0) return "无图片";
             if (Info.ZeroByteFiles > 0) return $"{Info.ZeroByteFiles} 个损坏页";
             if (Info.HasMissingPages) return "缺页";
@@ -432,6 +435,8 @@ public sealed partial class GalleryVersionViewModel : ObservableObject
     }
     public string PrimaryBadge => IsPrimary ? "默认" : string.Empty;
     public bool IsPreferred => IsPrimary;
+    public bool CanUseCopy => !Info.IsQueuedDownload;
+    public bool CanSetDefault => !IsPrimary && CanUseCopy;
 
     public string SourceName => string.IsNullOrWhiteSpace(Info.SourceName) ? "默认数据源" : Info.SourceName;
     public string FolderName => Info.FolderName;
@@ -445,6 +450,7 @@ public sealed partial class GalleryVersionViewModel : ObservableObject
     {
         get
         {
+            if (Info.IsQueuedDownload) return "等待下载页";
             if (Info.PageCount == 0) return "无图片";
             // 损坏页优先于缺页显示：它解释了下页为什么打不开，也说明该副本仍可修复。
             if (Info.CorruptPages > 0) return $"{Info.CorruptPages} 页损坏";
@@ -458,7 +464,7 @@ public sealed partial class GalleryVersionViewModel : ObservableObject
     /// <summary>Damage that the reader will report also makes the copy repairable,
     /// even when the page count itself looks complete.</summary>
     public bool IsIncomplete => Info.IsIncomplete || Info.CorruptPages > 0;
-    public bool CanContinueDownload => !IsChecking && IsIncomplete && Info.Gid is > 0 && !Info.HasGidConflict;
+    public bool CanContinueDownload => CanUseCopy && !IsChecking && IsIncomplete && Info.Gid is > 0 && !Info.HasGidConflict;
 
     public string LastWriteText => Info.LastWriteUtc == default
         ? "—"

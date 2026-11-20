@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using EhViewerForPc.Core.Download;
 using EhViewerForPc.Core.Format;
 using EhViewerForPc.Core.Models;
@@ -12,6 +13,53 @@ namespace EhViewerForPc.ViewModels;
 
 public sealed partial class MainViewModel
 {
+    private readonly Dictionary<string, GalleryInfo> _queuedCopies = new(PathIdentity.Comparer);
+
+    internal void SyncQueuedDownloadCopies(IReadOnlyCollection<DownloadTask> tasks)
+    {
+        if (_disposed) return;
+        var retained = new HashSet<string>(PathIdentity.Comparer);
+        foreach (var task in tasks)
+        {
+            if (task.FillMissingOnly || !ShouldImportDownload(task) || !TryGetDownloadPaths(task, out var root, out var folder)) continue;
+            var source = FindDownloadSource(root);
+            if (source is { Enabled: false }) continue;
+            retained.Add(folder);
+            if (_queuedCopies.ContainsKey(folder) || task.IsFinished || FindLocalCopy(folder) is not null) continue;
+
+            source = IncludeDownloadSource(root, source);
+            string workId = task.Gid.ToString(CultureInfo.InvariantCulture);
+            var (languages, tags) = GalleryTags.Parse(task.DisplayTitle);
+            var copy = new GalleryInfo
+            {
+                StableId = "queued-" + StableIdFactory.PathHash(folder),
+                WorkId = workId,
+                SourceId = source.Id,
+                SourceName = source.DisplayName,
+                Gid = task.Gid,
+                Token = task.Token,
+                Title = task.DisplayTitle,
+                FolderName = Path.GetFileName(folder),
+                FolderPath = folder,
+                ExpectedPages = task.PageCount > 0 ? task.PageCount : null,
+                IsIncomplete = true,
+                IsQueuedDownload = true,
+                Languages = languages,
+                Tags = tags,
+                LastWriteUtc = DateTime.TryParse(task.AddedUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var added)
+                    ? added.ToUniversalTime() : DateTime.UtcNow,
+            };
+            _queuedCopies.Add(folder, copy);
+            ApplyDownloadedCopies([copy], folder, recordScanUpdate: false);
+        }
+
+        foreach (string folder in _queuedCopies.Keys.Where(folder => !retained.Contains(folder)).ToArray())
+        {
+            _queuedCopies.Remove(folder);
+            if (FindLocalCopy(folder) is { IsQueuedDownload: true }) ApplyDownloadedCopies([], folder, recordScanUpdate: false);
+        }
+    }
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanFillMissingPages))]
     [NotifyCanExecuteChangedFor(nameof(FillMissingPagesCommand))]
@@ -20,13 +68,13 @@ public sealed partial class MainViewModel
     [NotifyPropertyChangedFor(nameof(HasRepairFailures))]
     private string _repairFailureDetails = string.Empty;
     public bool HasRepairFailures => RepairFailureDetails.Length > 0;
-    public bool CanFillMissingPages => !_disposed && !IsFillingMissingPages && Galleries.Any(item => item.Versions.Any(info => info.IsIncomplete));
+    public bool CanFillMissingPages => !_disposed && !IsFillingMissingPages && Galleries.Any(item => item.Versions.Any(info => info.IsIncomplete && !info.IsQueuedDownload));
 
     [RelayCommand(CanExecute = nameof(CanFillMissingPages))]
     private async Task FillMissingPagesAsync()
     {
         if (!CanFillMissingPages) return;
-        var copies = Galleries.SelectMany(item => item.Versions).ToArray();
+        var copies = Galleries.SelectMany(item => item.Versions).Where(copy => !copy.IsQueuedDownload).ToArray();
         IsFillingMissingPages = true;
         RepairFailureDetails = string.Empty;
         StatusText = "正在加入缺页任务…";
@@ -43,38 +91,48 @@ public sealed partial class MainViewModel
         finally { if (!_disposed) IsFillingMissingPages = false; }
     }
 
-    public async Task<bool> ImportDownloadAsync(DownloadTask task)
+    public async Task<bool> ImportDownloadAsync(DownloadTask task, bool persist = false)
     {
         if (_disposed || !ShouldImportDownload(task)) return false;
         CancellationToken token = _lifetime.Token;
-        if (string.IsNullOrWhiteSpace(task.FolderPath)) return false;
-        string folder = AppSettings.NormalizeRoot(task.FolderPath);
-        string root = AppSettings.NormalizeRoot(string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot);
-        if (!PathIdentity.IsDescendantOf(folder, root)) return false;
+        if (!TryGetDownloadPaths(task, out var root, out var folder)) return false;
 
         var source = FindDownloadSource(root)?.Clone();
         if (source is { Enabled: false } || (source is null && task.FillMissingOnly)) return false;
         bool qualifyStableId = _availableSources.Any(other => !PathIdentity.Comparer.Equals(other.RootPath, root));
         bool validatePages = task.FillMissingOnly || task.State != DownloadState.Running;
         int expected = task.PageCount;
-        var copy = await Task.Run(() =>
+        var result = await Task.Run(() =>
         {
             if (!Directory.Exists(folder)) return null;
             return _services.Scanner.Scan(root, null, cancellationToken: token, sourceId: source?.Id,
                 sourceName: source?.DisplayName, qualifyStableId: qualifyStableId, onlyFolder: folder,
-                validatePages: validatePages, expectedPages: expected).Galleries.Single();
+                validatePages: validatePages, expectedPages: expected);
         }, token);
+        var copy = result?.Galleries.Single();
         if (_disposed || !ShouldImportDownload(task) || !PathIdentity.Comparer.Equals(AppSettings.NormalizeRoot(task.FolderPath), folder) ||
             (!_services.Downloads.IsQueued(task) && task.State != DownloadState.Completed) || copy is not { PageCount: > 0 }) return false;
 
         LibrarySource? current = FindDownloadSource(root);
         if (current is { Enabled: false } || (source is not null && current?.Id != source.Id)) return false;
-        if (current is null)
+        current = IncludeDownloadSource(root, current);
+
+        if (persist && result!.Cache.Entries.TryGetValue(Path.GetRelativePath(root, folder), out var entry))
         {
-            current = _services.Settings.AddSource(root, "下载目录");
-            _services.TrySaveSettings(out _);
+            string sourceId = current.Id;
+            _services.Writes.Schedule("library-copy:" + folder, () =>
+            {
+                try
+                {
+                    if (!_services.CacheStore.UpdateFolder(sourceId, root, folder, entry, out var error))
+                        _services.Log.Warn("Download library cache update failed: " + error);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    _services.Log.Warn("Download library cache update failed", error);
+                }
+            });
         }
-        if (!_availableSources.Any(s => s.Id == current.Id)) UpdateSourceDisplay([.. _availableSources, current.Clone()]);
 
         if (copy.SourceId.Length == 0)
         {
@@ -82,7 +140,8 @@ public sealed partial class MainViewModel
             copy.SourceName = current.DisplayName;
             if (SourceCount > 1) copy.StableId += "@" + current.Id;
         }
-        if (FindLocalCopy(folder) is { } previous && previous.SourceId == copy.SourceId && previous.Gid == copy.Gid)
+        _queuedCopies.Remove(folder);
+        if (FindLocalCopy(folder) is { IsQueuedDownload: false } previous && previous.SourceId == copy.SourceId && previous.Gid == copy.Gid)
         {
             copy.StableId = previous.StableId;
             copy.IsDuplicateGid = previous.IsDuplicateGid;
@@ -98,8 +157,32 @@ public sealed partial class MainViewModel
     private bool ShouldImportDownload(DownloadTask task) => task.FillMissingOnly ||
         (_services.Settings.Download.AddAsSource && _services.Settings.Download.RefreshLibraryOnComplete);
 
+    private bool TryGetDownloadPaths(DownloadTask task, out string root, out string folder)
+    {
+        root = folder = string.Empty;
+        if (string.IsNullOrWhiteSpace(task.FolderPath)) return false;
+        try
+        {
+            root = AppSettings.NormalizeRoot(string.IsNullOrEmpty(task.DestinationRoot) ? _services.Downloads.RootPath : task.DestinationRoot);
+            folder = AppSettings.NormalizeRoot(task.FolderPath);
+            return PathIdentity.IsDescendantOf(folder, root);
+        }
+        catch (Exception error) when (error is ArgumentException or IOException or NotSupportedException) { return false; }
+    }
+
     private LibrarySource? FindDownloadSource(string root) => _services.Settings.Sources.FirstOrDefault(source =>
         PathIdentity.Comparer.Equals(source.RootPath, root));
+
+    private LibrarySource IncludeDownloadSource(string root, LibrarySource? source)
+    {
+        if (source is null)
+        {
+            source = _services.Settings.AddSource(root, "下载目录");
+            _services.TrySaveSettings(out _);
+        }
+        if (!_availableSources.Any(existing => existing.Id == source.Id)) UpdateSourceDisplay([.. _availableSources, source.Clone()]);
+        return source;
+    }
 
     internal GalleryInfo? FindLocalCopy(string folder)
     {
@@ -127,9 +210,9 @@ public sealed partial class MainViewModel
         ApplyScannedCopy(copy);
     }
 
-    private void ApplyDownloadedCopies(IReadOnlyList<GalleryInfo> copies, string folder)
+    private void ApplyDownloadedCopies(IReadOnlyList<GalleryInfo> copies, string folder, bool recordScanUpdate = true)
     {
-        if (_scanFolderUpdates is not null) _scanFolderUpdates[folder] = copies;
+        if (recordScanUpdate && _scanFolderUpdates is not null) _scanFolderUpdates[folder] = copies;
         // 只重新合并受影响的作品；其他卡片、封面请求和可见控件保持原实例。
         var workIds = copies.Select(g => g.WorkId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var affected = _all.Where(item => workIds.Contains(item.WorkId) ||
@@ -147,7 +230,7 @@ public sealed partial class MainViewModel
                 ?? available.FirstOrDefault(i => StringComparer.OrdinalIgnoreCase.Equals(i.WorkId, group.WorkId) &&
                     i.Versions.Any(v => group.Versions.Any(g => PathIdentity.Comparer.Equals(v.FolderPath, g.FolderPath))));
             var progress = GalleryItemViewModel.LoadProgress(_services.Progress, group.Primary);
-            if (item is null) item = new GalleryItemViewModel(group, info => new CoverImageRequest(info, _services.Covers), progress);
+            if (item is null) item = new GalleryItemViewModel(group, CreateCoverRequest, progress);
             else
             {
                 available.Remove(item);

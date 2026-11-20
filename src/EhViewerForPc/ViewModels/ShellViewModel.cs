@@ -436,29 +436,35 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         }
     }
 
-    public async Task DownloadAsync(EhGallerySummary summary)
+    public Task DownloadAsync(EhGallerySummary summary) => EnqueueDownloadAsync(new EhGalleryDetails
     {
+        Gid = summary.Gid,
+        Token = summary.Token,
+        Title = summary.Title,
+        Category = summary.Category,
+        ThumbUrl = summary.ThumbUrl,
+        Pages = summary.Pages,
+    }, _services.Settings.ImageQuality, needsGalleryDetails: true);
+
+    public Task DownloadDetailsAsync(EhGalleryDetails details, ImageQuality quality)
+        => EnqueueDownloadAsync(details, quality, needsGalleryDetails: false);
+
+    private async Task EnqueueDownloadAsync(EhGalleryDetails details, ImageQuality quality, bool needsGalleryDetails)
+    {
+        if (_disposed) return;
+        if (!needsGalleryDetails) _services.Works.Upsert(WorkRecord.FromDetails(details));
         try
         {
-            Notify("正在读取画廊信息…");
-            EhGalleryDetails details = await _services.Online
-                .GetDetailsAsync(summary.Gid, summary.Token, CancellationToken.None)
-                .ConfigureAwait(true);
-            await DownloadDetailsAsync(details, _services.Settings.ImageQuality).ConfigureAwait(true);
+            bool existed = _services.Downloads.IsQueued(details.Gid);
+            var queued = await Task.Run(() => _services.Downloads.Enqueue(details, quality: quality, needsGalleryDetails: needsGalleryDetails));
+            if (_disposed) return;
+            Downloads.SyncAll();
+            Notify(queued.IsFinished ? "下载已完成，可从本地库阅读" : existed ? "该作品已在下载队列中" : $"已加入下载队列：{details.DisplayTitle}");
         }
-        catch (Exception ex) when (ex is EhException or HttpRequestException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            Notify("下载失败：" + ex.Message);
+            if (!_disposed) Notify("下载失败：" + error.Message);
         }
-    }
-
-    public async Task DownloadDetailsAsync(EhGalleryDetails details, ImageQuality quality)
-    {
-        _services.Works.Upsert(WorkRecord.FromDetails(details));
-        bool existed = _services.Downloads.IsQueued(details.Gid);
-        var queued = await Task.Run(() => _services.Downloads.Enqueue(details, quality: quality));
-        Notify(queued.IsFinished ? "下载已完成，可从本地库阅读" : existed ? "该作品已在下载队列中" : $"已加入下载队列：{details.DisplayTitle}");
-        Downloads.SyncAll();
     }
 
     public void SearchTag(string query)
@@ -530,7 +536,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         _imageResumeChecked = true;
         try
         {
-            var galleries = Library.SnapshotAllWorks().SelectMany(w => w.Versions).DistinctBy(g => (g.SourceId, g.StableId))
+            var galleries = Library.SnapshotAllWorks().SelectMany(w => w.Versions).Where(g => !g.IsQueuedDownload).DistinctBy(g => (g.SourceId, g.StableId))
                 .Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
             await _services.ImageSearch.ResumePendingBuildAsync(galleries);
             if (_services.Settings.ImageSearch.Enabled && !_services.ImageSearch.IsBuilding)
@@ -567,7 +573,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
                 if (_disposed || !_services.Settings.ImageSearch.Enabled || !_services.Settings.ImageSearch.AutoUpdateAfterDownload) return;
                 string[] folders = _imageUpdateFolders.ToArray();
                 _imageUpdateFolders.Clear();
-                var copies = Library.SnapshotAllWorks().SelectMany(item => item.Versions).DistinctBy(g => (g.SourceId, g.StableId))
+                var copies = Library.SnapshotAllWorks().SelectMany(item => item.Versions).Where(g => !g.IsQueuedDownload).DistinctBy(g => (g.SourceId, g.StableId))
                     .Select(g => new ImageSearchGallery(g.SourceId, g.StableId, g.WorkId, g.FolderPath)).ToArray();
                 if (copies.Length > 0) await _services.ImageSearch.UpdateAutomaticallyAsync(copies, token, folders);
             }

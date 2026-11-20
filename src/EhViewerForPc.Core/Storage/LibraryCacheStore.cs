@@ -17,6 +17,11 @@ public sealed class LibraryCacheStore
 
     public LibraryCache Load(string sourceId, string rootPath, out string? error)
     {
+        lock (_gate) return LoadCore(sourceId, rootPath, out error);
+    }
+
+    private LibraryCache LoadCore(string sourceId, string rootPath, out string? error)
+    {
         string normalizedRoot = Path.GetFullPath(rootPath);
         string file = _paths.GetLibraryCacheFile(sourceId);
 
@@ -42,15 +47,37 @@ public sealed class LibraryCacheStore
 
     public bool Save(LibraryCache cache, out string? error) => Save("default", cache, out error);
 
-    public bool Save(string sourceId, LibraryCache cache, out string? error)
+    public bool Save(string sourceId, LibraryCache cache, out string? error, DateTime? scanStartedUtc = null)
     {
         lock (_gate)
         {
+            string path = _paths.GetLibraryCacheFile(sourceId);
+            if (scanStartedUtc is { } started && cache.RootPath is { } root && File.GetLastWriteTimeUtc(path) >= started)
+            {
+                var latest = Load(sourceId, root, out _);
+                foreach (var (folder, entry) in latest.Entries)
+                    if (entry.TargetedUpdateUtc >= started) cache.Entries[folder] = entry;
+            }
             // 未经扫描的旧条目仍需保留旧语义标记；扫描器输出的新缓存才升级为当前版本。
             if (cache.SchemaVersion != 3) cache.SchemaVersion = LibraryCache.CurrentSchemaVersion;
             cache.SavedUtc = DateTime.UtcNow;
             return JsonFileStore.Save(
-                _paths.GetLibraryCacheFile(sourceId), cache, StorageJsonContext.Default.LibraryCache, out error);
+                path, cache, StorageJsonContext.Default.LibraryCache, out error);
+        }
+    }
+
+    public bool UpdateFolder(string sourceId, string root, string folder, GalleryCacheEntry entry, out string? error)
+    {
+        lock (_gate)
+        {
+            error = null;
+            if (!PathIdentity.IsDescendantOf(folder, root) || !Directory.Exists(folder)) return true;
+            var cache = Load(sourceId, root, out _);
+            cache.IsCompleteSnapshot &= cache.SavedUtc != default;
+            entry = entry.Clone();
+            entry.TargetedUpdateUtc = DateTime.UtcNow;
+            cache.Entries[Path.GetRelativePath(root, folder)] = entry;
+            return Save(sourceId, cache, out error);
         }
     }
 

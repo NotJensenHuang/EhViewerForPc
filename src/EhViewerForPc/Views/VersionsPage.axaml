@@ -56,9 +56,9 @@
 
                 <WrapPanel Grid.Row="3" Orientation="Horizontal" Margin="0,10,0,0" Classes="actions">
                   <Button Content="用此版本阅读" Classes="accent" FontSize="12" Padding="10,3" MinHeight="26"
-                          Tag="{Binding}" Click="OnRead" ToolTip.Tip="设为默认副本并打开阅读器" />
+                          Tag="{Binding}" Click="OnRead" IsEnabled="{Binding CanUseCopy}" ToolTip.Tip="设为默认副本并打开阅读器" />
                   <Button Content="设为默认" FontSize="12" Padding="10,3" MinHeight="26"
-                          Tag="{Binding}" Click="OnSetDefault" IsEnabled="{Binding !IsPrimary}" />
+                          Tag="{Binding}" Click="OnSetDefault" IsEnabled="{Binding CanSetDefault}" />
                   <Button Content="打开文件夹" Classes="ghost" FontSize="12" Padding="10,3" MinHeight="26"
                           Tag="{Binding}" Click="OnOpenFolder" />
                   <Button Content="继续下载" FontSize="12" Padding="10,3" MinHeight="26" Tag="{Binding}"

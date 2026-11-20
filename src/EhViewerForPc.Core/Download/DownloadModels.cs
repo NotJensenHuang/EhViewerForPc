@@ -29,6 +29,8 @@ public sealed class DownloadTask
     public string TaskKey { get; set; } = string.Empty;
     /// <summary>仅在用户主动补页时写入指定的既有副本，不覆盖原文件或元数据。</summary>
     public bool FillMissingOnly { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool NeedsGalleryDetails { get; set; }
     public long Gid { get; set; }
     public string Token { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;

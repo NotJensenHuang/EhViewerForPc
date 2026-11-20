@@ -56,6 +56,7 @@ public sealed partial class DownloadManager : IDisposable
 
     /// <summary>Raised when a task finishes successfully.</summary>
     public event EventHandler<DownloadTask>? TaskCompleted;
+    public event EventHandler<EhGalleryDetails>? GalleryDetailsFetched;
 
     /// <summary>Raised when tasks are added/removed or the archive changes.</summary>
     public event EventHandler? Changed;
@@ -330,7 +331,8 @@ public sealed partial class DownloadManager : IDisposable
         EhGalleryDetails details,
         string? label = null,
         bool startImmediately = true,
-        ImageQuality? quality = null)
+        ImageQuality? quality = null,
+        bool needsGalleryDetails = false)
     {
         DownloadTask task;
         bool changed = false;
@@ -365,6 +367,7 @@ public sealed partial class DownloadManager : IDisposable
                     Quality = quality ?? _settings.ImageQuality,
                     ResampledWidth = _settings.ResampledWidth,
                     PageCount = details.Pages,
+                    NeedsGalleryDetails = needsGalleryDetails,
                     State = DownloadState.Pending,
                     Message = "等待中",
                 };
@@ -697,10 +700,18 @@ public sealed partial class DownloadManager : IDisposable
             task.DownloadedPages = ReadExistingRepairPages(task.FolderPath, token).Count(page => task.PageCount <= 0 || page <= task.PageCount);
         RaiseTask(task);
 
-        if (task.FillMissingOnly)
+        bool needsGalleryDetails = task.NeedsGalleryDetails;
+        if (task.FillMissingOnly || needsGalleryDetails)
         {
             var details = await _client.GetDetailsAsync(task.Gid, task.Token, token).ConfigureAwait(false);
-            if (details.Pages > 0) task.PageCount = details.Pages;
+            lock (_gate)
+            {
+                token.ThrowIfCancellationRequested();
+                if (details.Pages > 0) task.PageCount = details.Pages;
+                if (needsGalleryDetails && task.ThumbUrl.Length == 0) task.ThumbUrl = details.ThumbUrl;
+                task.NeedsGalleryDetails = false;
+            }
+            if (needsGalleryDetails) GalleryDetailsFetched?.Invoke(this, details);
         }
 
         IReadOnlyList<EhPageRef> pages = await _client

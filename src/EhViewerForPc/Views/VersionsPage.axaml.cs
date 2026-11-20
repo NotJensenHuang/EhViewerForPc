@@ -44,14 +44,14 @@ public partial class VersionsPage : DocumentPage
 
     private void OnRead(object? sender, RoutedEventArgs e)
     {
-        if (_viewModel is null || sender is not Button { Tag: GalleryVersionViewModel version }) return;
+        if (_viewModel is null || sender is not Button { Tag: GalleryVersionViewModel { CanUseCopy: true } version }) return;
         _viewModel.ReadVersion = version.Info;
         Close();
     }
 
     private void OnSetDefault(object? sender, RoutedEventArgs e)
     {
-        if (_viewModel is null || sender is not Button { Tag: GalleryVersionViewModel version }) return;
+        if (_viewModel is null || sender is not Button { Tag: GalleryVersionViewModel { CanSetDefault: true } version }) return;
         _viewModel.DefaultVersion = version.Info;
         Close();
     }

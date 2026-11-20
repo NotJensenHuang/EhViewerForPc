@@ -31,6 +31,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _searchTimer;
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _scanCancellation;
+    private Task? _libraryLoadTask;
     private IReadOnlyList<GalleryItemViewModel> _galleries = [];
     private Dictionary<long, GalleryItemViewModel> _byGid = [];
     private IReadOnlyList<SortOption> _sortOptions;
@@ -51,6 +52,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private string _rootDisplay = "未配置数据源";
     private int _sourceCount;
     private IReadOnlyList<LibrarySource> _availableSources = [];
+    private readonly Dictionary<string, string> _loadedSourceRoots = new(StringComparer.Ordinal);
     private Dictionary<string, IReadOnlyList<GalleryInfo>>? _scanFolderUpdates;
 
     public MainViewModel(AppServices services)
@@ -109,7 +111,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private async Task PrepareLocalDeletionAsync(CancellationToken token)
     {
         CancelScanNow();
-        while (IsScanning) await Task.Delay(20, token);
+        if (_libraryLoadTask is { } load) await load.WaitAsync(token);
         token.ThrowIfCancellationRequested();
     }
 
@@ -119,7 +121,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         var paths = _all.SelectMany(item => item.Versions).Select(copy => copy.FolderPath)
             .Where(path => PathIdentity.Comparer.Equals(path, folder) || PathIdentity.IsDescendantOf(path, folder))
             .Distinct(PathIdentity.Comparer).ToArray();
-        foreach (string path in paths) ApplyDownloadedCopies([], path);
+        foreach (string path in paths)
+        {
+            _queuedCopies.Remove(path);
+            ApplyDownloadedCopies([], path);
+        }
         if (_all.Count == 0) StatusText = "本地库暂无作品";
     }
 
@@ -360,7 +366,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         private set => SetProperty(ref _rootDisplay, value);
     }
 
-    public Task InitializeAsync() => LoadLibraryAsync(forceRefresh: false, useCacheFirst: true);
+    public Task InitializeAsync() => LoadLibraryAsync(forceRefresh: false);
 
     /// <summary>目录存在性检查可能等待网络盘或休眠磁盘，后台只访问数据源快照。</summary>
     private Task<LibrarySource[]> ResolveSourcesAsync(CancellationToken token)
@@ -388,19 +394,23 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         };
     }
 
-    public async Task LoadLibraryAsync(bool forceRefresh, bool useCacheFirst)
+    private Task LoadLibraryAsync(bool forceRefresh)
     {
-        if (_disposed || IsScanning) return;
-        _scanCancellation?.Cancel();
+        if (_disposed) return Task.CompletedTask;
+        if (_libraryLoadTask is { IsCompleted: false } load) return load;
+        return _libraryLoadTask = LoadLibraryCoreAsync(forceRefresh);
+    }
+
+    private async Task LoadLibraryCoreAsync(bool forceRefresh)
+    {
         _scanCancellation?.Dispose();
         _scanCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         CancellationToken token = _scanCancellation.Token;
 
         _scanFolderUpdates = new(PathIdentity.Comparer);
-        bool showCache = useCacheFirst && _all.Count == 0;
-        IsScanning = true;
-        ScanPercent = 0;
-        ScanPhase = "检查数据源";
+        if (!forceRefresh)
+            foreach (var copy in _all.SelectMany(item => item.Versions))
+                if (!copy.IsQueuedDownload && !_loadedSourceRoots.ContainsKey(copy.SourceId)) _scanFolderUpdates[copy.FolderPath] = [copy];
 
         try
         {
@@ -413,9 +423,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             }
             UpdateSourceDisplay(sources);
             ShowWelcome = sources.Count == 0;
+            foreach (string id in _loadedSourceRoots.Keys.Where(id => !sources.Any(source => source.Id == id)).ToArray())
+                _loadedSourceRoots.Remove(id);
             if (sources.Count == 0)
             {
-                ApplyScanGalleries([], fromCache: false);
+                ApplyScanGalleries([]);
                 StatusText = _services.Settings.Sources.Any(s => s.Enabled)
                     ? "已配置的数据源目录不可用，请检查磁盘是否已连接"
                     : "请选择 EhViewer 下载目录";
@@ -423,55 +435,64 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             }
 
             bool qualifyIds = sources.Count > 1;
-            ScanPhase = "读取缓存";
-            var (caches, cached) = await Task.Run(() =>
+            var retained = sources.Where(source => !forceRefresh && _loadedSourceRoots.TryGetValue(source.Id, out var root) &&
+                PathIdentity.Comparer.Equals(root, source.RootPath)).ToDictionary(source => source.Id, StringComparer.Ordinal);
+            var galleries = _all.SelectMany(item => item.Versions).Where(copy => !copy.IsQueuedDownload && retained.ContainsKey(copy.SourceId)).ToList();
+            foreach (var copy in galleries) copy.SourceName = retained[copy.SourceId].DisplayName;
+            var pendingSources = sources.Where(source => !retained.ContainsKey(source.Id)).ToArray();
+            var (cached, pending) = await Task.Run(() =>
             {
-                var caches = new Dictionary<string, LibraryCache>(StringComparer.OrdinalIgnoreCase);
-                var cached = new List<GalleryInfo>();
-                foreach (LibrarySource source in sources)
+                var cached = new List<(LibrarySource Source, List<GalleryInfo> Galleries)>();
+                var pending = new List<(LibrarySource Source, LibraryCache Cache)>();
+                foreach (LibrarySource source in pendingSources)
                 {
                     token.ThrowIfCancellationRequested();
                     try
                     {
-                        LibraryCache cache = _services.CacheStore.Load(source.Id, source.RootPath, out _);
-                        caches[source.Id] = cache;
-                        if (showCache && cache.Entries.Count != 0)
-                            cached.AddRange(LibraryScanner.FromCacheOnly(cache, source.RootPath, source.Id, source.DisplayName, qualifyIds));
+                        LibraryCache cache = _services.CacheStore.Load(source.Id, source.RootPath, out string? error);
+                        if (!forceRefresh && error is null && cache.SavedUtc != default && cache.IsCompleteSnapshot)
+                            cached.Add((source, LibraryScanner.FromCacheOnly(cache, source.RootPath, source.Id, source.DisplayName, qualifyIds)));
+                        else pending.Add((source, cache));
                     }
                     catch (Exception ex)
                     {
                         _services.Log.Warn("Cache load failed: " + source.RootPath, ex);
-                        caches.TryAdd(source.Id, new LibraryCache { RootPath = source.RootPath });
+                        pending.Add((source, new LibraryCache { RootPath = source.RootPath }));
                     }
                 }
 
-                return (caches, cached);
+                return (cached, pending);
             }, token);
 
             token.ThrowIfCancellationRequested();
-            if (cached.Count > 0)
+            foreach (var (source, copies) in cached)
             {
-                ApplyScanGalleries(cached, fromCache: true);
-                StatusText = $"缓存 {_all.Count:N0} 个作品，正在校验 {sources.Count} 个数据源…";
+                _loadedSourceRoots[source.Id] = source.RootPath;
+                galleries.AddRange(copies);
             }
+            if (!forceRefresh) ApplyScanGalleries(galleries);
+            if (pending.Count == 0) return;
 
-            var galleries = new List<GalleryInfo>();
+            IsScanning = true;
+            ScanPercent = 0;
+            ScanPhase = "枚举目录";
             int cacheHits = 0;
             double scanSeconds = 0;
 
-            for (int i = 0; i < sources.Count; i++)
+            for (int i = 0; i < pending.Count; i++)
             {
                 token.ThrowIfCancellationRequested();
-                LibrarySource source = sources[i];
+                var (source, cache) = pending[i];
                 int index = i;
-                int total = sources.Count;
+                int total = pending.Count;
                 string name = source.DisplayName;
+                DateTime started = DateTime.UtcNow;
 
                 var progress = new Progress<ScanProgress>(p => OnScanProgress(p, index, total, name));
                 ScanResult result = await Task.Run(
                     () => _services.Scanner.Scan(
                         source.RootPath,
-                        caches[source.Id],
+                        cache,
                         forceRefresh,
                         progress,
                         token,
@@ -488,13 +509,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 var currentSource = _services.Settings.Sources.Find(item => item.Id == source.Id &&
                     PathIdentity.Comparer.Equals(item.RootPath, source.RootPath));
                 if (currentSource is not null) currentSource.LastScanUtc = DateTime.UtcNow.ToString("O");
-                string? cacheError = await Task.Run(() => { _services.CacheStore.Save(source.Id, result.Cache, out var failure); return failure; }, token);
+                string? cacheError = await Task.Run(() => { _services.CacheStore.Save(source.Id, result.Cache, out var failure, started); return failure; }, token);
                 if (cacheError is not null) _services.Log.Warn("Cache save failed: " + cacheError);
             }
 
             token.ThrowIfCancellationRequested();
-            ApplyScanGalleries(galleries, fromCache: false);
-            _services.Settings.LastScanCompletedUtc = DateTime.UtcNow.ToString("O");
+            ApplyScanGalleries(galleries);
+            foreach (var (source, _) in pending) _loadedSourceRoots[source.Id] = source.RootPath;
+            if (forceRefresh) _services.Settings.LastScanCompletedUtc = DateTime.UtcNow.ToString("O");
             _services.TrySaveSettings(out _);
 
             string sourceText = sources.Count > 1 ? $"{sources.Count} 个数据源 · " : string.Empty;
@@ -522,15 +544,16 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void ApplyScanGalleries(IReadOnlyList<GalleryInfo> galleries, bool fromCache)
+    private void ApplyScanGalleries(IReadOnlyList<GalleryInfo> galleries)
     {
         if (_scanFolderUpdates is { Count: > 0 } updates)
         {
             // 全库扫描可能早于刚落盘的文件。保留扫描期间发布的定向更新。
+            var enabled = _services.Settings.Sources.Where(source => source.Enabled).Select(source => source.Id).ToHashSet(StringComparer.Ordinal);
             galleries = galleries.Where(copy => !updates.ContainsKey(copy.FolderPath))
-                .Concat(updates.Values.SelectMany(copies => copies)).ToArray();
+                .Concat(updates.Values.SelectMany(copies => copies).Where(copy => enabled.Contains(copy.SourceId))).ToArray();
         }
-        ApplyGalleries(galleries, fromCache);
+        ApplyGalleries(galleries);
     }
 
     private void OnScanProgress(ScanProgress progress, int index, int total, string sourceName)
@@ -548,8 +571,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private void ApplyGalleries(IReadOnlyList<GalleryInfo> galleries, bool fromCache)
+    private void ApplyGalleries(IReadOnlyList<GalleryInfo> galleries)
     {
+        if (_queuedCopies.Count > 0)
+        {
+            var existingFolders = galleries.Select(copy => copy.FolderPath).ToHashSet(PathIdentity.Comparer);
+            var enabledSources = _services.Settings.Sources.Where(source => source.Enabled).Select(source => source.Id).ToHashSet(StringComparer.Ordinal);
+            galleries = [..galleries, .._queuedCopies.Values.Where(copy => enabledSources.Contains(copy.SourceId) && !existingFolders.Contains(copy.FolderPath))];
+        }
         List<GalleryGroup> groups = LibraryMerger.Group(galleries, PreferredSourceOf);
         var previousItems = _all.ToDictionary(i => i.StableId, PathIdentity.Comparer);
         var items = new List<GalleryItemViewModel>(groups.Count);
@@ -563,7 +592,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 item.UpdateGroup(group);
                 item.ApplyProgress(progress);
             }
-            else item = new GalleryItemViewModel(group, info => new CoverImageRequest(info, _services.Covers), progress);
+            else item = new GalleryItemViewModel(group, CreateCoverRequest, progress);
             item.IsPrimaryVersionPreferred = IsExplicitlyPreferred(group);
             items.Add(item);
         }
@@ -572,7 +601,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _all.AddRange(items);
         TotalGalleryCount = _all.Count;
         TotalPageCount = _all.Sum(i => (long)i.PageCount);
-        ShowWelcome = SourceCount == 0;
+        ShowWelcome = SourceCount == 0 && _all.Count == 0;
         RebuildLanguageOptions();
 
         RebuildLocalIndex();
@@ -587,16 +616,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             ApplyFilter();
         }
 
-        if (fromCache)
-        {
-            StatusText = $"已载入缓存 {_all.Count:N0} 个作品";
-        }
-
         // A fresh scan rebuilds every card, so the download overlay has to be
         // re-projected; otherwise running tasks would look idle until the next
         // engine event.
         ApplyDownloadStates(_services.Downloads.Tasks);
     }
+
+    private IImageRequest CreateCoverRequest(GalleryInfo copy) => copy.IsQueuedDownload
+        ? NullImageRequest.Instance : new CoverImageRequest(copy, _services.Covers);
 
     public void RefreshAllProgress()
     {
@@ -641,7 +668,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             });
             retained.AddRange(scanned);
         }
-        ApplyGalleries(retained, false);
+        ApplyGalleries(retained);
+        _loadedSourceRoots.Clear();
+        foreach (var source in active) _loadedSourceRoots[source.Id] = source.RootPath;
         foreach (var gallery in _all.SelectMany(i => i.Versions))
         {
             if (!movedFiles || gallery.Gid is not null || !PathIdentity.IsDescendantOf(gallery.FolderPath, newRoot) ||
@@ -776,10 +805,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand]
-    private async Task RefreshAsync() => await LoadLibraryAsync(forceRefresh: true, useCacheFirst: false);
+    private async Task RefreshAsync() => await LoadLibraryAsync(forceRefresh: true);
 
     /// <summary>Full rescan of every source; exposed by settings (not the toolbar).</summary>
-    public Task RescanAllAsync() => LoadLibraryAsync(forceRefresh: true, useCacheFirst: false);
+    public Task RescanAllAsync() => LoadLibraryAsync(forceRefresh: true);
 
     /// <summary>Cancels a running scan without clearing the current projection.</summary>
     public void CancelScanNow() => _scanCancellation?.Cancel();
@@ -959,6 +988,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Marks a copy as the one this work opens by default.</summary>
     public void SetPreferredSource(GalleryItemViewModel item, GalleryInfo version)
     {
+        if (version.IsQueuedDownload) return;
         if (string.IsNullOrEmpty(version.SourceId))
         {
             item.SetPrimary(version, preferred: false);
@@ -983,13 +1013,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _services.Settings.LibraryRoot = null;
         _services.TrySaveSettings(out string? saveError);
 
-        _all.Clear();
-        Galleries = [];
-        FilteredCount = 0;
-        TotalGalleryCount = 0;
-        TotalPageCount = 0;
         ShowWelcome = false;
-        await LoadLibraryAsync(forceRefresh: false, useCacheFirst: true);
+        await LoadLibraryAsync(forceRefresh: false);
         return saveError;
     }
 
@@ -1008,20 +1033,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         await StopScanAsync();
         _services.Settings.AddSource(full);
         _services.TrySaveSettings(out string? saveError);
-        await LoadLibraryAsync(forceRefresh: false, useCacheFirst: true);
+        await LoadLibraryAsync(forceRefresh: false);
         return saveError;
     }
 
-    /// <summary>Applies edited source settings (add/remove/enable) and rescans.</summary>
+    /// <summary>保留已载入的来源，只加载新启用或路径变化的数据源。</summary>
     public async Task ReloadSourcesAsync()
     {
         await StopScanAsync();
         _services.TrySaveSettings(out _);
-        _all.Clear();
-        Galleries = [];
-        FilteredCount = 0;
         ShowWelcome = false;
-        await LoadLibraryAsync(forceRefresh: false, useCacheFirst: true);
+        await LoadLibraryAsync(forceRefresh: false);
     }
 
     /// <summary>Drops the scan cache of every source (files are never touched).</summary>
@@ -1082,10 +1104,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private async Task StopScanAsync()
     {
         _scanCancellation?.Cancel();
-        for (int i = 0; i < 100 && IsScanning; i++)
-        {
-            await Task.Delay(50);
-        }
+        if (_libraryLoadTask is { } load) await load;
     }
 
     private static bool IsUnder(string candidate, string root)

@@ -37,6 +37,8 @@ public sealed class GalleryInfo
     public bool HasEhviewer { get; set; }
     public bool HasThumb { get; set; }
     public bool IsEmpty => PageCount == 0;
+    /// <summary>下载已入队，尚无已确认的本地页。由下载队列恢复，不写入资料库缓存。</summary>
+    public bool IsQueuedDownload { get; init; }
     public string? CoverPath { get; set; }
     public string? CoverKind { get; set; }
     public string[] Languages { get; set; } = [];

@@ -39,6 +39,7 @@ public sealed partial class AppServices : IDisposable
         OnlineImages = new OnlineImageService(paths, Online, Images, Log, settings, PageImages);
         TagTranslation = new TagTranslationService(paths, settings, Online, Log);
         Downloads = new DownloadManager(paths, settings, Online, message => Log.Warn(message), PageImages);
+        Downloads.GalleryDetailsFetched += (_, details) => Works.Upsert(WorkRecord.FromDetails(details));
         ImageSearch = new LocalImageSearchService(this);
         PageImages.FindLocalPage = Downloads.FindPage;
         ApplySettings(settings);

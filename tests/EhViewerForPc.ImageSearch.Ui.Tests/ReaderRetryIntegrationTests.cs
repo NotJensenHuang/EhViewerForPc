@@ -16,6 +16,99 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
 public sealed class ReaderRetryIntegrationTests
 {
+    [AvaloniaFact]
+    public async Task OnlineListDownloadAppearsBeforeGalleryDetailsReturnAndIsRemovedWithAnEmptyTask()
+    {
+        using var fixture = new Fixture();
+        var services = fixture.Services;
+        services.Settings.Download.AddAsSource = true;
+        services.Settings.Sources.Clear();
+        fixture.Handler.BlockGallery = true;
+        using var shell = new ShellViewModel(services);
+        await shell.Library.InitializeAsync();
+        string? scan = services.Settings.LastScanCompletedUtc;
+        Task enqueue = shell.DownloadAsync(new() { Gid = 42, Token = "0123456789", Title = "fixture" });
+        try
+        {
+            await enqueue.WaitAsync(TimeSpan.FromSeconds(2));
+            await fixture.Handler.GalleryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var download = Assert.Single(shell.Downloads.Tasks);
+            var card = Assert.Single(shell.Library.Galleries);
+            Assert.Equal(42, card.Gid);
+            Assert.False(card.CanRead);
+            Assert.True(card.HasActiveDownload);
+            Assert.Empty(Directory.EnumerateFiles(download.Task.FolderPath));
+            await shell.Downloads.RemoveTask(download);
+            Dispatcher.UIThread.RunJobs();
+            Assert.Empty(shell.Library.Galleries);
+            Assert.Equal(scan, services.Settings.LastScanCompletedUtc);
+        }
+        finally
+        {
+            fixture.Handler.Release.TrySetResult();
+            await enqueue;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task CachedSourcesStayIntactWhileThreeSavedDownloadsAppearAndANewSourceIsAdded()
+    {
+        using var fixture = new Fixture();
+        var services = fixture.Services;
+        string source = Assert.Single(services.Settings.Sources).RootPath;
+        string downloadRoot = Directory.CreateDirectory(services.Downloads.RootPath).FullName;
+        services.Settings.Download.AddAsSource = true;
+        services.Settings.AddSource(downloadRoot);
+        using (var initial = new MainViewModel(services)) await initial.RescanAllAsync();
+        string? firstScan = services.Settings.LastScanCompletedUtc;
+        string? firstSourceScan = services.Settings.Sources[0].LastScanUtc;
+
+        string external = Directory.CreateDirectory(Path.Combine(source, "80-external-change")).FullName;
+        File.WriteAllBytes(Path.Combine(external, "00000001.png"), fixture.Handler.Image);
+        foreach (int gid in new[] { 81, 82, 83 })
+        {
+            var task = services.Downloads.Enqueue(new() { Gid = gid, Token = "fixture", Title = $"下载 {gid}", Pages = 4 }, startImmediately: false);
+            Directory.CreateDirectory(task.FolderPath);
+            File.WriteAllBytes(Path.Combine(task.FolderPath, "00000001.png"), fixture.Handler.Image);
+            task.DownloadedPages = 1;
+            services.Downloads.Pause(task);
+        }
+
+        using var shell = new ShellViewModel(services);
+        int scanChanges = 0;
+        shell.Library.PropertyChanged += (_, change) => { if (change.PropertyName == nameof(MainViewModel.IsScanning)) scanChanges++; };
+        await shell.Library.InitializeAsync();
+        Assert.Equal(0, scanChanges);
+        Assert.Equal(firstScan, services.Settings.LastScanCompletedUtc);
+        Assert.Equal(firstSourceScan, services.Settings.Sources[0].LastScanUtc);
+        for (int attempt = 0; attempt < 150 && shell.Library.Galleries.Count(card => card.CanRead) != 4; attempt++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            await Task.Delay(30);
+        }
+        Assert.Equal(new long?[] { 42, 81, 82, 83 }, shell.Library.Galleries.Select(card => card.Gid).Order());
+
+        var originalCard = shell.Library.Galleries.Single(card => card.Gid == 42);
+        string newSource = Directory.CreateDirectory(Path.Combine(Path.GetDirectoryName(source)!, "extra-source")).FullName;
+        string newCopy = Directory.CreateDirectory(Path.Combine(newSource, "84-new-source")).FullName;
+        File.WriteAllBytes(Path.Combine(newCopy, "00000001.png"), fixture.Handler.Image);
+        Assert.Null(await shell.Library.AddSourceAsync(newSource));
+        Assert.Equal(firstScan, services.Settings.LastScanCompletedUtc);
+        Assert.Equal(firstSourceScan, services.Settings.Sources[0].LastScanUtc);
+        Assert.Same(originalCard, shell.Library.Galleries.Single(card => card.Gid == 42));
+        Assert.Equal(new long?[] { 42, 81, 82, 83, 84 }, shell.Library.Galleries.Select(card => card.Gid).Order());
+
+        foreach (var task in services.Downloads.Tasks) services.Downloads.Remove(task, deleteFiles: false);
+        shell.Dispose();
+        services.Dispose();
+        using var restarted = AppServices.Initialize(services.Paths);
+        using var restored = new MainViewModel(restarted);
+        await restored.InitializeAsync();
+        Assert.Empty(restarted.Downloads.Tasks);
+        Assert.Equal(firstScan, restarted.Settings.LastScanCompletedUtc);
+        Assert.Equal(new long?[] { 42, 81, 82, 83, 84 }, restored.Galleries.Select(card => card.Gid).Order());
+    }
+
     [AvaloniaTheory]
     [InlineData(false)]
     [InlineData(true)]
@@ -35,19 +128,21 @@ public sealed class ReaderRetryIntegrationTests
         await shell.DownloadDetailsAsync(new() { Gid = 42, Token = "0123456789", Title = "downloaded", Pages = 4 }, ImageQuality.Resampled);
         var task = Assert.Single(fixture.Services.Downloads.Tasks);
         string folder = AppSettings.NormalizeRoot(task.FolderPath);
+        var queuedCard = Assert.Single(shell.Library.Galleries);
         await fixture.Handler.SecondPageStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(1, task.DownloadedPages);
         GalleryInfo? copy = null;
-        for (int attempt = 0; attempt < 100 && copy is null; attempt++)
+        for (int attempt = 0; attempt < 100 && copy is not { PageCount: > 0 }; attempt++)
         {
             Dispatcher.UIThread.RunJobs();
             copy = shell.Library.SnapshotAllWorks().SelectMany(item => item.Versions)
                 .SingleOrDefault(version => version.FolderPath == folder);
-            if (copy is null) await Task.Delay(30);
+            if (copy is not { PageCount: > 0 }) await Task.Delay(30);
         }
         Assert.NotNull(copy);
         Assert.Equal(1, copy.PageCount);
         Assert.True(copy.IsIncomplete);
+        Assert.Same(queuedCard, Assert.Single(shell.Library.Galleries));
         Assert.Equal(scanAt, fixture.Services.Settings.LastScanCompletedUtc);
 
         DownloadReadRequest? requested = null;
@@ -303,12 +398,18 @@ public sealed class ReaderRetryIntegrationTests
         internal byte[] Image { get; } = SyntheticImages.Create(99, 200, 280).EncodePng();
         internal readonly System.Collections.Concurrent.ConcurrentQueue<string> Requests = new();
         internal readonly TaskCompletionSource ImageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource GalleryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource SecondPageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool FailImage, BlockImage, IgnoreImageCancellation, PauseAfterFirstPage;
+        internal bool FailImage, BlockImage, IgnoreImageCancellation, PauseAfterFirstPage, BlockGallery;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             string path = request.RequestUri!.AbsolutePath; Requests.Enqueue(path);
+            if (BlockGallery && path.StartsWith("/g/", StringComparison.Ordinal))
+            {
+                GalleryStarted.TrySetResult();
+                await Release.Task.WaitAsync(cancellationToken);
+            }
             if (path.EndsWith(".png"))
             {
                 ImageStarted.TrySetResult();

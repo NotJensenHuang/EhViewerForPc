@@ -95,6 +95,7 @@ public sealed partial class VersionsViewModel : ObservableObject, IDisposable
         {
             foreach (var version in selected is null ? Versions.ToArray() : new[] { selected })
             {
+                if (!version.CanUseCopy) continue;
                 version.IsChecking = true;
                 try
                 {

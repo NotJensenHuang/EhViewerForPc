@@ -82,7 +82,7 @@
                     <Border CornerRadius="8" ClipToBounds="True" Background="{DynamicResource AppBgAltBrush}"
                             Tapped="OnCoverTapped" ToolTip.Tip="点击封面查看详情">
                       <Grid>
-                        <controls:AsyncImage Source="{Binding CoverRequest}" Stretch="UniformToFill" />
+                        <controls:AsyncImage Source="{Binding CoverRequest}" Opacity="{Binding CoverOpacity}" Stretch="UniformToFill" />
 
                         <StackPanel Orientation="Horizontal" Spacing="6" Margin="8"
                                     HorizontalAlignment="Left" VerticalAlignment="Top">
@@ -98,7 +98,7 @@
 
                         <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
                                 Background="#CC3A1D24" CornerRadius="6" Padding="7,2"
-                                IsVisible="{Binding IsIncomplete}">
+                                IsVisible="{Binding ShowContinueDownload}">
                           <TextBlock Text="{Binding IncompleteText}" FontSize="12" Foreground="#FFB3BF" />
                         </Border>
 
@@ -139,7 +139,7 @@
                       <Button Content="阅读" FontWeight="SemiBold" FontSize="13" MinHeight="32" Padding="12,4"
                               IsEnabled="{Binding CanRead}" Click="OnReadCard"
                               AutomationProperties.Name="阅读此作品" AutomationProperties.AutomationId="Library.Read" />
-                      <Button Content="继续下载" FontSize="13" MinHeight="32" Padding="10,4" IsVisible="{Binding IsIncomplete}"
+                      <Button Content="继续下载" FontSize="13" MinHeight="32" Padding="10,4" IsVisible="{Binding ShowContinueDownload}"
                               IsEnabled="{Binding CanContinueDownload}" Click="OnContinueDownload" ToolTip.Tip="{Binding FolderPath}"
                               AutomationProperties.AutomationId="Library.ContinueDownload" />
                       </StackPanel>

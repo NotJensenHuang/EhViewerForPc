@@ -23,7 +23,7 @@ public sealed partial class AppServices
     /// <summary>阅读器提交校验结果，资料库只更新仍使用该快照的已登记副本。</summary>
     public void NotifyLocalReaderPagesValidated(GalleryInfo copy, PageScanResult pages) => LocalReaderPagesValidated?.Invoke(this, (copy, pages));
     // 损坏页与缺页同等对待：两者都只能靠补下载修复。
-    public bool CanContinueLocalDownload(GalleryInfo info) => (info.IsIncomplete || info.CorruptPages > 0) &&
+    public bool CanContinueLocalDownload(GalleryInfo info) => !info.IsQueuedDownload && (info.IsIncomplete || info.CorruptPages > 0) &&
         info.Gid is > 0 && !info.HasGidConflict &&
         Settings.Sources.Any(source => source.Id == info.SourceId && source.Enabled);
 

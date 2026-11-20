@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace EhViewerForPc.Core.Models;
 
 public sealed class LibraryCache
@@ -7,6 +9,7 @@ public sealed class LibraryCache
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public string? RootPath { get; set; }
     public DateTime SavedUtc { get; set; }
+    public bool IsCompleteSnapshot { get; set; } = true;
     public Dictionary<string, GalleryCacheEntry> Entries { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
@@ -14,6 +17,8 @@ public sealed class GalleryCacheEntry
 {
     public required string FolderName { get; set; }
     public long FolderMtimeTicks { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public DateTime TargetedUpdateUtc { get; set; }
     public long EhviewerLength { get; set; }
     public long EhviewerMtimeTicks { get; set; }
     public long ThumbLength { get; set; }

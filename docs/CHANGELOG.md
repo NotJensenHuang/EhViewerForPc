@@ -1,5 +1,21 @@
 # 变更记录
 
+## 2026-11-20 下载入队立即显示在本地库
+
+- `ShellViewModel.cs` 和 `DownloadManager.cs` 使用在线列表已有的信息入队，下载工作线程获取详情并记录权威页数。
+- `DownloadsViewModel.cs` 和 `MainViewModel.Downloads.cs` 在任务入队后发布卡片。首张图片原位启用阅读，移除尚无图片的任务时撤下卡片。下载中的空卡片从队列恢复，实际页信息继续使用本地库缓存。
+- `GalleryMerger.cs` 和本地库、版本管理视图保留已有可读副本，等待中的副本显示下载状态并禁用阅读与缺页操作。
+- 下载回归使用阻塞画廊详情的 HTTP 测试桩，确认详情返回前卡片已出现，首图原位启用阅读，移除空任务后卡片撤下，以上操作均不触发全库扫描。相关五项回归通过，报告在 `.qa/download-queue-visible-20261120/test-results/`。
+- Windows x64 NativeAOT 导航回归和 UI 冒烟通过。由 6,349 个作品组成的合成库在首图写入前显示排队卡片，阅读按钮禁用。报告及截图在 `.qa/download-queue-visible-20261120/native-library/`。
+
+## 2026-11-20 本地库按新增范围加载
+
+- `MainViewModel.cs` 在启动时载入有效来源缓存，新增或启用来源时保留已载入的卡片和目录快照。缺失缓存只扫描对应来源，手动刷新可重扫全库。
+- `DownloadsViewModel.cs` 合并同一任务的逐页更新，持续消费已落盘的任务，打开本地库即可看到队列中已有页的副本。
+- `MainViewModel.Downloads.cs` 和 `LibraryCacheStore.cs` 持久化下载首图与结束状态。定向缓存保留完整来源快照边界，同步扫描期间的下载结果。
+- Windows x64 只读探针使用 9,184 个合成缓存作品和截图中三个真实下载目录，最终显示 9,187 个作品，扫描状态零次变化。三个目录的 321 个文件前后名称、大小和修改时间一致。回归另覆盖新增来源、已存在卡片保留，以及移除下载任务后重新启动仍可从缓存找到副本。
+- 新 NativeAOT 产物通过导航及冒烟探针。Core 198 项、UI 157 项通过，另两项阅读器重试在旧版同样失败。日志和报告在 `.qa/download-add-only-20261120/`。
+
 ## 2026-11-19 修复下载首图入库和阅读触发重复扫描
 
 - `DownloadsViewModel.cs`、`MainViewModel.Downloads.cs` 和 `LibraryScanner.cs` 按归一化后的副本路径发布首图和完成状态。扫描进行中也可入库，后来完成的扫描合并定向更新。

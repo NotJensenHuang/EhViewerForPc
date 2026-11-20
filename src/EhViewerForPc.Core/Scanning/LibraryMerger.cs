@@ -93,6 +93,9 @@ public static class LibraryMerger
     /// </summary>
     private static int Compare(GalleryInfo a, GalleryInfo b, string? preferred)
     {
+        int queued = a.IsQueuedDownload.CompareTo(b.IsQueuedDownload);
+        if (queued != 0) return queued;
+
         int preferredA = Matches(a, preferred) ? 0 : 1;
         int preferredB = Matches(b, preferred) ? 0 : 1;
         if (preferredA != preferredB) return preferredA - preferredB;

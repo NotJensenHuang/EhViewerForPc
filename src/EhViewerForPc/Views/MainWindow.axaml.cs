@@ -368,7 +368,7 @@ public partial class MainWindow : Window
         if (_imageSearchPage is null)
         {
             var viewModel = new ImageSearchViewModel(AppServices.Current,
-                () => _shell.Library.SnapshotAllWorks().SelectMany(item => item.Versions).DistinctBy(g => (g.SourceId, g.StableId)).ToArray());
+                () => _shell.Library.SnapshotAllWorks().SelectMany(item => item.Versions).Where(g => !g.IsQueuedDownload).DistinctBy(g => (g.SourceId, g.StableId)).ToArray());
             viewModel.ReadRequested += OnImageHitReadRequested;
             viewModel.SettingsRequested += OnImageSearchSettingsRequested;
             _imageSearchPage = new ImageSearchPage(viewModel);
