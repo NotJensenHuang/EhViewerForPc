@@ -18,6 +18,7 @@ public enum ProxyMode
     Http = 2,
     Socks5 = 3,
     EhDirect = 4,
+    Auto = 5,
 }
 
 public enum ReadingMode
@@ -367,7 +368,7 @@ public sealed class AccountSettings
 /// <summary>Proxy / DNS configuration shared by browsing, covers and downloads.</summary>
 public sealed class NetworkSettings
 {
-    public ProxyMode ProxyMode { get; set; } = ProxyMode.System;
+    public ProxyMode ProxyMode { get; set; } = ProxyMode.Auto;
     public string ProxyHost { get; set; } = string.Empty;
     public int ProxyPort { get; set; }
     public string ProxyUserName { get; set; } = string.Empty;
@@ -388,7 +389,7 @@ public sealed class NetworkSettings
 
     public void Normalize()
     {
-        if (!Enum.IsDefined(ProxyMode)) ProxyMode = ProxyMode.System;
+        if (!Enum.IsDefined(ProxyMode)) ProxyMode = ProxyMode.Auto;
         ProxyHost = ProxyHost?.Trim() ?? string.Empty;
         ProxyUserName ??= string.Empty;
         ProxyPassword ??= string.Empty;

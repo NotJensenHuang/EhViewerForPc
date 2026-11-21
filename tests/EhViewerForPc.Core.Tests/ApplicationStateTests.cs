@@ -117,7 +117,8 @@ public sealed class ApplicationStateTests : IDisposable
     {
         using (var editor = new SettingsViewModel(_services))
         {
-            Assert.Equal((int)ProxyMode.System, editor.ProxyModeIndex);
+            Assert.Equal("自动（默认）", editor.ProxyModeLabels[editor.ProxyModeIndex]);
+            Assert.True(editor.CanProxyImages);
             editor.ProxyModeIndex = Array.IndexOf(editor.ProxyModeLabels, "站点直连");
             Assert.False(editor.IsManualProxy);
             Assert.False(editor.CanProxyImages);
@@ -127,6 +128,17 @@ public sealed class ApplicationStateTests : IDisposable
         var store = new SettingsStore(_services.Paths);
         _services.Dispose(); // 退出时等待延迟保存的设置落盘。
         Assert.Equal(ProxyMode.EhDirect, store.Load(out _).Network.ProxyMode);
+    }
+
+    [Theory]
+    [InlineData("{}", ProxyMode.Auto)]
+    [InlineData("{\"proxyMode\":1}", ProxyMode.System)]
+    [InlineData("{\"proxyMode\":\"System\"}", ProxyMode.System)]
+    [InlineData("{\"proxyMode\":\"Auto\"}", ProxyMode.Auto)]
+    public void ReadsDefaultAndPreviouslySavedProxyMode(string network, ProxyMode expected)
+    {
+        File.WriteAllText(_services.Paths.SettingsFile, "{\"network\":" + network + "}");
+        Assert.Equal(expected, new SettingsStore(_services.Paths).Load(out _).Network.ProxyMode);
     }
 
     [Fact]

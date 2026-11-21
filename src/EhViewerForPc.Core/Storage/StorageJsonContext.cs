@@ -26,4 +26,5 @@ namespace EhViewerForPc.Core.Storage;
 [JsonSerializable(typeof(DownloadRootMoveJournal))]
 [JsonSerializable(typeof(TagTranslationDatabase))]
 [JsonSerializable(typeof(ImageIndexBuildCheckpoint))]
+[JsonSerializable(typeof(UpstreamHostsCache))]
 public sealed partial class StorageJsonContext : JsonSerializerContext;

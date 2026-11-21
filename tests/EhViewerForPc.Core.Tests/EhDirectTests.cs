@@ -11,6 +11,23 @@ namespace EhViewerForPc.Core.Tests;
 
 public sealed class EhDirectTests
 {
+    [Fact]
+    public void SiteConnectionsPreferNewUpstreamAddressesAndKeepRetiredOnesAsFallback()
+    {
+        IPAddress retired = IPAddress.Parse("192.0.2.1");
+        IPAddress retained = IPAddress.Parse("192.0.2.2");
+        IPAddress added = IPAddress.Parse("192.0.2.3");
+        IPAddress[] builtIn = [retired, retained];
+
+        var changed = EhHttp.OrderDirectCandidates(builtIn, [retained, added]);
+        Assert.Equal([added, retained], changed.Preferred);
+        Assert.Equal([retired], changed.Fallback);
+
+        var reordered = EhHttp.OrderDirectCandidates(builtIn, [retained, retired]);
+        Assert.Same(builtIn, reordered.Preferred);
+        Assert.Empty(reordered.Fallback);
+    }
+
     [Theory]
     [InlineData("reader.hath.network", true)]
     [InlineData("reader.HATH.NETWORK.", true)]

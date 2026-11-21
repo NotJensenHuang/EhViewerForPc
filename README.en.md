@@ -107,8 +107,9 @@ Online browsing is available on first launch. To use the local library, point "L
 
 - ⚙️ **Account, Network and Settings**
   - Sign-in is completed in the system browser; the app reads and persists only session cookies and never stores a password. Pasting a cookie string manually is available as a fallback
-  - The app follows the system proxy by default. Other modes include no proxy, HTTP, SOCKS5 and Site Direct. When using a proxy, you can configure image requests separately
-  - To connect without a VPN, select Site Direct (站点直连) under Settings → Network → Proxy Mode and save. In-app pages and images use a routed physical Ethernet or Wi-Fi interface. For supported site hosts the app can connect to built-in addresses without sending SNI, while still verifying the original hostname and certificate chain. ExHentai content requires an account with access. External browsers use their own network settings
+  - Proxy Mode under Settings → Network defaults to Automatic (自动). It follows system settings when it detects a Windows VPN or a common TUN adapter and uses Site Direct otherwise. New requests adapt when the VPN changes while the app is running. Existing settings retain their saved mode. You can also choose System, No Proxy, HTTP, SOCKS5 or Site Direct manually. Image proxying can be configured separately
+  - Site Direct connects in-app pages and images through a routed physical Ethernet or Wi-Fi interface. For supported site hosts the app can connect to built-in addresses without sending SNI, while still verifying the original hostname and certificate chain. ExHentai content requires an account with access. External browsers use their own network settings
+  - While in use, Site Direct automatically checks the Android project's default GitHub branch for updated site IPs. Connections can use local addresses while the check runs. A successful check is valid for 24 hours. A failed check can be retried on use after 30 minutes. Manual hosts take priority. If GitHub is unavailable or the table format changes, the app retains its last valid cache, bundled addresses and DNS fallback
   - Supports custom DNS-over-HTTPS endpoints, hosts entries and a connection test. If resolution fails or returns only fake addresses, Site Direct queries Alibaba Public DNS. It recognizes 198.18.0.0/15 and the paired IPv6 placeholders observed for site and H@H image hosts
   - Settings are grouped into categories and take effect on "Save settings"; saving uses an incremental merge so cached startup values cannot overwrite sources added at runtime
 
@@ -262,6 +263,7 @@ progress.json            Reading progress and favourites (per work ID, shared by
 works.json               Work metadata across online and local sources
 downloads.json           Download execution state and completed records
 tag-translations.json    Cached tag translation data
+upstream-hosts.json      Last validated upstream site address table, ETag and check time for Site Direct
 library-cache-<src>.json Per-source scan signature cache
 download-move.json       Recovery journal for a directory move (removed after completion)
 dimensions/              Page dimension cache for continuous mode

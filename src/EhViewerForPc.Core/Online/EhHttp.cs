@@ -285,33 +285,19 @@ public static class EhHttp
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
         "Chrome/126.0.0.0 Safari/537.36";
 
-    public static HttpClient Create(NetworkSettings network, CookieContainer cookies, bool forImages, Action<string>? log = null)
+    public static HttpClient Create(NetworkSettings network, CookieContainer cookies, bool forImages, Action<string>? log = null) =>
+        Create(network, cookies, forImages, log, null);
+
+    internal static HttpClient Create(NetworkSettings network, CookieContainer cookies, bool forImages, Action<string>? log,
+        UpstreamHostsService? upstreamHosts, Func<bool>? useSystemNetwork = null, IWebProxy? systemProxy = null)
     {
-        var handler = new SocketsHttpHandler
-        {
-            CookieContainer = cookies,
-            UseCookies = true,
-            AllowAutoRedirect = true,
-            MaxAutomaticRedirections = 10,
-            AutomaticDecompression = DecompressionMethods.All,
-            ConnectTimeout = TimeSpan.FromSeconds(Math.Min(20, network.TimeoutSeconds)),
-            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-            MaxConnectionsPerServer = forImages ? 8 : 4,
-        };
-
-        ApplyProxy(handler, network, forImages);
-
-        HttpMessageHandler clientHandler = handler;
-        bool direct = network.ProxyMode == ProxyMode.EhDirect;
-        bool doh = network.DnsOverHttps;
         Dictionary<string, IPAddress[]> hosts = ParseHosts(network.HostsOverride);
-        if (direct || doh || hosts.Count > 0)
-        {
-            var resolver = new HostResolver(
-                doh ? network.DohEndpoint : null, hosts, direct, log);
-            handler.ConnectCallback = resolver.ConnectAsync;
-            clientHandler = new ResolverHandler(handler, resolver);
-        }
+        HttpMessageHandler clientHandler = network.ProxyMode == ProxyMode.Auto
+            ? new AutomaticProxyHandler(
+                CreateHandler(network, ProxyMode.EhDirect, cookies, forImages, hosts, log, upstreamHosts, null),
+                CreateHandler(network, ProxyMode.System, cookies, forImages, hosts, log, null, systemProxy),
+                useSystemNetwork ?? VpnConnection.UseSystemNetwork)
+            : CreateHandler(network, network.ProxyMode, cookies, forImages, hosts, log, upstreamHosts, systemProxy);
 
         var client = new HttpClient(clientHandler)
         {
@@ -330,7 +316,63 @@ public static class EhHttp
         return client;
     }
 
-    private static void ApplyProxy(SocketsHttpHandler handler, NetworkSettings network, bool forImages)
+    internal static ProxyMode ResolveProxyMode(ProxyMode mode) => mode == ProxyMode.Auto
+        ? VpnConnection.UseSystemNetwork() ? ProxyMode.System : ProxyMode.EhDirect
+        : mode;
+
+    private static HttpMessageHandler CreateHandler(
+        NetworkSettings network, ProxyMode mode, CookieContainer cookies, bool forImages,
+        Dictionary<string, IPAddress[]> hosts, Action<string>? log, UpstreamHostsService? upstreamHosts, IWebProxy? systemProxy)
+    {
+        var handler = new SocketsHttpHandler
+        {
+            CookieContainer = cookies,
+            UseCookies = true,
+            AllowAutoRedirect = true,
+            MaxAutomaticRedirections = 10,
+            AutomaticDecompression = DecompressionMethods.All,
+            ConnectTimeout = TimeSpan.FromSeconds(Math.Min(20, network.TimeoutSeconds)),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+            MaxConnectionsPerServer = forImages ? 8 : 4,
+        };
+
+        ApplyProxy(handler, network, mode, forImages, systemProxy);
+
+        bool direct = mode == ProxyMode.EhDirect;
+        bool doh = network.DnsOverHttps;
+        if (direct || doh || hosts.Count > 0)
+        {
+            var resolver = new HostResolver(
+                doh ? network.DohEndpoint : null, hosts, direct, log, upstreamHosts);
+            handler.ConnectCallback = resolver.ConnectAsync;
+            return new ResolverHandler(handler, resolver);
+        }
+
+        return handler;
+    }
+
+    private const string DirectDohEndpoint = "https://dns.alidns.com/resolve";
+
+    internal static HttpClient CreateUpstreamHostsClient(NetworkSettings network)
+    {
+        // 更新源使用独立的直连解析器和普通 HTTPS，不依赖待更新的站点地址表。
+        var resolver = new HostResolver(DirectDohEndpoint, [], direct: true, log: null, upstreamHosts: null);
+        var handler = new SocketsHttpHandler
+        {
+            UseProxy = false,
+            UseCookies = false,
+            AllowAutoRedirect = false,
+            ConnectCallback = resolver.ConnectAsync,
+            AutomaticDecompression = DecompressionMethods.All,
+        };
+        return new HttpClient(new ResolverHandler(handler, resolver))
+        {
+            Timeout = TimeSpan.FromSeconds(Math.Clamp(network.TimeoutSeconds, 3, 15)),
+        };
+    }
+
+    private static void ApplyProxy(
+        SocketsHttpHandler handler, NetworkSettings network, ProxyMode mode, bool forImages, IWebProxy? systemProxy)
     {
         if (forImages && !network.ProxyForImages)
         {
@@ -338,7 +380,7 @@ public static class EhHttp
             return;
         }
 
-        switch (network.ProxyMode)
+        switch (mode)
         {
             case ProxyMode.None:
             case ProxyMode.EhDirect:
@@ -346,7 +388,7 @@ public static class EhHttp
                 break;
             case ProxyMode.System:
                 handler.UseProxy = true;
-                handler.Proxy = null;
+                handler.Proxy = systemProxy;
                 break;
             case ProxyMode.Http:
             case ProxyMode.Socks5:
@@ -356,7 +398,7 @@ public static class EhHttp
                     break;
                 }
 
-                string scheme = network.ProxyMode == ProxyMode.Socks5 ? "socks5" : "http";
+                string scheme = mode == ProxyMode.Socks5 ? "socks5" : "http";
                 var proxy = new WebProxy($"{scheme}://{network.ProxyHost}:{network.ProxyPort}");
                 if (network.ProxyUserName.Length > 0)
                 {
@@ -366,6 +408,43 @@ public static class EhHttp
                 handler.Proxy = proxy;
                 handler.UseProxy = true;
                 break;
+        }
+    }
+
+    // 每个请求只选一次连接池。切换时，新请求走新路径，在途的响应仍可读完。
+    private sealed class AutomaticProxyHandler(
+        HttpMessageHandler direct, HttpMessageHandler system, Func<bool> useSystemNetwork) : HttpMessageHandler
+    {
+        private readonly HttpMessageInvoker _direct = new(direct);
+        private readonly HttpMessageInvoker _system = new(system);
+
+        private HttpMessageInvoker SelectHandler() => useSystemNetwork() ? _system : _direct;
+
+        protected override HttpResponseMessage Send(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return SelectHandler().Send(request, cancellationToken);
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            // 网卡枚举和系统代理查找都可能同步阻塞。
+            if (SynchronizationContext.Current is not null)
+                await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return await SelectHandler().SendAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _direct.Dispose();
+                _system.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
     }
 
@@ -401,6 +480,20 @@ public static class EhHttp
         map[key] = map.TryGetValue(key, out IPAddress[]? existing)
             ? [.. existing, address]
             : [address];
+    }
+
+    internal static bool IsDirectContentHost(string host) => EhDirectHosts.Addresses.ContainsKey(host);
+    internal static int DirectContentHostCount => EhDirectHosts.Addresses.Count;
+
+    internal static (IPAddress[] Preferred, IPAddress[] Fallback) OrderDirectCandidates(
+        IPAddress[] builtIn, IPAddress[]? latest)
+    {
+        if (latest is null) return (builtIn, []);
+        // 上游新增地址优先；两边都有的地址沿用桌面版已验证的顺序。
+        IPAddress[] added = latest.Except(builtIn).ToArray();
+        IPAddress[] removed = builtIn.Except(latest).ToArray();
+        if (added.Length == 0 && removed.Length == 0) return (builtIn, []);
+        return ([.. added, .. builtIn.Intersect(latest)], removed);
     }
 
     internal static IPAddress[] FilterDirectSystemAddresses(string host, IPAddress[] addresses)
@@ -483,12 +576,12 @@ public static class EhHttp
     /// <summary>在建立 TCP 连接时应用 DoH 和 hosts 配置。</summary>
     private sealed class HostResolver : IDisposable
     {
-        private const string DirectDohEndpoint = "https://dns.alidns.com/resolve";
         private static readonly IPAddress[] DirectDohBootstrap = [IPAddress.Parse("223.5.5.5"), IPAddress.Parse("223.6.6.6")];
         private static readonly TimeSpan DirectAddressTimeout = TimeSpan.FromMilliseconds(1500);
         private readonly string? _dohEndpoint;
         private readonly Dictionary<string, IPAddress[]> _hosts;
         private readonly bool _direct;
+        private readonly UpstreamHostsService? _upstreamHosts;
         private readonly Action<string>? _log;
         private readonly Dictionary<string, (IPAddress[] Addresses, DateTime Expires)> _cache =
             new(StringComparer.OrdinalIgnoreCase);
@@ -497,11 +590,13 @@ public static class EhHttp
         private readonly HttpClient? _dohClient;
 
         public HostResolver(
-            string? dohEndpoint, Dictionary<string, IPAddress[]> hosts, bool direct, Action<string>? log)
+            string? dohEndpoint, Dictionary<string, IPAddress[]> hosts, bool direct, Action<string>? log,
+            UpstreamHostsService? upstreamHosts)
         {
             _dohEndpoint = dohEndpoint;
             _hosts = hosts;
             _direct = direct;
+            _upstreamHosts = upstreamHosts;
             _log = log;
             if (direct || dohEndpoint is not null)
             {
@@ -594,9 +689,13 @@ public static class EhHttp
         private async ValueTask<Stream> ConnectDirectAsync(
             DnsEndPoint endpoint, string host, IPAddress[] builtIn, CancellationToken token)
         {
+            _hosts.TryGetValue(host, out IPAddress[]? mapped);
+            IPAddress[]? latest = mapped is null && _upstreamHosts is not null
+                ? await _upstreamHosts.GetAddressesAsync(host, token).ConfigureAwait(false)
+                : null;
             (IPAddress Address, bool OmitSni, DateTime Expires) recent;
             lock (_gate) _directCache.TryGetValue(endpoint, out recent);
-            if (recent.Expires > DateTime.UtcNow)
+            if (recent.Expires > DateTime.UtcNow && (latest is null || latest.Contains(recent.Address)))
             {
                 using var recentTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
                 recentTimeout.CancelAfter(TimeSpan.FromSeconds(2));
@@ -618,26 +717,40 @@ public static class EhHttp
                 }
             }
 
-            if (_hosts.TryGetValue(host, out IPAddress[]? mapped))
+            if (mapped is not null)
             {
                 return await ConnectTlsCandidatesAsync(mapped, endpoint, token).ConfigureAwait(false);
             }
 
-            // 给可能过期的内置地址独立的预算，保留重新解析和连接的时间。
-            using var builtInTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
-            builtInTimeout.CancelAfter(TimeSpan.FromSeconds(5));
-            try
+            var (preferred, fallback) = OrderDirectCandidates(builtIn, latest);
+            Stream? stream = await TryDirectCandidatesAsync(preferred, endpoint, token).ConfigureAwait(false);
+            if (stream is not null) return stream;
+            if (fallback.Length > 0)
             {
-                return await ConnectTlsCandidatesAsync(builtIn, endpoint, builtInTimeout.Token).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (!token.IsCancellationRequested &&
-                ex is SocketException or IOException or AuthenticationException or OperationCanceledException)
-            {
-                _log?.Invoke($"内置地址连接失败，重新解析 {host}：{ex.Message}");
+                stream = await TryDirectCandidatesAsync(fallback, endpoint, token).ConfigureAwait(false);
+                if (stream is not null) return stream;
             }
 
             IPAddress[] resolved = await ResolveAsync(host, token).ConfigureAwait(false);
             return await ConnectTlsCandidatesAsync(resolved, endpoint, token).ConfigureAwait(false);
+        }
+
+        private async ValueTask<Stream?> TryDirectCandidatesAsync(
+            IPAddress[] addresses, DnsEndPoint endpoint, CancellationToken token)
+        {
+            // 独立限制每组的尝试时间，给后备地址和 DNS 留出连接预算。
+            using var builtInTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            builtInTimeout.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                return await ConnectTlsCandidatesAsync(addresses, endpoint, builtInTimeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!token.IsCancellationRequested &&
+                ex is SocketException or IOException or AuthenticationException or OperationCanceledException)
+            {
+                _log?.Invoke($"站点候选地址连接失败 {endpoint.Host}：{ex.Message}");
+                return null;
+            }
         }
 
         private async ValueTask<Stream> ConnectTlsCandidatesAsync(

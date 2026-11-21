@@ -31,6 +31,7 @@ public static class OnlineProbeService
             ["signedIn"] = services.Online.IsSignedIn,
             ["exAccess"] = services.Settings.Account.ExAccess,
             ["proxyMode"] = services.Settings.Network.ProxyMode.ToString(),
+            ["effectiveProxyMode"] = services.Online.EffectiveProxyMode.ToString(),
             ["doh"] = services.Settings.Network.DnsOverHttps,
         };
 

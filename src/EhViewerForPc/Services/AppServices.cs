@@ -34,7 +34,7 @@ public sealed partial class AppServices : IDisposable
         Images = new ImageLoader(Decoder, Log);
         Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
-        Online = createOnline?.Invoke(settings) ?? new EhClient(settings, message => Log.Warn(message));
+        Online = createOnline?.Invoke(settings) ?? new EhClient(settings, message => Log.Warn(message), paths);
         PageImages = new GalleryImageStore(paths, Online);
         OnlineImages = new OnlineImageService(paths, Online, Images, Log, settings, PageImages);
         TagTranslation = new TagTranslationService(paths, settings, Online, Log);

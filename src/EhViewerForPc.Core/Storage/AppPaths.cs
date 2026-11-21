@@ -47,6 +47,8 @@ public sealed class AppPaths
     /// <summary>Cached EhTagTranslation database (compact JSON).</summary>
     public string TagTranslationFile => Path.Combine(BaseDirectory, "tag-translations.json");
 
+    public string UpstreamHostsFile => Path.Combine(BaseDirectory, "upstream-hosts.json");
+
     /// <summary>
     /// Default download root when the user has not configured one. Kept outside
     /// the app data directory so downloads survive a reinstall and can be added

@@ -3,6 +3,7 @@ using System.Buffers;
 using EhViewerForPc.Core.Format;
 using System.Text;
 using EhViewerForPc.Core.Models;
+using EhViewerForPc.Core.Storage;
 
 namespace EhViewerForPc.Core.Online;
 
@@ -38,6 +39,7 @@ public sealed class EhClient : IDisposable
 
     private readonly AppSettings _settings;
     private readonly Action<string>? _log;
+    private readonly UpstreamHostsService? _upstreamHosts;
     private readonly EhSession _session = new();
     private readonly SemaphoreSlim _viewerResolutionGate = new(1, 1);
     private readonly SemaphoreSlim _viewerGate = new(1, 1);
@@ -49,13 +51,22 @@ public sealed class EhClient : IDisposable
     private DateTime _lastViewerRequestUtc = DateTime.MinValue;
     private bool _disposed;
 
-    public EhClient(AppSettings settings, Action<string>? log = null)
+    public EhClient(AppSettings settings, Action<string>? log = null) : this(settings, log, null)
+    {
+    }
+
+    public EhClient(AppSettings settings, Action<string>? log, AppPaths? paths)
     {
         _settings = settings;
         _log = log;
+        if (paths is not null)
+        {
+            _upstreamHosts = new UpstreamHostsService(paths, log);
+            _upstreamHosts.Configure(settings.Network);
+        }
         _session.Import(settings.Account.Cookies);
-        _web = EhHttp.Create(settings.Network, _session.Cookies, forImages: false, log);
-        _images = EhHttp.Create(settings.Network, _session.Cookies, forImages: true, log);
+        _web = EhHttp.Create(settings.Network, _session.Cookies, forImages: false, log, _upstreamHosts);
+        _images = EhHttp.Create(settings.Network, _session.Cookies, forImages: true, log, _upstreamHosts);
     }
 
     internal EhClient(AppSettings settings, HttpClient webClient) : this(settings)
@@ -66,6 +77,7 @@ public sealed class EhClient : IDisposable
 
     public EhSession Session => _session;
     public int ResampledWidth => _settings.ResampledWidth;
+    public ProxyMode EffectiveProxyMode => EhHttp.ResolveProxyMode(_settings.Network.ProxyMode);
 
     public EhSite Site => _settings.Account.Site;
 
@@ -124,8 +136,9 @@ public sealed class EhClient : IDisposable
         if (_disposed) return;
         HttpClient oldWeb = _web;
         HttpClient oldImages = _images;
-        _web = EhHttp.Create(_settings.Network, _session.Cookies, forImages: false, _log);
-        _images = EhHttp.Create(_settings.Network, _session.Cookies, forImages: true, _log);
+        _upstreamHosts?.Configure(_settings.Network);
+        _web = EhHttp.Create(_settings.Network, _session.Cookies, forImages: false, _log, _upstreamHosts);
+        _images = EhHttp.Create(_settings.Network, _session.Cookies, forImages: true, _log, _upstreamHosts);
         oldWeb.Dispose();
         oldImages.Dispose();
         lock (_cacheGate) _imageUrlCache.Clear();
@@ -1299,6 +1312,7 @@ public sealed class EhClient : IDisposable
         _disposed = true;
         _web.Dispose();
         _images.Dispose();
+        _upstreamHosts?.Dispose();
         _viewerGate.Dispose();
     }
 }

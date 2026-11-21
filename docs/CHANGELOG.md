@@ -1,5 +1,17 @@
 # 变更记录
 
+## 2026-11-21 自动代理模式
+
+- `AppSettings.cs` 和 `SettingsViewModel.cs` 将「自动」设为默认选项，保留已有配置保存的代理模式与图片代理开关。
+- `VpnConnection.cs` 和 `EhHttp.cs` 根据 Windows VPN 或常见 TUN 网卡的连接状态，为新请求选择跟随系统或站点直连。
+- `UpstreamHostsService.cs` 允许自动模式下的站点直连复用上游地址缓存，`OnlineProbeService.cs` 报告生效的代理模式。见[自动代理模式验证](站点直连与封面验证-2026-11-21.md#自动代理模式验证)。
+
+## 2026-11-21 站点直连自动同步原版地址
+
+- `UpstreamHostsService.cs` 和 `UpstreamHostsParser.cs` 从原版 GitHub 默认分支后台检查 hosts，按七个站点域名校验完整地址表，复用最近一次通过校验的缓存。
+- `EhHttp.cs`、`EhClient.cs` 和 `AppServices.cs` 让页面与图片共用更新结果，新地址在建连时生效，保留手动 hosts 和本地后备。
+- `AppPaths.cs` 和 `StorageJsonContext.cs` 将地址表、ETag 与校验时间原子写入应用数据目录的 `upstream-hosts.json`。
+
 ## 2026-11-21 应用内站点直连与链接直达封面
 
 - `EhHttp.cs`、`DirectNetworkInterface.cs` 和 `AppSettings.cs` 增加按物理网卡连接的站点直连模式，移植上游站点地址与免 SNI 握手，并验证原域名和证书链。

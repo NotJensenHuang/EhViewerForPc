@@ -182,13 +182,18 @@ public static class UiAuditService
                 await Task.Delay(120);
                 if (window.Shell?.Settings.SelectedCategoryIndex != i)
                     report.Uncovered.Add("settings-" + names[i] + ": category " + i + " was not selected");
-                await Capture("settings-" + names[i], variant);
                 if (names[i] == "network")
                 {
                     int savedMode = shell.Settings.ProxyModeIndex;
+                    shell.Settings.ProxyModeIndex = (int)ProxyMode.Auto;
+                    await Capture("settings-network", variant);
                     shell.Settings.ProxyModeIndex = (int)ProxyMode.EhDirect;
                     await Capture("settings-network-direct", variant);
                     shell.Settings.ProxyModeIndex = savedMode;
+                }
+                else
+                {
+                    await Capture("settings-" + names[i], variant);
                 }
             }
 
@@ -250,6 +255,11 @@ public static class UiAuditService
             shell.Navigate("online"); await Task.Delay(200); await Capture("online", extraName);
             shell.Navigate("library"); await Task.Delay(250); await Capture("library", extraName);
             shell.Navigate("settings"); await Task.Delay(200);
+            shell.Settings.SelectedCategoryIndex = 1;
+            int savedMode = shell.Settings.ProxyModeIndex;
+            shell.Settings.ProxyModeIndex = (int)ProxyMode.Auto;
+            await Capture("settings-network", extraName);
+            shell.Settings.ProxyModeIndex = savedMode;
             shell.Settings.SelectedCategoryIndex = 4; await Task.Delay(150);
             await Capture("settings-reader", extraName);
             shell.Settings.SelectedCategoryIndex = 5; await Task.Delay(150);

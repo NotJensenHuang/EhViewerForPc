@@ -287,7 +287,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public string[] FitLabels { get; } = ["适应页面", "适应宽度", "适应高度", "原始大小"];
     public string[] BackgroundLabels { get; } = ["黑色", "深灰", "灰色", "白色"];
     public string[] SiteLabels { get; } = ["E-Hentai", "ExHentai"];
-    public string[] ProxyModeLabels { get; } = ["不使用代理", "跟随系统", "HTTP 代理", "SOCKS5 代理", "站点直连"];
+    public string[] ProxyModeLabels { get; } = ["不使用代理", "跟随系统", "HTTP 代理", "SOCKS5 代理", "站点直连", "自动（默认）"];
     public string[] FilterTargetLabels { get; } = ["标签", "标题", "上传者"];
 
     /// <summary>Settings categories, in the order the page presents them.</summary>
@@ -617,10 +617,13 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     }
 
     public bool IsManualProxy => (ProxyMode)_proxyModeIndex is ProxyMode.Http or ProxyMode.Socks5;
-    public bool CanProxyImages => (ProxyMode)_proxyModeIndex == ProxyMode.System || IsManualProxy;
-    public string ProxyModeDescription => (ProxyMode)_proxyModeIndex == ProxyMode.EhDirect
-        ? "使用内置地址经物理网卡直连。域名解析失败或仅返回 Fake-IP 时，使用阿里公共 DNS。"
-        : "选择应用内页面和图片的连接方式。";
+    public bool CanProxyImages => (ProxyMode)_proxyModeIndex is ProxyMode.System or ProxyMode.Auto || IsManualProxy;
+    public string ProxyModeDescription => (ProxyMode)_proxyModeIndex switch
+    {
+        ProxyMode.Auto => "检测到 VPN 或 TUN 时跟随系统，否则使用站点直连。",
+        ProxyMode.EhDirect => "经物理网卡直连，自动同步原版站点地址。解析失败或仅返回 Fake-IP 时使用阿里公共 DNS。",
+        _ => "选择应用内页面和图片的连接方式。",
+    };
 
     public string ProxyHost
     {
