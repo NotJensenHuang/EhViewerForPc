@@ -183,6 +183,13 @@ public static class UiAuditService
                 if (window.Shell?.Settings.SelectedCategoryIndex != i)
                     report.Uncovered.Add("settings-" + names[i] + ": category " + i + " was not selected");
                 await Capture("settings-" + names[i], variant);
+                if (names[i] == "network")
+                {
+                    int savedMode = shell.Settings.ProxyModeIndex;
+                    shell.Settings.ProxyModeIndex = (int)ProxyMode.EhDirect;
+                    await Capture("settings-network-direct", variant);
+                    shell.Settings.ProxyModeIndex = savedMode;
+                }
             }
 
             shell.Navigate("library"); await Task.Delay(250);

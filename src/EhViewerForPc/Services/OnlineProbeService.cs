@@ -93,6 +93,7 @@ public static class OnlineProbeService
 
                 report["details"] = Obj(
                     ("title", details.Title),
+                    ("coverHost", EhUrls.HostOf(details.ThumbUrl)),
                     ("japanese", details.JapaneseTitle),
                     ("category", details.Category),
                     ("pages", details.Pages),

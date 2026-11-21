@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using EhViewerForPc.Core.Models;
 
@@ -298,15 +301,19 @@ public static class EhHttp
 
         ApplyProxy(handler, network, forImages);
 
+        HttpMessageHandler clientHandler = handler;
+        bool direct = network.ProxyMode == ProxyMode.EhDirect;
         bool doh = network.DnsOverHttps;
         Dictionary<string, IPAddress[]> hosts = ParseHosts(network.HostsOverride);
-        if (doh || hosts.Count > 0)
+        if (direct || doh || hosts.Count > 0)
         {
-            var resolver = new HostResolver(doh ? network.DohEndpoint : null, hosts, log);
-            handler.ConnectCallback = (context, token) => resolver.ConnectAsync(context.DnsEndPoint, token);
+            var resolver = new HostResolver(
+                doh ? network.DohEndpoint : null, hosts, direct, log);
+            handler.ConnectCallback = resolver.ConnectAsync;
+            clientHandler = new ResolverHandler(handler, resolver);
         }
 
-        var client = new HttpClient(handler)
+        var client = new HttpClient(clientHandler)
         {
             Timeout = TimeSpan.FromSeconds(network.TimeoutSeconds),
         };
@@ -334,6 +341,7 @@ public static class EhHttp
         switch (network.ProxyMode)
         {
             case ProxyMode.None:
+            case ProxyMode.EhDirect:
                 handler.UseProxy = false;
                 break;
             case ProxyMode.System:
@@ -395,54 +403,336 @@ public static class EhHttp
             : [address];
     }
 
-    /// <summary>Socket connector that replaces the system resolver with DoH/hosts.</summary>
-    private sealed class HostResolver
+    internal static IPAddress[] FilterDirectSystemAddresses(string host, IPAddress[] addresses)
     {
+        if (!Array.Exists(addresses, IsFakeIpv4)) return addresses;
+
+        host = host.TrimEnd('.');
+        bool isPublicGalleryHost = EhDirectHosts.Addresses.ContainsKey(host) ||
+            host.EndsWith(".hath.network", StringComparison.OrdinalIgnoreCase);
+
+        // 对已知公开图库域名，仅在同一答复已有 Fake-IP IPv4 时排除 Mihomo 的示例 IPv6 段。
+        return Array.FindAll(addresses, address =>
+            !IsFakeIpv4(address) && (!isPublicGalleryHost || !EhDirectHosts.FakeIpv6Range.Contains(address)));
+    }
+
+    private static bool IsFakeIpv4(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (address.AddressFamily != AddressFamily.InterNetwork) return false;
+
+        // 198.18.0.0/15 为基准测试网段，部分 TUN 代理将其用作 DNS 占位地址。
+        Span<byte> octets = stackalloc byte[4];
+        return address.TryWriteBytes(octets, out _) && octets[0] == 198 && (octets[1] & 0xfe) == 18;
+    }
+
+    private sealed class ResolverHandler(HttpMessageHandler inner, HostResolver resolver) : DelegatingHandler(inner)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing) resolver.Dispose();
+        }
+    }
+
+    private static class EhDirectHosts
+    {
+        public static readonly IPNetwork FakeIpv6Range = IPNetwork.Parse("fdfe:dcba:9876::/64");
+
+        // 上游 Ehviewer_CN_SXJ 的 EhHosts.java (243c39b)。仅为站点内容提供候选地址。
+        public static readonly Dictionary<string, IPAddress[]> Addresses = ParseHosts("""
+            e-hentai.org 172.66.132.196
+            e-hentai.org 104.20.18.168
+            e-hentai.org 104.20.19.168
+            e-hentai.org 172.66.140.62
+            e-hentai.org 172.67.2.238
+            forums.e-hentai.org 172.66.132.196
+            forums.e-hentai.org 172.66.140.62
+            upld.e-hentai.org 89.149.221.236
+            upld.e-hentai.org 95.211.208.236
+            ehgt.org 185.132.132.79
+            ehgt.org 62.112.8.152
+            ehgt.org 185.132.132.76
+            ehgt.org 2a00:7c80:0:123::3a85
+            ehgt.org 2a00:7c80:0:12d::38a1
+            ehgt.org 2a00:7c80:0:13b::37a4
+            exhentai.org 178.175.128.251
+            exhentai.org 178.175.129.251
+            exhentai.org 178.175.128.252
+            exhentai.org 178.175.128.253
+            exhentai.org 178.175.128.254
+            exhentai.org 178.175.129.252
+            exhentai.org 178.175.129.253
+            exhentai.org 178.175.129.254
+            exhentai.org 178.175.132.19
+            exhentai.org 178.175.132.20
+            exhentai.org 178.175.132.21
+            exhentai.org 178.175.132.22
+            upld.exhentai.org 178.175.132.22
+            upld.exhentai.org 178.175.129.254
+            upld.exhentai.org 178.175.128.254
+            s.exhentai.org 178.175.129.253
+            s.exhentai.org 178.175.129.254
+            s.exhentai.org 178.175.128.253
+            s.exhentai.org 178.175.128.254
+            s.exhentai.org 178.175.132.21
+            s.exhentai.org 178.175.132.22
+            """);
+    }
+
+    /// <summary>在建立 TCP 连接时应用 DoH 和 hosts 配置。</summary>
+    private sealed class HostResolver : IDisposable
+    {
+        private const string DirectDohEndpoint = "https://dns.alidns.com/resolve";
+        private static readonly IPAddress[] DirectDohBootstrap = [IPAddress.Parse("223.5.5.5"), IPAddress.Parse("223.6.6.6")];
+        private static readonly TimeSpan DirectAddressTimeout = TimeSpan.FromMilliseconds(1500);
         private readonly string? _dohEndpoint;
         private readonly Dictionary<string, IPAddress[]> _hosts;
+        private readonly bool _direct;
         private readonly Action<string>? _log;
         private readonly Dictionary<string, (IPAddress[] Addresses, DateTime Expires)> _cache =
             new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<DnsEndPoint, (IPAddress Address, bool OmitSni, DateTime Expires)> _directCache = new();
         private readonly object _gate = new();
-        private HttpClient? _dohClient;
+        private readonly HttpClient? _dohClient;
 
-        public HostResolver(string? dohEndpoint, Dictionary<string, IPAddress[]> hosts, Action<string>? log)
+        public HostResolver(
+            string? dohEndpoint, Dictionary<string, IPAddress[]> hosts, bool direct, Action<string>? log)
         {
             _dohEndpoint = dohEndpoint;
             _hosts = hosts;
+            _direct = direct;
             _log = log;
+            if (direct || dohEndpoint is not null)
+            {
+                var dohHandler = new SocketsHttpHandler { UseProxy = !direct };
+                if (direct)
+                {
+                    // DoH 服务器用专用的引导解析，避免递归。
+                    dohHandler.ConnectCallback = ConnectDohAsync;
+                    dohHandler.UseCookies = false;
+                    dohHandler.AllowAutoRedirect = false;
+                }
+
+                _dohClient = new HttpClient(dohHandler)
+                {
+                    Timeout = TimeSpan.FromSeconds(direct ? 3 : 10),
+                };
+            }
         }
 
-        public async ValueTask<Stream> ConnectAsync(DnsEndPoint endpoint, CancellationToken token)
+        public void Dispose() => _dohClient?.Dispose();
+
+        public async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken token)
         {
-            IPAddress[] addresses = await ResolveAsync(endpoint.Host, token).ConfigureAwait(false);
-            if (addresses.Length == 0)
+            DnsEndPoint endpoint = context.DnsEndPoint;
+            HttpRequestMessage request = context.InitialRequestMessage;
+            string host = endpoint.Host.TrimEnd('.');
+            if (_direct && request.RequestUri?.Scheme == Uri.UriSchemeHttps &&
+                request.Headers.Host is null &&
+                request.Version.Major == 1 && request.VersionPolicy != HttpVersionPolicy.RequestVersionOrHigher &&
+                EhDirectHosts.Addresses.TryGetValue(host, out IPAddress[]? builtIn))
             {
-                throw new SocketException((int)SocketError.HostNotFound);
+                return await ConnectDirectAsync(endpoint, host, builtIn, token).ConfigureAwait(false);
             }
 
+            IPAddress[] addresses = await ResolveAsync(endpoint.Host, token).ConfigureAwait(false);
+            return await ConnectAddressesAsync(addresses, endpoint.Port, token).ConfigureAwait(false);
+        }
+
+        private async ValueTask<Stream> ConnectDohAsync(SocketsHttpConnectionContext context, CancellationToken token)
+        {
+            DnsEndPoint endpoint = context.DnsEndPoint;
+            IPAddress[] addresses;
+            if (IPAddress.TryParse(endpoint.Host, out IPAddress? literal))
+            {
+                addresses = [literal];
+            }
+            else if (_hosts.TryGetValue(endpoint.Host, out IPAddress[]? mapped))
+            {
+                addresses = mapped;
+            }
+            else if (endpoint.Host.Equals("dns.alidns.com", StringComparison.OrdinalIgnoreCase))
+            {
+                addresses = DirectDohBootstrap;
+            }
+            else
+            {
+                addresses = await ResolveSystemAsync(endpoint.Host, token).ConfigureAwait(false);
+            }
+
+            return await ConnectAddressesAsync(addresses, endpoint.Port, token).ConfigureAwait(false);
+        }
+
+        private async ValueTask<Stream> ConnectAddressesAsync(
+            IPAddress[] addresses, int port, CancellationToken token)
+        {
             Exception? last = null;
             foreach (IPAddress address in addresses)
             {
-                var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-                {
-                    NoDelay = true,
-                };
-
+                using var attempt = _direct && addresses.Length > 1
+                    ? CancellationTokenSource.CreateLinkedTokenSource(token)
+                    : null;
+                attempt?.CancelAfter(DirectAddressTimeout);
                 try
                 {
-                    await socket.ConnectAsync(new IPEndPoint(address, endpoint.Port), token).ConfigureAwait(false);
-                    return new NetworkStream(socket, ownsSocket: true);
+                    return await ConnectAddressAsync(address, port, attempt?.Token ?? token).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ex is SocketException or OperationCanceledException)
+                catch (OperationCanceledException ex) when (!token.IsCancellationRequested)
                 {
-                    socket.Dispose();
-                    if (ex is OperationCanceledException) throw;
+                    last = ex;
+                }
+                catch (SocketException ex)
+                {
                     last = ex;
                 }
             }
 
-            throw last ?? new SocketException((int)SocketError.ConnectionRefused);
+            throw last ?? new SocketException((int)SocketError.HostNotFound);
+        }
+
+        private async ValueTask<Stream> ConnectDirectAsync(
+            DnsEndPoint endpoint, string host, IPAddress[] builtIn, CancellationToken token)
+        {
+            (IPAddress Address, bool OmitSni, DateTime Expires) recent;
+            lock (_gate) _directCache.TryGetValue(endpoint, out recent);
+            if (recent.Expires > DateTime.UtcNow)
+            {
+                using var recentTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+                recentTimeout.CancelAfter(TimeSpan.FromSeconds(2));
+                try
+                {
+                    return await ConnectTlsAsync(recent.Address, endpoint, recent.OmitSni, recentTimeout.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (!token.IsCancellationRequested &&
+                    ex is SocketException or IOException or AuthenticationException or OperationCanceledException)
+                {
+                    lock (_gate)
+                    {
+                        if (_directCache.TryGetValue(endpoint, out var current) && current == recent)
+                        {
+                            _directCache.Remove(endpoint);
+                        }
+                    }
+                }
+            }
+
+            if (_hosts.TryGetValue(host, out IPAddress[]? mapped))
+            {
+                return await ConnectTlsCandidatesAsync(mapped, endpoint, token).ConfigureAwait(false);
+            }
+
+            // 给可能过期的内置地址独立的预算，保留重新解析和连接的时间。
+            using var builtInTimeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+            builtInTimeout.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                return await ConnectTlsCandidatesAsync(builtIn, endpoint, builtInTimeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!token.IsCancellationRequested &&
+                ex is SocketException or IOException or AuthenticationException or OperationCanceledException)
+            {
+                _log?.Invoke($"内置地址连接失败，重新解析 {host}：{ex.Message}");
+            }
+
+            IPAddress[] resolved = await ResolveAsync(host, token).ConfigureAwait(false);
+            return await ConnectTlsCandidatesAsync(resolved, endpoint, token).ConfigureAwait(false);
+        }
+
+        private async ValueTask<Stream> ConnectTlsCandidatesAsync(
+            IPAddress[] addresses, DnsEndPoint endpoint, CancellationToken token)
+        {
+            Exception? last = null;
+            foreach (IPAddress address in addresses)
+            {
+                using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
+                attempt.CancelAfter(DirectAddressTimeout);
+                try
+                {
+                    return await ConnectAddressTlsWithFallbackAsync(address, endpoint, attempt.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException ex) when (!token.IsCancellationRequested)
+                {
+                    last = ex;
+                }
+                catch (Exception ex) when (ex is SocketException or IOException or AuthenticationException)
+                {
+                    last = ex;
+                }
+            }
+
+            throw last ?? new SocketException((int)SocketError.HostNotFound);
+        }
+
+        private async ValueTask<Stream> ConnectAddressTlsWithFallbackAsync(
+            IPAddress address, DnsEndPoint endpoint, CancellationToken token)
+        {
+            try
+            {
+                return await ConnectAndRememberTlsAsync(address, endpoint, omitSni: true, token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or AuthenticationException)
+            {
+                // TLS 失败后在新连接上使用标准 SNI，由系统校验完整证书。
+                return await ConnectAndRememberTlsAsync(address, endpoint, omitSni: false, token).ConfigureAwait(false);
+            }
+        }
+
+        private async ValueTask<Stream> ConnectAndRememberTlsAsync(
+            IPAddress address, DnsEndPoint endpoint, bool omitSni, CancellationToken token)
+        {
+            Stream stream = await ConnectTlsAsync(address, endpoint, omitSni, token).ConfigureAwait(false);
+            lock (_gate) _directCache[endpoint] = (address, omitSni, DateTime.UtcNow.AddMinutes(10));
+            return stream;
+        }
+
+        private async ValueTask<Stream> ConnectTlsAsync(
+            IPAddress address, DnsEndPoint endpoint, bool omitSni, CancellationToken token)
+        {
+            NetworkStream socket = await ConnectAddressAsync(address, endpoint.Port, token).ConfigureAwait(false);
+            string host = endpoint.Host.TrimEnd('.');
+            var tls = new SslStream(socket);
+            var options = new SslClientAuthenticationOptions { TargetHost = omitSni ? string.Empty : host };
+            if (omitSni)
+            {
+                // 省略 SNI 时由系统校验证书链，并用原始请求域名执行名称校验。
+                options.RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
+                    (errors & ~SslPolicyErrors.RemoteCertificateNameMismatch) == SslPolicyErrors.None &&
+                    certificate is X509Certificate2 leaf && leaf.MatchesHostname(host);
+            }
+
+            try
+            {
+                await tls.AuthenticateAsClientAsync(options, token).ConfigureAwait(false);
+                return tls;
+            }
+            catch
+            {
+                await tls.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+        }
+
+        private async ValueTask<NetworkStream> ConnectAddressAsync(
+            IPAddress address, int port, CancellationToken token)
+        {
+            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            try
+            {
+                if (_direct)
+                {
+                    DirectNetworkInterface.Bind(socket, address);
+                }
+
+                await socket.ConnectAsync(new IPEndPoint(address, port), token).ConfigureAwait(false);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
         }
 
         private async Task<IPAddress[]> ResolveAsync(string host, CancellationToken token)
@@ -464,46 +754,68 @@ public static class EhHttp
             }
             else if (_dohEndpoint is not null)
             {
-                addresses = await ResolveDohAsync(host, token).ConfigureAwait(false);
+                addresses = await ResolveDohAsync(_dohEndpoint, host, token).ConfigureAwait(false);
             }
 
             if (addresses is null || addresses.Length == 0)
             {
-                try
-                {
-                    addresses = await Dns.GetHostAddressesAsync(host, token).ConfigureAwait(false);
-                }
-                catch (SocketException ex)
-                {
-                    _log?.Invoke($"DNS fallback failed for {host}: {ex.Message}");
-                    addresses = [];
-                }
+                addresses = await ResolveSystemAsync(host, token).ConfigureAwait(false);
+            }
+
+            if (_direct && addresses.Length == 0 &&
+                !DirectDohEndpoint.Equals(_dohEndpoint, StringComparison.OrdinalIgnoreCase))
+            {
+                addresses = await ResolveDohAsync(DirectDohEndpoint, host, token).ConfigureAwait(false) ?? [];
             }
 
             lock (_gate)
             {
-                _cache[host] = (addresses, DateTime.UtcNow.AddMinutes(10));
+                if (!_direct || addresses.Length > 0)
+                {
+                    _cache[host] = (addresses, DateTime.UtcNow.AddMinutes(10));
+                }
             }
 
             return addresses;
         }
 
-        private async Task<IPAddress[]?> ResolveDohAsync(string host, CancellationToken token)
+        private async Task<IPAddress[]> ResolveSystemAsync(string host, CancellationToken token)
         {
             try
             {
-                _dohClient ??= new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-                string separator = _dohEndpoint!.Contains('?') ? "&" : "?";
-                string url = _dohEndpoint + separator + "name=" + Uri.EscapeDataString(host) + "&type=A";
-                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                IPAddress[] addresses = await Dns.GetHostAddressesAsync(host, token).ConfigureAwait(false);
+                return _direct ? FilterDirectSystemAddresses(host, addresses) : addresses;
+            }
+            catch (SocketException ex)
+            {
+                _log?.Invoke($"DNS fallback failed for {host}: {ex.Message}");
+                return [];
+            }
+        }
+
+        private async Task<IPAddress[]?> ResolveDohAsync(string dohEndpoint, string host, CancellationToken token)
+        {
+            try
+            {
+                if (!Uri.TryCreate(dohEndpoint, UriKind.Absolute, out Uri? endpoint) ||
+                    (endpoint.Scheme != Uri.UriSchemeHttps && (_direct || endpoint.Scheme != Uri.UriSchemeHttp)))
+                {
+                    return null;
+                }
+
+                var lookup = new UriBuilder(endpoint);
+                string nameAndType = "name=" + Uri.EscapeDataString(host) + "&type=A";
+                lookup.Query = endpoint.Query.Length > 1 ? endpoint.Query[1..] + "&" + nameAndType : nameAndType;
+                using var request = new HttpRequestMessage(HttpMethod.Get, lookup.Uri);
                 request.Headers.TryAddWithoutValidation("Accept", "application/dns-json");
 
-                using HttpResponseMessage response = await _dohClient.SendAsync(request, token).ConfigureAwait(false);
+                using HttpResponseMessage response = await _dohClient!.SendAsync(request, token).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode) return null;
 
                 await using Stream stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
                 using JsonDocument document = await JsonDocument.ParseAsync(stream, cancellationToken: token).ConfigureAwait(false);
-                if (!document.RootElement.TryGetProperty("Answer", out JsonElement answers) ||
+                if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                    !document.RootElement.TryGetProperty("Answer", out JsonElement answers) ||
                     answers.ValueKind != JsonValueKind.Array)
                 {
                     return null;
@@ -512,15 +824,26 @@ public static class EhHttp
                 var list = new List<IPAddress>(4);
                 foreach (JsonElement answer in answers.EnumerateArray())
                 {
-                    if (answer.TryGetProperty("type", out JsonElement type) && type.GetInt32() != 1) continue;
-                    if (!answer.TryGetProperty("data", out JsonElement data)) continue;
-                    if (IPAddress.TryParse(data.GetString(), out IPAddress? address)) list.Add(address);
+                    if (answer.ValueKind != JsonValueKind.Object ||
+                        (answer.TryGetProperty("type", out JsonElement type) &&
+                            (type.ValueKind != JsonValueKind.Number || !type.TryGetInt32(out int recordType) || recordType != 1)) ||
+                        !answer.TryGetProperty("data", out JsonElement data) ||
+                        data.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    if (IPAddress.TryParse(data.GetString(), out IPAddress? address) && (!_direct || !IsFakeIpv4(address)))
+                    {
+                        list.Add(address);
+                    }
                 }
 
                 return list.Count == 0 ? null : list.ToArray();
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
             {
+                token.ThrowIfCancellationRequested();
                 _log?.Invoke("DoH lookup failed: " + ex.Message);
                 return null;
             }

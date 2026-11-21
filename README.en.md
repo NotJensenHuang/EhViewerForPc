@@ -81,7 +81,7 @@ Online browsing is available on first launch. To use the local library, point "L
 - 🌐 **Online Browsing (optional)**
   - Front, popular, subscriptions and rankings are tabs in Online Browsing; gallery lists, searches and favourites append results near the bottom, retaining loaded items on failure with retry; search and browsing share one page, and `Ctrl+F` focuses the search box
   - Keyword and tag syntax, categories, title / tag / description / torrent-filename scopes, minimum rating, page ranges and language / uploader / tag exclusions; the 15 most recent searches are kept
-  - Paste an E-Hentai or ExHentai gallery link into the Online Browsing search box and press `Enter` or click Search to open its details on the linked site. Use Copy Link on the detail page to copy the gallery URL to the clipboard
+  - Paste an E-Hentai or ExHentai gallery link into the Online Browsing search box and press `Enter` or click Search to open its details on the linked site. The cover loads from the detail page. Use Copy Link to copy the gallery URL to the clipboard
   - Online image search supports similarity scanning, cover-only results and inclusion of removed galleries; the image is submitted only when "Upload and search" is clicked. Tag lookup queries the local tag database in Chinese or English and inserts canonical namespaced tags
   - Bookmarks open in a dialog without navigating away or expanding advanced search; they store complete search queries with editing, reordering and deletion; the app can import the original app's exported `.db` (read-only `QUICK_SEARCH` access) and JSON bookmarks, and export a `.db` the original app can read
   - Online cards show a separate rating row and an opaque local / incomplete-copy badge below the title, refreshing after library scans; local read buttons have an opaque backing
@@ -107,8 +107,9 @@ Online browsing is available on first launch. To use the local library, point "L
 
 - ⚙️ **Account, Network and Settings**
   - Sign-in is completed in the system browser; the app reads and persists only session cookies and never stores a password. Pasting a cookie string manually is available as a fallback
-  - Proxy modes: none / system / HTTP / SOCKS5; image requests can optionally bypass the proxy
-  - Custom DNS-over-HTTPS endpoints, custom hosts entries and a connection test
+  - The app follows the system proxy by default. Other modes include no proxy, HTTP, SOCKS5 and Site Direct. When using a proxy, you can configure image requests separately
+  - To connect without a VPN, select Site Direct (站点直连) under Settings → Network → Proxy Mode and save. In-app pages and images use a routed physical Ethernet or Wi-Fi interface. For supported site hosts the app can connect to built-in addresses without sending SNI, while still verifying the original hostname and certificate chain. ExHentai content requires an account with access. External browsers use their own network settings
+  - Supports custom DNS-over-HTTPS endpoints, hosts entries and a connection test. If resolution fails or returns only fake addresses, Site Direct queries Alibaba Public DNS. It recognizes 198.18.0.0/15 and the paired IPv6 placeholders observed for site and H@H image hosts
   - Settings are grouped into categories and take effect on "Save settings"; saving uses an incremental merge so cached startup values cannot overwrite sources added at runtime
 
 - 🪟 **Interface and Navigation**

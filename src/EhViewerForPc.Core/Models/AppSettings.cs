@@ -17,6 +17,7 @@ public enum ProxyMode
     System = 1,
     Http = 2,
     Socks5 = 3,
+    EhDirect = 4,
 }
 
 public enum ReadingMode

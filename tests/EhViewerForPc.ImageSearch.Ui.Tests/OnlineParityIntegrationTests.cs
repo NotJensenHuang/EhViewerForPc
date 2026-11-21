@@ -13,12 +13,15 @@ using Avalonia.VisualTree;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using EhViewerForPc.Controls;
+using EhViewerForPc.Core.Imaging;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Core.Online;
 using EhViewerForPc.Core.Storage;
 using EhViewerForPc.Services;
 using EhViewerForPc.ViewModels;
 using EhViewerForPc.Views;
+using SkiaSharp;
 
 namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
@@ -39,7 +42,9 @@ public sealed class OnlineParityIntegrationTests
         using var scope = new Fixture(settings =>
         {
             settings.Account.Site = browsingSite;
-            return new EhClient(settings, new HttpClient(transport, disposeHandler: false));
+            return new EhClient(settings,
+                new HttpClient(transport, disposeHandler: false),
+                new HttpClient(transport, disposeHandler: false));
         });
         using var shell = new ShellViewModel(scope.Services);
         Application.Current!.RequestedThemeVariant = light ? ThemeVariant.Light : ThemeVariant.Dark;
@@ -87,6 +92,12 @@ public sealed class OnlineParityIntegrationTests
             for (int i = 0; i < 100 && detail.IsLoading; i++) await Task.Delay(10);
             Assert.Equal("Fixture gallery", detail.Title);
             Assert.Equal(linkedSite, detail.Details?.Site);
+            var cover = Assert.Single(page.GetVisualDescendants().OfType<AsyncImage>());
+            var coverRequest = await transport.CoverRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(EhUrls.Base(linkedSite) + "/test-cover.png", coverRequest.Url);
+            Assert.Equal(EhUrls.Home(linkedSite), coverRequest.Referrer);
+            for (int i = 0; i < 100 && cover.StatusForTest.Phase != ImageLoadPhase.Ready; i++) await Task.Delay(10);
+            Assert.Equal(ImageLoadPhase.Ready, cover.StatusForTest.Phase);
             window.NavigationFrame.GoBack();
             Assert.Same(feed, window.NavigationFrame.Content);
         }
@@ -412,15 +423,29 @@ public sealed class OnlineParityIntegrationTests
     private sealed class GalleryLinkTransport : HttpMessageHandler
     {
         internal TaskCompletionSource<string> DetailRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource<(string Url, string? Referrer)> CoverRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath == "/test-cover.png")
+            {
+                CoverRequested.TrySetResult((request.RequestUri.AbsoluteUri, request.Headers.Referrer?.AbsoluteUri));
+                using var bitmap = new SKBitmap(12, 16);
+                bitmap.Erase(SKColors.Coral);
+                using SKData png = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(png.ToArray()) };
+            }
+
             DetailRequested.TrySetResult(request.RequestUri!.AbsoluteUri);
             await Release.Task.WaitAsync(cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent("<h1 id='gn'>Fixture gallery</h1><div id='gdd'><table><tr><td>Length:</td><td>3 pages</td></tr></table></div>"),
+                Content = new StringContent("""
+                    <h1 id="gn">Fixture gallery</h1>
+                    <div id="gd1"><div style="width:250px; height:350px; background:transparent url(/test-cover.png) 0 0 no-repeat"></div></div>
+                    <div id="gdd"><table><tr><td>Length:</td><td>3 pages</td></tr></table></div>
+                    """),
             };
         }
     }

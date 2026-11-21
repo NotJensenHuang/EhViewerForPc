@@ -34,6 +34,24 @@ public sealed class OnlineParserTests
     public void OtherQueriesDoNotOpenGalleryDetails(string query) =>
         Assert.False(EhUrls.TryParseGalleryUrl(query, out _, out _, out _));
 
+    // 安卓上游 GalleryDetailParser 从 #gd1 子元素的 CSS 中读取封面。
+    [Theory]
+    [InlineData(EhSite.EHentai, "background:transparent url(https://ehgt.org/t/4f/4319211-0.jpg) 0 0 no-repeat", "https://ehgt.org/t/4f/4319211-0.jpg")]
+    [InlineData(EhSite.ExHentai, "background-image: url('//s.exhentai.org/t/cover.webp?a=1&amp;b=2')", "https://s.exhentai.org/t/cover.webp?a=1&b=2")]
+    [InlineData(EhSite.ExHentai, "background: url(&quot;/t/cover.webp&quot;) center no-repeat", "https://exhentai.org/t/cover.webp")]
+    [InlineData(EhSite.ExHentai, "background-image: url(cover.webp)", "https://exhentai.org/g/4319211/5c2103fb19/cover.webp")]
+    public void DetailCoverCanBeAStyledElement(EhSite site, string style, string expected)
+    {
+        string html = Detail.Replace(
+            """<img src="https://ehgt.org/t/4f/4319211-0.jpg" />""",
+            $"""<div style="width:250px; height:350px; {style}"></div>""");
+
+        EhGalleryDetails details = EhParser.ParseGalleryDetail(html, site, 4319211, "5c2103fb19");
+
+        Assert.NotEmpty(details.Title);
+        Assert.Equal(expected, details.ThumbUrl);
+    }
+
     // 2026-11-13 匿名首页抓取：评分使用 ir 元素的 sprite 位移，首两种为真实片段。
     [Theory]
     [InlineData("background-position:-32px -21px;opacity:1", 2.5)]
@@ -175,6 +193,7 @@ public sealed class OnlineParserTests
     public void GalleryDetailParsesMetadataAndTags()
     {
         EhGalleryDetails details = EhParser.ParseGalleryDetail(Detail, EhSite.EHentai, 4319211, "5c2103fb19");
+        Assert.Equal("https://ehgt.org/t/4f/4319211-0.jpg", details.ThumbUrl);
 
         Assert.Equal("(C95) [Uguisuya] HH[K2]", details.Title);
         Assert.Equal("Doujinshi", details.Category);

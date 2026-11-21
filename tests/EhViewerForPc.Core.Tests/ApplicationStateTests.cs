@@ -113,6 +113,23 @@ public sealed class ApplicationStateTests : IDisposable
     }
 
     [Fact]
+    public void SiteDirectModeCanBeSelectedSavedAndReopened()
+    {
+        using (var editor = new SettingsViewModel(_services))
+        {
+            Assert.Equal((int)ProxyMode.System, editor.ProxyModeIndex);
+            editor.ProxyModeIndex = Array.IndexOf(editor.ProxyModeLabels, "站点直连");
+            Assert.False(editor.IsManualProxy);
+            Assert.False(editor.CanProxyImages);
+            editor.Apply();
+        }
+
+        var store = new SettingsStore(_services.Paths);
+        _services.Dispose(); // 退出时等待延迟保存的设置落盘。
+        Assert.Equal(ProxyMode.EhDirect, store.Load(out _).Network.ProxyMode);
+    }
+
+    [Fact]
     public void CompressedDefaultsAndImageSizeChoiceSurviveSaving()
     {
         Assert.Equal(ImageQuality.Resampled, new AppSettings().ImageQuality);

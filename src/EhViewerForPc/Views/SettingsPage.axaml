@@ -80,13 +80,13 @@
         <!-- ============================================================ 网络 -->
         <StackPanel Spacing="4" IsVisible="{Binding SelectedCategoryIndex, Converter={StaticResource IndexMatch}, ConverterParameter='1'}">
           <TextBlock Classes="group-title" Text="代理" />
-          <controls:SettingsRow Header="代理模式" Description="图片与页面请求使用同一模式。">
+          <controls:SettingsRow Header="代理模式" Description="{Binding ProxyModeDescription}">
             <controls:SettingsRow.Action>
               <ComboBox Width="200" ItemsSource="{Binding ProxyModeLabels}" SelectedIndex="{Binding ProxyModeIndex}"
                         AutomationProperties.Name="代理模式" />
             </controls:SettingsRow.Action>
           </controls:SettingsRow>
-          <controls:SettingsRow Header="图片也走代理" Description="关闭后仅网页请求经过代理。">
+          <controls:SettingsRow Header="图片也走代理" Description="关闭后仅网页请求经过代理。" IsVisible="{Binding CanProxyImages}">
             <controls:SettingsRow.Action>
               <ToggleSwitch IsChecked="{Binding ProxyForImages}" OnContent="" OffContent=""
                             AutomationProperties.Name="图片也走代理" />
@@ -113,12 +113,11 @@
             </controls:SettingsRow.Action>
           </controls:SettingsRow>
           <Border Classes="settings-row" IsVisible="{Binding UseDoh}">
-            <StackPanel Spacing="8">
-              <controls:AdaptiveGrid Breakpoint="600" ColumnDefinitions="*,*" ColumnSpacing="10" RowSpacing="8">
-                <TextBox Text="{Binding DohEndpoint}" PlaceholderText="DoH 端点" AutomationProperties.Name="DoH 端点" />
-                <TextBox Grid.Column="1" Text="{Binding HostsOverride}" PlaceholderText="自定义 hosts（每行：host ip）" />
-              </controls:AdaptiveGrid>
-            </StackPanel>
+            <TextBox Text="{Binding DohEndpoint}" PlaceholderText="DoH 端点" AutomationProperties.Name="DoH 端点" />
+          </Border>
+          <Border Classes="settings-row">
+            <TextBox Text="{Binding HostsOverride}" AcceptsReturn="True" MaxHeight="110"
+                     PlaceholderText="自定义 hosts（每行：域名 IP）" AutomationProperties.Name="自定义 hosts" />
           </Border>
           <controls:SettingsRow Header="连接检查" Description="{Binding NetworkStatus}">
             <controls:SettingsRow.Action>

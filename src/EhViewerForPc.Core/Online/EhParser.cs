@@ -16,6 +16,9 @@ namespace EhViewerForPc.Core.Online;
 /// </summary>
 public static partial class EhParser
 {
+    [GeneratedRegex("""(?:^|;)\s*background(?:-image)?\s*:[^;]*?\burl\(\s*(?:"(?<url>[^"]+)"|'(?<url>[^']+)'|(?<url>[^\s'")]+))\s*\)""", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex CoverBackgroundRegex();
+
     [GeneratedRegex(@"(\d+)\s*pages?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PagesRegex();
 
@@ -338,11 +341,7 @@ public static partial class EhParser
         ParseComments(document, details);
 
         HtmlNode? thumb = document.FirstDescendantById("gd1");
-        if (thumb is not null)
-        {
-            HtmlNode? image = thumb.FirstDescendant("img");
-            if (image is not null) details.ThumbUrl = NormalizeUrl(image.GetAttribute("src"));
-        }
+        if (thumb is not null) details.ThumbUrl = ParseDetailCover(thumb, site, gid, token);
 
         HtmlNode? taglist = document.FirstDescendantById("taglist");
         if (taglist is not null) ParseTags(taglist, details);
@@ -359,6 +358,34 @@ public static partial class EhParser
         ParseFavoriteState(document, details);
         return details;
     }
+
+    private static string ParseDetailCover(HtmlNode cover, EhSite site, long gid, string token)
+    {
+        var galleryUri = new Uri(EhUrls.Detail(site, gid, token));
+        foreach (HtmlNode image in cover.Descendants("img"))
+        {
+            string url = ResolveDetailCoverUrl(galleryUri, image.GetAttribute("data-src"));
+            if (url.Length > 0) return url;
+            url = ResolveDetailCoverUrl(galleryUri, image.GetAttribute("src"));
+            if (url.Length > 0) return url;
+        }
+
+        // 详情页也会把封面放在 #gd1 子元素的 CSS 背景中。
+        foreach (HtmlNode element in cover.Descendants())
+        {
+            Match image = CoverBackgroundRegex().Match(element.GetAttribute("style"));
+            if (!image.Success) continue;
+            string url = ResolveDetailCoverUrl(galleryUri, image.Groups["url"].Value);
+            if (url.Length > 0) return url;
+        }
+
+        return string.Empty;
+    }
+
+    private static string ResolveDetailCoverUrl(Uri galleryUri, string value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        Uri.TryCreate(galleryUri, value.Trim(), out Uri? uri) &&
+        uri.Scheme is "http" or "https" ? uri.AbsoluteUri : string.Empty;
 
     private static void ApplyDetailField(EhGalleryDetails details, string label, string value)
     {

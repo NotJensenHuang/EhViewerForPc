@@ -287,7 +287,7 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     public string[] FitLabels { get; } = ["适应页面", "适应宽度", "适应高度", "原始大小"];
     public string[] BackgroundLabels { get; } = ["黑色", "深灰", "灰色", "白色"];
     public string[] SiteLabels { get; } = ["E-Hentai", "ExHentai"];
-    public string[] ProxyModeLabels { get; } = ["不使用代理", "跟随系统", "HTTP 代理", "SOCKS5 代理"];
+    public string[] ProxyModeLabels { get; } = ["不使用代理", "跟随系统", "HTTP 代理", "SOCKS5 代理", "站点直连"];
     public string[] FilterTargetLabels { get; } = ["标签", "标题", "上传者"];
 
     /// <summary>Settings categories, in the order the page presents them.</summary>
@@ -609,12 +609,18 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
         get => _proxyModeIndex;
         set
         {
-            if (!SetProperty(ref _proxyModeIndex, Math.Clamp(value, 0, 3))) return;
+            if (!SetProperty(ref _proxyModeIndex, Math.Clamp(value, 0, ProxyModeLabels.Length - 1))) return;
             OnPropertyChanged(nameof(IsManualProxy));
+            OnPropertyChanged(nameof(CanProxyImages));
+            OnPropertyChanged(nameof(ProxyModeDescription));
         }
     }
 
-    public bool IsManualProxy => _proxyModeIndex is 2 or 3;
+    public bool IsManualProxy => (ProxyMode)_proxyModeIndex is ProxyMode.Http or ProxyMode.Socks5;
+    public bool CanProxyImages => (ProxyMode)_proxyModeIndex == ProxyMode.System || IsManualProxy;
+    public string ProxyModeDescription => (ProxyMode)_proxyModeIndex == ProxyMode.EhDirect
+        ? "使用内置地址经物理网卡直连。域名解析失败或仅返回 Fake-IP 时，使用阿里公共 DNS。"
+        : "选择应用内页面和图片的连接方式。";
 
     public string ProxyHost
     {
@@ -707,7 +713,13 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
                 .GetFrontPageAsync(0, CancellationToken.None)
                 .ConfigureAwait(true);
             stopwatch.Stop();
-            NetworkStatus = $"连接正常 · {stopwatch.ElapsedMilliseconds} ms · 首页 {page.Items.Count} 项";
+            NetworkStatus = page.Items.Count > 0
+                ? $"连接正常 · {stopwatch.ElapsedMilliseconds} ms · 首页 {page.Items.Count} 项"
+                : $"站点已响应，首页未解析出画廊 · {page.StatusMessage}";
+        }
+        catch (OperationCanceledException)
+        {
+            NetworkStatus = "连接未完成：请求超时或已取消";
         }
         catch (Exception ex) when (ex is EhException or HttpRequestException)
         {

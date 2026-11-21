@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-11-21 应用内站点直连与链接直达封面
+
+- `EhHttp.cs`、`DirectNetworkInterface.cs` 和 `AppSettings.cs` 增加按物理网卡连接的站点直连模式，移植上游站点地址与免 SNI 握手，并验证原域名和证书链。
+- `SettingsPage.axaml` 和 `SettingsViewModel.cs` 提供「站点直连」选项，支持独立编辑 hosts，连接测试区分站点响应与画廊列表解析成功。
+- `EhParser.cs` 识别详情页 CSS 背景封面，粘贴画廊链接时可直接加载对应站点的封面。
+- `OnlineProbeService.cs` 报告实际详情封面域名，`UiAuditService.cs` 记录站点直连设置的深浅色与宽窄窗口。物理网卡、证书、正文图与测试结果见[站点直连与封面验证](站点直连与封面验证-2026-11-21.md)。
+
 ## 2026-11-21 画廊链接直达与复制
 
 - `EhUrls.cs` 和 `OnlineFeedViewModel.cs` 识别 E-Hentai 与 ExHentai 画廊链接，搜索时直达链接指定站点的详情。
