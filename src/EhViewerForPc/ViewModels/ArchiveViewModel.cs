@@ -276,7 +276,7 @@ public sealed partial class ArchiveViewModel : ObservableObject, IDisposable
 
             StatusText = "正在下载归档…";
             await _services.Online
-                .DownloadArchiveToFileAsync(url, unique, progress, _lifetime.Token)
+                .DownloadArchiveToFileAsync(url, unique, progress, _lifetime.Token, _details.Site)
                 .ConfigureAwait(true);
 
             var info = new FileInfo(unique);
@@ -310,12 +310,12 @@ public sealed partial class ArchiveViewModel : ObservableObject, IDisposable
             ? DownloadUrl
             : _details.ArchiveUrl.Length > 0
                 ? _details.ArchiveUrl
-                : EhUrls.Archiver(_host.Site, _details.Gid, _details.Token);
+                : EhUrls.Archiver(_details.Site ?? _host.Site, _details.Gid, _details.Token);
         _host.OpenExternal(url);
     }
 
     [RelayCommand]
-    private void OpenHathPage() => _host.OpenExternal(EhUrls.HathClient(_host.Site));
+    private void OpenHathPage() => _host.OpenExternal(EhUrls.HathClient(_details.Site ?? _host.Site));
 
     [RelayCommand]
     private void OpenDownloadFolder()

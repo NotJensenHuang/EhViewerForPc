@@ -76,8 +76,8 @@ public sealed class EhClient : IDisposable
     /// image caches. Reading the same gallery while signed in as another account
     /// must not reuse the previous account's resampled/original bytes.
     /// </summary>
-    public string CacheScope => (Site == EhSite.ExHentai ? "ex" : "eh") + "|" +
-                                (IsSignedIn ? "u:" + _settings.Account.LastUserName : "anon");
+    public string GetCacheScope(EhSite? site) => ((site ?? Site) == EhSite.ExHentai ? "ex" : "eh") + "|" +
+                                               (IsSignedIn ? "u:" + _settings.Account.LastUserName : "anon");
 
     public bool ExAccess => _settings.Account.ExAccess;
 
@@ -430,31 +430,33 @@ public sealed class EhClient : IDisposable
 
     // -------------------------------------------------------------- details
 
-    public async Task<EhGalleryDetails> GetDetailsAsync(long gid, string token, CancellationToken cancellationToken)
+    public async Task<EhGalleryDetails> GetDetailsAsync(long gid, string token, CancellationToken cancellationToken, EhSite? site = null)
     {
-        string url = EhUrls.Detail(Site, gid, token);
+        EhSite requestSite = site ?? Site;
+        string url = EhUrls.Detail(requestSite, gid, token);
         string html = await GetStringAsync(url, null, cancellationToken).ConfigureAwait(false);
-        EhGalleryDetails details = EhParser.ParseGalleryDetail(html, Site, gid, token);
+        EhGalleryDetails details = EhParser.ParseGalleryDetail(html, requestSite, gid, token);
         if (details.Title.Length == 0 && details.JapaneseTitle.Length == 0)
         {
             throw new EhException(EhParser.DetectMessage(html) ?? "无法解析画廊详情", requiresSignIn: !IsSignedIn);
         }
 
+        details.Site = site;
         if (details.Pages <= 0)
         {
-            details.Pages = await TryReadPageCountFromApiAsync(gid, token, cancellationToken).ConfigureAwait(false);
+            details.Pages = await TryReadPageCountFromApiAsync(requestSite, gid, token, cancellationToken).ConfigureAwait(false);
         }
 
         return details;
     }
 
-    private async Task<int> TryReadPageCountFromApiAsync(long gid, string token, CancellationToken cancellationToken)
+    private async Task<int> TryReadPageCountFromApiAsync(EhSite site, long gid, string token, CancellationToken cancellationToken)
     {
         try
         {
             string json = $"{{\"method\":\"gdata\",\"gidlist\":[[{gid},\"{token}\"]],\"namespace\":1}}";
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            using HttpResponseMessage response = await _web.PostAsync(EhUrls.Api(Site), content, cancellationToken)
+            using HttpResponseMessage response = await _web.PostAsync(EhUrls.Api(site), content, cancellationToken)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) return 0;
 
@@ -484,12 +486,13 @@ public sealed class EhClient : IDisposable
     /// popup's default selection alone does not prove the gallery is favourited;
     /// callers must combine it with <see cref="EhGalleryDetails.IsFavorited"/>.
     /// </summary>
-    public async Task<EhFavoritePopup?> GetFavoritePopupAsync(long gid, string token, CancellationToken cancellationToken)
+    public async Task<EhFavoritePopup?> GetFavoritePopupAsync(long gid, string token, CancellationToken cancellationToken, EhSite? site = null)
     {
+        EhSite requestSite = site ?? Site;
         try
         {
-            string url = EhUrls.GalleryPopup(Site, gid, token, "addfav");
-            string html = await GetStringAsync(url, EhUrls.Detail(Site, gid, token), cancellationToken).ConfigureAwait(false);
+            string url = EhUrls.GalleryPopup(requestSite, gid, token, "addfav");
+            string html = await GetStringAsync(url, EhUrls.Detail(requestSite, gid, token), cancellationToken).ConfigureAwait(false);
             return new EhFavoritePopup(EhParser.ParseFavoriteSlot(html), EhParser.ParseFavoriteNote(html));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -503,8 +506,8 @@ public sealed class EhClient : IDisposable
         }
     }
 
-    public async Task<int> GetFavoriteSlotAsync(long gid, string token, CancellationToken cancellationToken) =>
-        (await GetFavoritePopupAsync(gid, token, cancellationToken).ConfigureAwait(false))?.Slot ?? -1;
+    public async Task<int> GetFavoriteSlotAsync(long gid, string token, CancellationToken cancellationToken, EhSite? site = null) =>
+        (await GetFavoritePopupAsync(gid, token, cancellationToken, site).ConfigureAwait(false))?.Slot ?? -1;
 
     /// <summary>
     /// Adds, moves or removes a favourite and then reads the gallery state back.
@@ -519,11 +522,12 @@ public sealed class EhClient : IDisposable
         int slot,
         bool add,
         string note,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, EhSite? site = null)
     {
+        EhSite requestSite = site ?? Site;
         // The site always posts the addfav form; removal is favcat=favdel
         // (there is no separate deletefav endpoint, despite the popup name).
-        string url = EhUrls.GalleryPopup(Site, gid, token, "addfav");
+        string url = EhUrls.GalleryPopup(requestSite, gid, token, "addfav");
         var form = new Dictionary<string, string>
         {
             ["favcat"] = add ? slot.ToString(System.Globalization.CultureInfo.InvariantCulture) : "favdel",
@@ -535,7 +539,7 @@ public sealed class EhClient : IDisposable
         bool postApplied;
         try
         {
-            string body = await PostFormAsync(url, form, EhUrls.Detail(Site, gid, token), cancellationToken)
+            string body = await PostFormAsync(url, form, EhUrls.Detail(requestSite, gid, token), cancellationToken)
                 .ConfigureAwait(false);
 
             if (body.Contains("requires you to log on", StringComparison.OrdinalIgnoreCase))
@@ -564,7 +568,7 @@ public sealed class EhClient : IDisposable
             return FavoriteUpdateResult.Unknown("提交结果未知：" + ex.Message);
         }
 
-        (bool Favorited, int Slot)? state = await TryReadFavoriteStateAsync(gid, token, cancellationToken)
+        (bool Favorited, int Slot)? state = await TryReadFavoriteStateAsync(gid, token, cancellationToken, requestSite)
             .ConfigureAwait(false);
         if (state is { } verified)
         {
@@ -602,19 +606,20 @@ public sealed class EhClient : IDisposable
     public async Task<(bool Favorited, int Slot)?> TryReadFavoriteStateAsync(
         long gid,
         string token,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, EhSite? site = null)
     {
+        EhSite requestSite = site ?? Site;
         try
         {
-            string html = await GetStringAsync(EhUrls.Detail(Site, gid, token), null, cancellationToken)
+            string html = await GetStringAsync(EhUrls.Detail(requestSite, gid, token), null, cancellationToken)
                 .ConfigureAwait(false);
-            EhGalleryDetails details = EhParser.ParseGalleryDetail(html, Site, gid, token);
+            EhGalleryDetails details = EhParser.ParseGalleryDetail(html, requestSite, gid, token);
             if (details.Title.Length == 0 && details.JapaneseTitle.Length == 0) return null;
 
             int slot = details.FavoriteSlot;
             if (details.IsFavorited && slot < 0)
             {
-                slot = await GetFavoriteSlotAsync(gid, token, cancellationToken).ConfigureAwait(false);
+                slot = await GetFavoriteSlotAsync(gid, token, cancellationToken, requestSite).ConfigureAwait(false);
             }
 
             return (details.IsFavorited, slot);
@@ -633,9 +638,10 @@ public sealed class EhClient : IDisposable
     // -------------------------------------------------- comments & rating
 
     /// <summary>Loads every comment (the site only renders a few by default, ?hc=1 shows all).</summary>
-    public async Task<EhCommentList> GetCommentsAsync(long gid, string token, CancellationToken cancellationToken)
+    public async Task<EhCommentList> GetCommentsAsync(long gid, string token, CancellationToken cancellationToken, EhSite? site = null)
     {
-        string url = EhUrls.Detail(Site, gid, token) + "?hc=1";
+        EhSite requestSite = site ?? Site;
+        string url = EhUrls.Detail(requestSite, gid, token) + "?hc=1";
         string html = await GetStringAsync(url, null, cancellationToken).ConfigureAwait(false);
 
         var details = new EhGalleryDetails { Gid = gid, Token = token };
@@ -656,12 +662,13 @@ public sealed class EhClient : IDisposable
         string token,
         string text,
         long? editId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, EhSite? site = null)
     {
+        EhSite requestSite = site ?? Site;
         if (!IsSignedIn) return new EhCommentActionResult { Message = "需要登录后才能评论" };
         if (string.IsNullOrWhiteSpace(text)) return new EhCommentActionResult { Message = "评论内容不能为空" };
 
-        string detailUrl = EhUrls.Detail(Site, gid, token);
+        string detailUrl = EhUrls.Detail(requestSite, gid, token);
         var form = new Dictionary<string, string>();
         if (editId is null)
         {
@@ -714,6 +721,7 @@ public sealed class EhClient : IDisposable
         int vote,
         CancellationToken cancellationToken)
     {
+        EhSite requestSite = details.Site ?? Site;
         if (!details.CanUseApi) return new EhCommentActionResult { Message = "需要登录后才能投票" };
 
         var json = new System.Text.Json.Nodes.JsonObject
@@ -728,7 +736,7 @@ public sealed class EhClient : IDisposable
         };
 
         string body = await PostJsonAsync(
-                EhUrls.Api(Site), json.ToJsonString(), EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+                EhUrls.Api(requestSite), json.ToJsonString(), EhUrls.Detail(requestSite, details.Gid, details.Token), cancellationToken)
             .ConfigureAwait(false);
 
         try
@@ -755,6 +763,7 @@ public sealed class EhClient : IDisposable
         int stars,
         CancellationToken cancellationToken)
     {
+        EhSite requestSite = details.Site ?? Site;
         if (!details.CanUseApi) return (0, 0, "需要登录后才能评分");
 
         var json = new System.Text.Json.Nodes.JsonObject
@@ -768,7 +777,7 @@ public sealed class EhClient : IDisposable
         };
 
         string body = await PostJsonAsync(
-                EhUrls.Api(Site), json.ToJsonString(), EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+                EhUrls.Api(requestSite), json.ToJsonString(), EhUrls.Detail(requestSite, details.Gid, details.Token), cancellationToken)
             .ConfigureAwait(false);
 
         try
@@ -794,19 +803,21 @@ public sealed class EhClient : IDisposable
 
     public async Task<EhTorrentList> GetTorrentsAsync(EhGalleryDetails details, CancellationToken cancellationToken)
     {
+        EhSite requestSite = details.Site ?? Site;
         string url = details.TorrentUrl.Length > 0
             ? details.TorrentUrl
-            : EhUrls.Torrents(Site, details.Gid, details.Token);
-        string html = await GetStringAsync(url, EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+            : EhUrls.Torrents(requestSite, details.Gid, details.Token);
+        string html = await GetStringAsync(url, EhUrls.Detail(requestSite, details.Gid, details.Token), cancellationToken)
             .ConfigureAwait(false);
-        return EhParser.ParseTorrents(html, Site);
+        return EhParser.ParseTorrents(html, requestSite);
     }
 
     /// <summary>Fetches the .torrent file itself (ehtracker.org answers with the raw bencoded file).</summary>
-    public async Task<byte[]> DownloadTorrentAsync(string url, CancellationToken cancellationToken)
+    public async Task<byte[]> DownloadTorrentAsync(string url, CancellationToken cancellationToken, EhSite? site = null)
     {
+        EhSite requestSite = site ?? Site;
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.Referrer = new Uri(EhUrls.Base(Site) + "/");
+        request.Headers.Referrer = new Uri(EhUrls.Base(requestSite) + "/");
 
         using HttpResponseMessage response = await _web.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
@@ -819,12 +830,13 @@ public sealed class EhClient : IDisposable
 
     public async Task<EhArchivePage> GetArchivePageAsync(EhGalleryDetails details, CancellationToken cancellationToken)
     {
+        EhSite requestSite = details.Site ?? Site;
         string url = details.ArchiveUrl.Length > 0
             ? details.ArchiveUrl
-            : EhUrls.Archiver(Site, details.Gid, details.Token);
-        string html = await GetStringAsync(url, EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+            : EhUrls.Archiver(requestSite, details.Gid, details.Token);
+        string html = await GetStringAsync(url, EhUrls.Detail(requestSite, details.Gid, details.Token), cancellationToken)
             .ConfigureAwait(false);
-        return EhParser.ParseArchivePage(html, Site);
+        return EhParser.ParseArchivePage(html, requestSite);
     }
 
     /// <summary>Asks the site to build an archive; <paramref name="resource"/> is an option key.</summary>
@@ -834,30 +846,33 @@ public sealed class EhClient : IDisposable
         string resource,
         CancellationToken cancellationToken)
     {
+        EhSite requestSite = details.Site ?? Site;
         if (!IsSignedIn) return new EhArchiveResult { Message = "归档下载需要登录 E-Hentai 账号" };
 
-        string url = EhUrls.ArchiveRequest(Site, details.Gid, details.Token, or);
+        string url = EhUrls.ArchiveRequest(requestSite, details.Gid, details.Token, or);
         var form = new Dictionary<string, string> { ["hathdl_xres"] = resource };
-        string body = await PostFormAsync(url, form, EhUrls.Detail(Site, details.Gid, details.Token), cancellationToken)
+        string body = await PostFormAsync(url, form, EhUrls.Detail(requestSite, details.Gid, details.Token), cancellationToken)
             .ConfigureAwait(false);
-        return EhParser.ParseArchiveResult(body, Site);
+        return EhParser.ParseArchiveResult(body, requestSite);
     }
 
     public Task DownloadArchiveToFileAsync(
         string url,
         string targetPath,
         IProgress<long>? progress,
-        CancellationToken cancellationToken) =>
-        DownloadToFileCoreAsync(_web, url, EhUrls.Base(Site) + "/", targetPath,
+        CancellationToken cancellationToken,
+        EhSite? site = null) =>
+        DownloadToFileCoreAsync(_web, url, EhUrls.Base(site ?? Site) + "/", targetPath,
             progress is null ? null : (received, _) => progress.Report(received), cancellationToken);
 
     // ------------------------------------------------------------ page list
 
-    public async Task<EhPageList> GetPageListAsync(long gid, string token, int pageIndex, CancellationToken cancellationToken)
+    public async Task<EhPageList> GetPageListAsync(long gid, string token, int pageIndex, CancellationToken cancellationToken, EhSite? site = null)
     {
-        string url = EhUrls.PageList(Site, gid, token, pageIndex);
+        EhSite requestSite = site ?? Site;
+        string url = EhUrls.PageList(requestSite, gid, token, pageIndex);
         string html = await GetStringAsync(url, null, cancellationToken).ConfigureAwait(false);
-        if (!EhParser.TryParsePageList(html, Site, pageIndex, out EhPageList list, out string? error))
+        if (!EhParser.TryParsePageList(html, requestSite, pageIndex, out EhPageList list, out string? error))
         {
             throw new EhException(error ?? "无法解析页面列表", requiresSignIn: !IsSignedIn);
         }
@@ -874,13 +889,14 @@ public sealed class EhClient : IDisposable
         string token,
         int expectedCount,
         IProgress<int>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, EhSite? site = null)
     {
+        EhSite requestSite = site ?? Site;
         var pages = new List<EhPageRef>(Math.Max(expectedCount, 20));
         var seen = new HashSet<int>();
         for (int index = 0; index < 500; index++)
         {
-            EhPageList list = await GetPageListAsync(gid, token, index, cancellationToken).ConfigureAwait(false);
+            EhPageList list = await GetPageListAsync(gid, token, index, cancellationToken, requestSite).ConfigureAwait(false);
             foreach (EhPageRef page in list.Pages)
             {
                 if (seen.Add(page.Page)) pages.Add(page);
@@ -905,9 +921,9 @@ public sealed class EhClient : IDisposable
     public async Task<string> GetImageUrlAsync(EhPageRef page, bool original, CancellationToken cancellationToken) =>
         (await ResolveImageAsync(page, original, cancellationToken).ConfigureAwait(false)).Url;
 
-    public async Task<EhResolvedImage> ResolveImageAsync(EhPageRef page, bool original, CancellationToken cancellationToken, int? resampledWidth = null, bool refresh = false)
+    public async Task<EhResolvedImage> ResolveImageAsync(EhPageRef page, bool original, CancellationToken cancellationToken, int? resampledWidth = null, bool refresh = false, EhSite? site = null)
     {
-        string pageUrl = page.PageUrl.Length > 0 ? page.PageUrl : EhUrls.ImagePage(Site, page);
+        string pageUrl = page.PageUrl.Length > 0 ? page.PageUrl : EhUrls.ImagePage(site ?? Site, page);
         int width = resampledWidth ?? ResampledWidth;
         string key = pageUrl + (original ? "|orig" : "|res") + "|" + width;
         lock (_cacheGate) { if (!refresh && _imageUrlCache.TryGetValue(key, out var cached)) return cached; }

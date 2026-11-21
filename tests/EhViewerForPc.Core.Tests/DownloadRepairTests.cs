@@ -26,6 +26,34 @@ public sealed class DownloadRepairTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadFromLinkedSiteResumesOnThatSiteAndUsesItsImageCache()
+    {
+        var settings = Settings();
+        var handler = new FixtureHandler();
+        using var client = new EhClient(settings, new HttpClient(handler), new HttpClient(handler));
+        var images = new GalleryImageStore(Paths, client);
+        var details = await client.GetDetailsAsync(42, "0123456789", CancellationToken.None, EhSite.ExHentai);
+        using (var manager = new DownloadManager(Paths, settings, client, images: images))
+        {
+            DownloadTask queued = manager.Enqueue(details, startImmediately: false, quality: ImageQuality.Resampled);
+            manager.Pause(queued);
+        }
+
+        using var restored = new DownloadManager(Paths, settings, client, images: images);
+        DownloadTask task = Assert.Single(restored.Tasks);
+        Assert.Equal(EhSite.ExHentai, task.Site);
+        restored.Resume(task);
+        await WaitForAsync(() => task.State is DownloadState.Completed or DownloadState.Failed);
+
+        Assert.Equal(DownloadState.Completed, task.State);
+        Assert.Equal(EhSite.EHentai, client.Site);
+        Assert.Equal(4, handler.GalleryHosts.Count);
+        Assert.All(handler.GalleryHosts, host => Assert.Equal("exhentai.org", host));
+        Assert.True(images.TryGetCachedPath(42, 1, false, null, out _, out _, EhSite.ExHentai));
+        Assert.False(images.TryGetCachedPath(42, 1, false, null, out _, out _, EhSite.EHentai));
+    }
+
+    [Fact]
     public async Task RepairOnlyAddsMissingPagesAtTheExactFolderAndPreservesMetadata()
     {
         var settings = Settings(); var handler = new FixtureHandler();
@@ -464,6 +492,7 @@ public sealed class DownloadRepairTests : IDisposable
         public readonly TaskCompletionSource ImageStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly System.Collections.Concurrent.ConcurrentBag<string> Requests = [];
+        public readonly System.Collections.Concurrent.ConcurrentBag<string> GalleryHosts = [];
         public void ReleaseImages() { BlockImages = false; _released.TrySetResult(); }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -474,9 +503,10 @@ public sealed class DownloadRepairTests : IDisposable
                 if (BlockImages) await _released.Task.WaitAsync(cancellationToken);
                 return new(HttpStatusCode.OK) { Content = StreamImages ? new StreamContent(new PacedStream(this)) : new ByteArrayContent(Png) };
             }
+            GalleryHosts.Add(request.RequestUri.Host);
             string html = path.StartsWith("/s/", StringComparison.Ordinal)
                 ? "<img id='img' src='https://images.example/page.png'>"
-                : "<h1 id='gn'>Fixture</h1><div id='gdd'><table><tr><td>Length:</td><td>2 pages</td></tr></table></div><div id='gdt'><a href='https://e-hentai.org/s/1111111111/42-1'><img></a><a href='https://e-hentai.org/s/2222222222/42-2'><img></a></div>";
+                : "<h1 id='gn'>Fixture</h1><div id='gdd'><table><tr><td>Length:</td><td>2 pages</td></tr></table></div><div id='gdt'><a href='/s/1111111111/42-1'><img></a><a href='/s/2222222222/42-2'><img></a></div>";
             return new(HttpStatusCode.OK) { Content = new StringContent(html) };
         }
 

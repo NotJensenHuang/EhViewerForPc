@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 
 namespace EhViewerForPc.Core.Online;
@@ -142,6 +143,42 @@ public static class EhUrls
     {
         if (Uri.TryCreate(url, UriKind.Absolute, out Uri? uri)) return uri.Host;
         return string.Empty;
+    }
+
+    /// <summary>解析搜索框中的画廊链接，并保留链接指定的站点。</summary>
+    public static bool TryParseGalleryUrl(string input, out EhSite site, out long gid, out string token)
+    {
+        site = default;
+        gid = 0;
+        token = string.Empty;
+
+        string url = input.Trim();
+        if (url.StartsWith("//", StringComparison.Ordinal)) url = "https:" + url;
+        if (url.StartsWith("e-hentai.org/", StringComparison.OrdinalIgnoreCase) ||
+            url.StartsWith("exhentai.org/", StringComparison.OrdinalIgnoreCase)) url = "https://" + url;
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) || !uri.IsWellFormedOriginalString() ||
+            uri.Scheme is not ("http" or "https") || !uri.IsDefaultPort || uri.UserInfo.Length != 0 ||
+            uri.Host is not ("e-hentai.org" or "exhentai.org")) return false;
+
+        ReadOnlySpan<char> path = uri.AbsolutePath.AsSpan();
+        if (!path.StartsWith("/g/", StringComparison.OrdinalIgnoreCase)) return false;
+        path = path[3..];
+        if (path.EndsWith("/")) path = path[..^1];
+        int slash = path.IndexOf('/');
+        if (slash <= 0 || slash == path.Length - 1 ||
+            !long.TryParse(path[..slash], NumberStyles.None, CultureInfo.InvariantCulture, out long id) || id <= 0) return false;
+
+        ReadOnlySpan<char> galleryToken = path[(slash + 1)..];
+        foreach (char c in galleryToken)
+        {
+            if (!char.IsAsciiLetterOrDigit(c)) return false;
+        }
+
+        site = uri.Host == "exhentai.org" ? EhSite.ExHentai : EhSite.EHentai;
+        gid = id;
+        token = galleryToken.ToString();
+        return true;
     }
 
     /// <summary>Returns (gid, token) when the href addresses a gallery page.</summary>

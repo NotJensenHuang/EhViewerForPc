@@ -429,7 +429,7 @@ public partial class MainWindow : Window
         {
             EhGalleryDetails details = request.Details;
             OnlinePageIndex index = OnlinePageIndex.ForClient(
-                AppServices.Current.Online, details.Gid, details.Token, details.Pages);
+                AppServices.Current.Online, details.Gid, details.Token, details.Pages, details.Site);
 
             // The detail page normally carries the page count. Only when it does
             // not is a single preview request awaited — never the whole list.

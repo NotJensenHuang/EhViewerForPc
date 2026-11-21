@@ -36,8 +36,8 @@ public sealed class OnlinePageIndex : IDisposable
     }
 
     /// <summary>Builds an index backed by the live client (one gallery, one token).</summary>
-    public static OnlinePageIndex ForClient(EhClient client, long gid, string token, int expectedPages) =>
-        new(expectedPages, (pageIndex, ct) => client.GetPageListAsync(gid, token, pageIndex, ct));
+    public static OnlinePageIndex ForClient(EhClient client, long gid, string token, int expectedPages, EhSite? site = null) =>
+        new(expectedPages, (pageIndex, ct) => client.GetPageListAsync(gid, token, pageIndex, ct, site));
 
     /// <summary>Best known page count: the detail page's value, refined by page lists.</summary>
     public int PageCount

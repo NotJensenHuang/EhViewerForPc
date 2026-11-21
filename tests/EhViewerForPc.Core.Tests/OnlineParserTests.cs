@@ -10,6 +10,30 @@ namespace EhViewerForPc.Core.Tests;
 /// </summary>
 public sealed class OnlineParserTests
 {
+    [Theory]
+    [InlineData(" https://e-hentai.org/g/42/abcdef1234/?p=2#comments  ", EhSite.EHentai)]
+    [InlineData("http://EXHENTAI.org/g/42/abcdef1234", EhSite.ExHentai)]
+    [InlineData("exhentai.org/g/42/abcdef1234/", EhSite.ExHentai)]
+    public void PastedGalleryLinkKeepsItsSiteAndGalleryIdentity(string link, EhSite expectedSite)
+    {
+        Assert.True(EhUrls.TryParseGalleryUrl(link, out EhSite site, out long gid, out string token));
+        Assert.Equal(expectedSite, site);
+        Assert.Equal(42, gid);
+        Assert.Equal("abcdef1234", token);
+    }
+
+    [Theory]
+    [InlineData("gid:42")]
+    [InlineData("https://e-hentai.org/s/abcdef1234/42-1")]
+    [InlineData("https://e-hentai.org.example.org/g/42/abcdef1234/")]
+    [InlineData("https://example.org/?url=https://exhentai.org/g/42/abcdef1234/")]
+    [InlineData("https://exhentai.org/g/42/abcdef1234/extra")]
+    [InlineData("https://exhentai.org/g/0/abcdef1234/")]
+    [InlineData("https://exhentai.org/g/42/")]
+    [InlineData("https://exhentai.org/g/42/abc%2Fdef/")]
+    public void OtherQueriesDoNotOpenGalleryDetails(string query) =>
+        Assert.False(EhUrls.TryParseGalleryUrl(query, out _, out _, out _));
+
     // 2026-11-13 匿名首页抓取：评分使用 ir 元素的 sprite 位移，首两种为真实片段。
     [Theory]
     [InlineData("background-position:-32px -21px;opacity:1", 2.5)]

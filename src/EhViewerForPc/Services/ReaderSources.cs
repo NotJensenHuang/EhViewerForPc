@@ -240,7 +240,7 @@ public sealed class OnlineReaderSource : IReaderSource, IDisposable
     public string StableId => "online-" + _details.Gid.ToString(CultureInfo.InvariantCulture);
     public string ProgressKey => _details.Gid.ToString(CultureInfo.InvariantCulture);
     public string Title => _details.DisplayTitle;
-    public string SourceLabel => "在线 · " + EhUrls.SiteName(_services.Online.Site) + " · " + (_actualQuality.Length > 0 ? _actualQuality : _originalImages ? "原图" : $"压缩图 {_resampledWidth}px");
+    public string SourceLabel => "在线 · " + EhUrls.SiteName(_details.Site ?? _services.Online.Site) + " · " + (_actualQuality.Length > 0 ? _actualQuality : _originalImages ? "原图" : $"压缩图 {_resampledWidth}px");
     public string DebugInfo => $"online:{_details.Gid} · {Pages.Count} 页 · 按需解析";
     public string MissingSummary => string.Empty;
     public IReadOnlyList<GalleryPage> Pages { get; }
@@ -260,7 +260,7 @@ public sealed class OnlineReaderSource : IReaderSource, IDisposable
         if (refresh) _requests[index] = null;
         return _requests[index] ??= _services.OnlineImages.CreateLazyPageRequest(
             _details.Gid,
-            $"page:{_details.Gid}-{index + 1}:{_originalImages}:{_resampledWidth}",
+            $"page:{_details.Gid}-{index + 1}:{_originalImages}:{_resampledWidth}:{_details.Site}",
             index + 1,
             token => _index.GetPageAsync(index + 1, token),
             _originalImages,
@@ -270,7 +270,8 @@ public sealed class OnlineReaderSource : IReaderSource, IDisposable
                 _actualQuality = original ? "原图" : _originalImages ? "压缩图（原图不可用）" : $"压缩图 {_resampledWidth}px";
                 QualityChanged?.Invoke();
             },
-            _resampledWidth);
+            _resampledWidth,
+            _details.Site);
     }
 
     public async Task<IReadOnlyList<PageDimension>> LoadDimensionsAsync(

@@ -35,7 +35,7 @@
     <!-- Search bar (browse page) -->
     <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="10" Margin="24,0,24,8" IsVisible="{Binding ShowSearchBar}">
       <TextBox x:Name="SearchBox" Text="{Binding Query}" KeyDown="OnSearchKeyDown"
-               PlaceholderText="搜索关键词、标签或 GID" />
+               PlaceholderText="搜索关键词、标签、GID 或画廊链接" />
       <Button Grid.Column="1" Classes="accent" Content="搜索" Command="{Binding SearchCommand}" MinWidth="88" />
     </Grid>
 

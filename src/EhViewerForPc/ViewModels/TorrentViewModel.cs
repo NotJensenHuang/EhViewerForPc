@@ -53,7 +53,7 @@ public sealed partial class TorrentViewModel : ObservableObject
     /// <summary>Gallery title without the window's action prefix.</summary>
     public string GalleryTitle => _details.DisplayTitle;
 
-    public string Subtitle => $"#{_details.Gid} · {EhUrls.SiteName(_services.Online.Site)}";
+    public string Subtitle => $"#{_details.Gid} · {EhUrls.SiteName(_details.Site ?? _services.Online.Site)}";
 
     public bool IsLoading
     {
@@ -112,7 +112,7 @@ public sealed partial class TorrentViewModel : ObservableObject
     public async Task<byte[]> DownloadAsync(TorrentItemViewModel item)
     {
         StatusText = "正在下载种子…";
-        byte[] bytes = await _services.Online.DownloadTorrentAsync(item.Url, CancellationToken.None)
+        byte[] bytes = await _services.Online.DownloadTorrentAsync(item.Url, CancellationToken.None, _details.Site)
             .ConfigureAwait(true);
         StatusText = $"已获取 {bytes.Length:N0} 字节";
         return bytes;

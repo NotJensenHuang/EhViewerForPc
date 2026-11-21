@@ -47,6 +47,33 @@ internal static class NavigationRegressionService
         frame.GoForward();
         Check("forward restores search and sidebar selection", frame.Content is OnlineFeedPage && shell.SelectedNav?.Key == "online");
 
+        EhSite browsingSite = shell.Site;
+        EhSite linkedSite = browsingSite == EhSite.EHentai ? EhSite.ExHentai : EhSite.EHentai;
+        string galleryUrl = EhUrls.Detail(linkedSite, 42, "fixture");
+        if (frame.Content is OnlineFeedPage feed && feed.FindControl<TextBox>("SearchBox") is { } search)
+        {
+            search.Text = galleryUrl + "?p=2";
+            await shell.Online.SearchCommand.ExecuteAsync(null);
+        }
+        Check("gallery link search opens details for the linked site",
+            frame.Content is OnlineGalleryPage { DataContext: OnlineGalleryViewModel detail } &&
+            detail.Url == galleryUrl && shell.Site == browsingSite);
+        if (frame.Content is OnlineGalleryPage linkedPage)
+        {
+            double previousWidth = window.Width, previousHeight = window.Height;
+            window.Width = 540;
+            window.Height = 420;
+            await Task.Delay(200);
+            var copy = linkedPage.GetVisualDescendants().OfType<Button>().SingleOrDefault(b => b.Content is "复制链接");
+            Check("minimum-size online details keep the copy link button visible",
+                copy is { IsEffectivelyVisible: true, IsEnabled: true } && copy.TranslatePoint(default, window) is { Y: >= 0 } copyPosition &&
+                copyPosition.Y + copy.Bounds.Height <= window.ClientSize.Height);
+            UiSmokeService.SaveScreenshot(window, Path.Combine(output, "online-link-minimum.png"));
+            linkedPage.Close();
+            window.Width = previousWidth;
+            window.Height = previousHeight;
+        }
+
         string root = Path.Combine(AppServices.Current.Paths.BaseDirectory, "fixture-library");
         string folder = Path.Combine(root, "42-Fixture [Chinese]");
         Directory.CreateDirectory(folder);

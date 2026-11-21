@@ -376,6 +376,13 @@ public sealed partial class OnlineFeedViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task SearchAsync()
     {
+        if (_disposed) return;
+        if (EhUrls.TryParseGalleryUrl(Query, out EhSite site, out long gid, out string token))
+        {
+            _host.OpenGallery(new EhGallerySummary { Site = site, Gid = gid, Token = token, Title = $"#{gid}" });
+            return;
+        }
+
         EhSearchRequest request;
         try { request = BuildRequest(); }
         catch (ArgumentException error) { StatusText = error.Message; return; }

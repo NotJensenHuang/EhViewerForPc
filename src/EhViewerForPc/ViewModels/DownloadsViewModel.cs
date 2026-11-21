@@ -57,7 +57,8 @@ public sealed partial class DownloadsViewModel : ObservableObject, IDisposable
 
     public ArchiveViewModel GetArchiveSession(EhGalleryDetails details, IOnlineHost host)
     {
-        var existing = ArchiveTransfers.FirstOrDefault(a => a.Details.Gid == details.Gid);
+        EhSite site = details.Site ?? host.Site;
+        var existing = ArchiveTransfers.FirstOrDefault(a => a.Details.Gid == details.Gid && (a.Details.Site ?? host.Site) == site);
         if (existing is not null) return existing;
         var created = new ArchiveViewModel(_services, host, details);
         ArchiveTransfers.Add(created);

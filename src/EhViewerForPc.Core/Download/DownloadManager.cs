@@ -360,6 +360,7 @@ public sealed partial class DownloadManager : IDisposable
                 {
                     Gid = details.Gid,
                     Token = details.Token,
+                    Site = details.Site,
                     Title = details.DisplayTitle,
                     Category = details.Category,
                     ThumbUrl = details.ThumbUrl,
@@ -703,7 +704,7 @@ public sealed partial class DownloadManager : IDisposable
         bool needsGalleryDetails = task.NeedsGalleryDetails;
         if (task.FillMissingOnly || needsGalleryDetails)
         {
-            var details = await _client.GetDetailsAsync(task.Gid, task.Token, token).ConfigureAwait(false);
+            var details = await _client.GetDetailsAsync(task.Gid, task.Token, token, task.Site).ConfigureAwait(false);
             lock (_gate)
             {
                 token.ThrowIfCancellationRequested();
@@ -715,7 +716,7 @@ public sealed partial class DownloadManager : IDisposable
         }
 
         IReadOnlyList<EhPageRef> pages = await _client
-            .GetAllPagesAsync(task.Gid, task.Token, task.PageCount, null, token)
+            .GetAllPagesAsync(task.Gid, task.Token, task.PageCount, null, token, task.Site)
             .ConfigureAwait(false);
 
         int expected = task.PageCount;
@@ -754,7 +755,6 @@ public sealed partial class DownloadManager : IDisposable
 
         await Parallel.ForEachAsync(pages, options, async (page, innerToken) =>
         {
-            string pageUrl = page.PageUrl.Length > 0 ? page.PageUrl : EhUrls.ImagePage(_client.Site, page);
             try
             {
                 if (HasPage(page.Page)) return;
@@ -850,7 +850,7 @@ public sealed partial class DownloadManager : IDisposable
             try
             {
                 return await _images
-                    .GetAsync(page, task.Quality == ImageQuality.Original, token, task.ResampledWidth, progress, refresh: attempt > 1)
+                    .GetAsync(page, task.Quality == ImageQuality.Original, token, task.ResampledWidth, progress, refresh: attempt > 1, site: task.Site)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -884,7 +884,7 @@ public sealed partial class DownloadManager : IDisposable
                 try
                 {
                     byte[] bytes = await _client
-                        .DownloadBytesAsync(task.ThumbUrl, EhUrls.Base(_client.Site) + "/", token)
+                        .DownloadBytesAsync(task.ThumbUrl, EhUrls.Home(task.Site ?? _client.Site), token)
                         .ConfigureAwait(false);
                     await File.WriteAllBytesAsync(thumbPath, bytes, token).ConfigureAwait(false);
                 }

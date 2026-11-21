@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-11-21 画廊链接直达与复制
+
+- `EhUrls.cs` 和 `OnlineFeedViewModel.cs` 识别 E-Hentai 与 ExHentai 画廊链接，搜索时直达链接指定站点的详情。
+- `EhClient.cs` 和在线详情、阅读、下载链路传递链接指定的站点。常规浏览保留原站点设置，旧下载记录仍可继续使用。
+- `OnlineGalleryPage.axaml` 在浏览器打开入口旁提供「复制链接」，复用主窗口提示报告复制结果。
+- Core 210 项、在线 UI 21 项通过，使用模拟站点和隔离剪贴板。Windows x64 NativeAOT 导航回归通过，覆盖跨站链接与 540 × 420 DIP 下的复制按钮。完整 UI 回归有两项已知的阅读器重试失败。报告存于 `.qa/gallery-links-20261121/`。
+
 ## 2026-11-20 下载入队立即显示在本地库
 
 - `ShellViewModel.cs` 和 `DownloadManager.cs` 使用在线列表已有的信息入队，下载工作线程获取详情并记录权威页数。

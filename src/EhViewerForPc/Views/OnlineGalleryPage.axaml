@@ -34,6 +34,8 @@
                     HorizontalContentAlignment="Center" />
             <Button Content="在浏览器打开" Command="{Binding OpenInBrowserCommand}" Classes="ghost"
                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+            <Button Content="复制链接" Click="OnCopyLink" Classes="ghost"
+                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
           </StackPanel>
     </controls:GalleryDetailsView.SideContent>
     <controls:GalleryDetailsView.ExtraContent>

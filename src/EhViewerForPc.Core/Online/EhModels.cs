@@ -108,6 +108,7 @@ public sealed class EhGallerySummary
 {
     public long Gid { get; init; }
     public string Token { get; init; } = string.Empty;
+    public EhSite? Site { get; init; }
     public string Title { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string CategoryKey { get; set; } = string.Empty;
@@ -134,6 +135,7 @@ public sealed class EhGalleryDetails
 {
     public long Gid { get; init; }
     public string Token { get; init; } = string.Empty;
+    public EhSite? Site { get; internal set; }
     public string Title { get; set; } = string.Empty;
     public string JapaneseTitle { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;

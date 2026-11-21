@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.Json.Serialization;
 using EhViewerForPc.Core.Models;
+using EhViewerForPc.Core.Online;
 
 namespace EhViewerForPc.Core.Download;
 
@@ -33,6 +34,9 @@ public sealed class DownloadTask
     public bool NeedsGalleryDetails { get; set; }
     public long Gid { get; set; }
     public string Token { get; set; } = string.Empty;
+    /// <summary>随画廊链接入队时记录其站点。旧任务仍使用当前站点。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EhSite? Site { get; set; }
     public string Title { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string ThumbUrl { get; set; } = string.Empty;

@@ -87,7 +87,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
     public EhGalleryDetails? Details => _details;
     public long Gid => _summary.Gid;
     public string GidText => "#" + _summary.Gid;
-    public string Url => EhUrls.Detail(_services.Online.Site, _summary.Gid, _summary.Token);
+    public string Url => EhUrls.Detail(_summary.Site ?? _services.Online.Site, _summary.Gid, _summary.Token);
 
     public string Title { get; private set; }
     public string JapaneseTitle => _details?.JapaneseTitle ?? string.Empty;
@@ -360,7 +360,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         try
         {
             EhGalleryDetails details = await _services.Online
-                .GetDetailsAsync(_summary.Gid, _summary.Token, _lifetime.Token)
+                .GetDetailsAsync(_summary.Gid, _summary.Token, _lifetime.Token, _summary.Site)
                 .ConfigureAwait(true);
 
             ApplyDetails(details);
@@ -374,7 +374,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
                     // #favoritelink proves the state but not the slot; the popup
                     // names the selected one and carries the stored note.
                     EhFavoritePopup? popup = await _services.Online
-                        .GetFavoritePopupAsync(_summary.Gid, _summary.Token, _lifetime.Token)
+                        .GetFavoritePopupAsync(_summary.Gid, _summary.Token, _lifetime.Token, _summary.Site)
                         .ConfigureAwait(true);
                     if (popup is not null)
                     {
@@ -410,7 +410,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
 
         if (details.ThumbUrl.Length > 0)
         {
-            CoverRequest = _services.OnlineImages.CreateThumbnailRequest(details.ThumbUrl, "work:" + details.Gid);
+            CoverRequest = _services.OnlineImages.CreateThumbnailRequest(details.ThumbUrl, "work:" + details.Gid, details.Site);
         }
 
         BuildTags(details);
@@ -509,7 +509,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         try
         {
             EhFavoritePopup? popup = await _services.Online
-                .GetFavoritePopupAsync(_summary.Gid, _summary.Token, _lifetime.Token)
+                .GetFavoritePopupAsync(_summary.Gid, _summary.Token, _lifetime.Token, _summary.Site)
                 .ConfigureAwait(true);
 
             if (popup is not null)
@@ -554,7 +554,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         try
         {
             FavoriteUpdateResult result = await _services.Online
-                .SetFavoriteAsync(_summary.Gid, _summary.Token, slot, add, _favoriteNote, _lifetime.Token)
+                .SetFavoriteAsync(_summary.Gid, _summary.Token, slot, add, _favoriteNote, _lifetime.Token, _summary.Site)
                 .ConfigureAwait(true);
 
             if (result.Verified)
@@ -605,7 +605,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         try
         {
             (bool Favorited, int Slot)? state = await _services.Online
-                .TryReadFavoriteStateAsync(_summary.Gid, _summary.Token, _lifetime.Token)
+                .TryReadFavoriteStateAsync(_summary.Gid, _summary.Token, _lifetime.Token, _summary.Site)
                 .ConfigureAwait(true);
 
             if (state is not { } current)
@@ -726,6 +726,11 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         ArchiveRequested?.Invoke(this, _details);
     }
 
+    internal void NotifyLinkCopyResult(bool copied)
+    {
+        if (!_disposed) _host.Notify(copied ? "画廊链接已复制" : "无法复制画廊链接，请重试");
+    }
+
     [RelayCommand]
     private void OpenInBrowser()
     {
@@ -733,7 +738,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
     }
 
     [RelayCommand]
-    private void OpenHathPage() => _host.OpenExternal(EhUrls.HathClient(_host.Site));
+    private void OpenHathPage() => _host.OpenExternal(EhUrls.HathClient(_summary.Site ?? _host.Site));
 
     [RelayCommand]
     private void SearchTag(TagChip? chip)
@@ -802,7 +807,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         try
         {
             EhCommentActionResult result = await _services.Online
-                .PostCommentAsync(_details.Gid, _details.Token, text, _editingCommentId, _lifetime.Token)
+                .PostCommentAsync(_details.Gid, _details.Token, text, _editingCommentId, _lifetime.Token, _details.Site)
                 .ConfigureAwait(true);
 
             CommentStatus = result.Message;
@@ -833,7 +838,7 @@ public sealed partial class OnlineGalleryViewModel : ObservableObject, IDisposab
         try
         {
             EhCommentList list = await _services.Online
-                .GetCommentsAsync(_details.Gid, _details.Token, _lifetime.Token)
+                .GetCommentsAsync(_details.Gid, _details.Token, _lifetime.Token, _details.Site)
                 .ConfigureAwait(true);
             _details.HasMoreComments = list.HasMore;
             RebuildComments(list.Comments);

@@ -32,10 +32,12 @@ public sealed class GalleryImageStore
         CancellationToken token,
         int? resampledWidth = null,
         IProgress<ImageLoadStatus>? progress = null,
-        bool refresh = false)
+        bool refresh = false,
+        EhSite? site = null)
     {
         int width = resampledWidth ?? _client.ResampledWidth;
-        string key = CacheKey(page.Gid, page.Page);
+        EhSite requestSite = site ?? _client.Site;
+        string key = CacheKey(page.Gid, page.Page, requestSite);
         SemaphoreSlim gate = _gates[(uint)StringComparer.Ordinal.GetHashCode(key) % (uint)_gates.Length];
         await gate.WaitAsync(token).ConfigureAwait(false);
         try
@@ -58,13 +60,14 @@ public sealed class GalleryImageStore
             }
 
             progress?.Report(ImageLoadStatus.Resolving());
-            EhResolvedImage resolved = await _client.ResolveImageAsync(page, original, token, width, refresh).ConfigureAwait(false);
+            EhResolvedImage resolved = await _client.ResolveImageAsync(page, original, token, width, refresh, requestSite).ConfigureAwait(false);
             string target = Path.Combine(_paths.OnlineCacheDirectory, key + (resolved.IsOriginal ? "-orig" : "-" + width) + ".img");
             bool downloaded = false;
             if (!ImageSignature.IsValidFile(target))
             {
                 Directory.CreateDirectory(_paths.OnlineCacheDirectory);
-                await _client.DownloadToFileAsync(resolved.Url, page.PageUrl, target, progress, token).ConfigureAwait(false);
+                string referer = page.PageUrl.Length > 0 ? page.PageUrl : EhUrls.ImagePage(requestSite, page);
+                await _client.DownloadToFileAsync(resolved.Url, referer, target, progress, token).ConfigureAwait(false);
                 downloaded = true;
             }
 
@@ -81,10 +84,10 @@ public sealed class GalleryImageStore
     /// reader as an offline fallback: a page whose viewer reference can no longer
     /// be resolved (no network) is still readable from cached bytes.
     /// </summary>
-    public bool TryGetCachedPath(long gid, int pageNumber, bool original, int? resampledWidth, out string path, out bool isOriginal)
+    public bool TryGetCachedPath(long gid, int pageNumber, bool original, int? resampledWidth, out string path, out bool isOriginal, EhSite? site = null)
     {
         int width = resampledWidth ?? _client.ResampledWidth;
-        string key = CacheKey(gid, pageNumber);
+        string key = CacheKey(gid, pageNumber, site);
         string requested = Path.Combine(_paths.OnlineCacheDirectory, key + (original ? "-orig" : "-" + width) + ".img");
         if (ImageSignature.IsValidFile(requested))
         {
@@ -111,9 +114,9 @@ public sealed class GalleryImageStore
     /// key so a different account or site can never reuse another context's
     /// resampled/original bytes.
     /// </summary>
-    private string CacheKey(long gid, int pageNumber)
+    private string CacheKey(long gid, int pageNumber, EhSite? site)
     {
-        string scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_client.CacheScope)))[..8]
+        string scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(_client.GetCacheScope(site))))[..8]
             .ToLowerInvariant();
         return $"{scope}-{gid}-{pageNumber:D5}";
     }

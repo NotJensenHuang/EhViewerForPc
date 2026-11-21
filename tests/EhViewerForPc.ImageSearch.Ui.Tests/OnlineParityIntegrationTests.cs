@@ -3,6 +3,8 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Styling;
@@ -22,6 +24,75 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
 public sealed class OnlineParityIntegrationTests
 {
+    [AvaloniaTheory]
+    [InlineData(EhSite.EHentai, EhSite.ExHentai, 1240, 800, false, false)]
+    [InlineData(EhSite.ExHentai, EhSite.EHentai, 920, 700, true, true)]
+    [InlineData(EhSite.EHentai, EhSite.ExHentai, 740, 600, false, true)]
+    [InlineData(EhSite.ExHentai, EhSite.EHentai, 640, 600, true, false)]
+    [InlineData(EhSite.EHentai, EhSite.ExHentai, 540, 420, false, true)]
+    [InlineData(EhSite.ExHentai, EhSite.EHentai, 540, 420, true, false)]
+    public async Task GalleryLinkSearchOpensTheLinkedSiteAndCopiesItsCanonicalUrl(
+        EhSite browsingSite, EhSite linkedSite, int width, int height, bool light, bool enter)
+    {
+        string expectedUrl = EhUrls.Detail(linkedSite, 42, "abcdef1234");
+        using var transport = new GalleryLinkTransport();
+        using var scope = new Fixture(settings =>
+        {
+            settings.Account.Site = browsingSite;
+            return new EhClient(settings, new HttpClient(transport, disposeHandler: false));
+        });
+        using var shell = new ShellViewModel(scope.Services);
+        Application.Current!.RequestedThemeVariant = light ? ThemeVariant.Light : ThemeVariant.Dark;
+        var window = new MainWindow(shell) { Width = width, Height = height };
+        try
+        {
+            window.Show();
+            Dispatcher.UIThread.RunJobs();
+            var feed = Assert.IsType<OnlineFeedPage>(window.NavigationFrame.Content);
+            var search = feed.FindControl<TextBox>("SearchBox")!;
+            string pastedUrl = expectedUrl + "?p=2#comments";
+            await window.Clipboard!.SetTextAsync(pastedUrl);
+            search.Paste();
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(pastedUrl, search.Text);
+            if (enter)
+            {
+                search.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
+            }
+            else
+            {
+                var submit = Assert.Single(feed.GetVisualDescendants().OfType<Button>(), b => b.Command == shell.Online.SearchCommand);
+                submit.Command!.Execute(null);
+            }
+
+            Dispatcher.UIThread.RunJobs();
+            var page = Assert.IsType<OnlineGalleryPage>(window.NavigationFrame.Content);
+            var detail = Assert.IsType<OnlineGalleryViewModel>(page.DataContext);
+            Assert.Equal(expectedUrl, await transport.DetailRequested.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal(browsingSite, scope.Services.Online.Site);
+            Assert.False(shell.Online.IsSearchMode);
+            Assert.Empty(scope.Services.Settings.SearchHistory);
+
+            window.UpdateLayout();
+            var copy = Assert.Single(page.GetVisualDescendants().OfType<Button>(), b => b.Content is "复制链接");
+            Assert.True(copy.IsEffectivelyVisible);
+            Assert.True(copy.IsEnabled);
+            Assert.True(copy.Bounds.Width > 0 && copy.Bounds.Height > 0);
+            copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(expectedUrl, await window.Clipboard!.TryGetTextAsync());
+            Assert.Equal("画廊链接已复制", shell.ToastText);
+
+            transport.Release.TrySetResult();
+            for (int i = 0; i < 100 && detail.IsLoading; i++) await Task.Delay(10);
+            Assert.Equal("Fixture gallery", detail.Title);
+            Assert.Equal(linkedSite, detail.Details?.Site);
+            window.NavigationFrame.GoBack();
+            Assert.Same(feed, window.NavigationFrame.Content);
+        }
+        finally { window.Close(); }
+    }
+
     [AvaloniaFact]
     public async Task ColdStartShowsTheShellBeforeSendingAndCanNavigateWhileNetworkSetupWaits()
     {
@@ -335,6 +406,22 @@ public sealed class OnlineParityIntegrationTests
             Started.TrySetResult(Dispatcher.UIThread.CheckAccess());
             if (!Release.Task.Wait(TimeSpan.FromSeconds(5), cancellationToken)) throw new TimeoutException();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<html></html>") });
+        }
+    }
+
+    private sealed class GalleryLinkTransport : HttpMessageHandler
+    {
+        internal TaskCompletionSource<string> DetailRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            DetailRequested.TrySetResult(request.RequestUri!.AbsoluteUri);
+            await Release.Task.WaitAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("<h1 id='gn'>Fixture gallery</h1><div id='gdd'><table><tr><td>Length:</td><td>3 pages</td></tr></table></div>"),
+            };
         }
     }
 

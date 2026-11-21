@@ -60,7 +60,7 @@ public sealed class OnlineImageService
     /// <summary>Thumbnail request. <paramref name="identity"/> keeps the cached
     /// file stable across entries (gallery id), so history can reuse the image
     /// the listing fetched even when the URL is missing or has expired.</summary>
-    public IImageRequest CreateThumbnailRequest(string url, string? identity = null)
+    public IImageRequest CreateThumbnailRequest(string url, string? identity = null, EhSite? site = null)
     {
         string key = identity is { Length: > 0 } ? identity : url;
         if (string.IsNullOrWhiteSpace(key)) return NullImageRequest.Instance;
@@ -78,17 +78,17 @@ public sealed class OnlineImageService
             "thumb:" + key,
             path,
             _ => Task.FromResult(url),
-            referer: EhUrls.Base(_client.Site) + "/",
+            referer: EhUrls.Home(site ?? _client.Site),
             resolved: null);
     }
 
     public IImageRequest CreatePageRequest(
         EhPageRef page,
         bool original,
-        Action<int, int>? resolved, Action<bool>? qualityResolved = null, int? resampledWidth = null)
+        Action<int, int>? resolved, Action<bool>? qualityResolved = null, int? resampledWidth = null, EhSite? site = null)
     {
         return new GalleryPageImageRequest(_pages, Loader, page, original, resolved, CacheWritten, qualityResolved,
-            resampledWidth ?? _client.ResampledWidth);
+            resampledWidth ?? _client.ResampledWidth, site);
     }
 
     /// <summary>
@@ -104,16 +104,17 @@ public sealed class OnlineImageService
         bool original,
         Action<int, int>? resolved,
         Action<bool>? qualityResolved = null,
-        int? resampledWidth = null)
+        int? resampledWidth = null,
+        EhSite? site = null)
     {
         return new OnlinePageImageRequest(this, gid, key, pageNumber, resolve, original, resolved, qualityResolved,
-            resampledWidth ?? _client.ResampledWidth);
+            resampledWidth ?? _client.ResampledWidth, site);
     }
 
     /// <summary>Falls back to cached bytes when the viewer reference cannot be
     /// resolved (offline, quota, deleted page).</summary>
-    internal bool TryGetCachedPage(long gid, int pageNumber, bool original, int width, out string path, out bool isOriginal) =>
-        _pages.TryGetCachedPath(gid, pageNumber, original, width, out path, out isOriginal);
+    internal bool TryGetCachedPage(long gid, int pageNumber, bool original, int width, out string path, out bool isOriginal, EhSite? site) =>
+        _pages.TryGetCachedPath(gid, pageNumber, original, width, out path, out isOriginal, site);
 
     private void CacheWritten() => SchedulePrune(immediate: false);
 
@@ -370,7 +371,7 @@ public readonly record struct CacheUsage(long Bytes, int Files)
 public readonly record struct CachePruneReport(int Removed, long RemovedBytes, long TotalBytes, long BudgetBytes);
 
 public sealed class GalleryPageImageRequest(GalleryImageStore pages, ImageLoader loader, EhPageRef page, bool original,
-    Action<int, int>? resolved, Action cacheWritten, Action<bool>? qualityResolved, int resampledWidth) : IImageRequest
+    Action<int, int>? resolved, Action cacheWritten, Action<bool>? qualityResolved, int resampledWidth, EhSite? site) : IImageRequest
 {
     public string Key { get; } = $"page:{page.Gid}-{page.Page}:{original}:{resampledWidth}";
 
@@ -381,7 +382,7 @@ public sealed class GalleryPageImageRequest(GalleryImageStore pages, ImageLoader
         IProgress<ImageLoadStatus>? progress = null)
     {
         CachedGalleryImage cached = await pages
-            .GetAsync(page, original, token, resampledWidth, progress)
+            .GetAsync(page, original, token, resampledWidth, progress, site: site)
             .ConfigureAwait(false);
         qualityResolved?.Invoke(cached.IsOriginal);
         progress?.Report(ImageLoadStatus.Decoding());
@@ -417,6 +418,7 @@ public sealed class OnlinePageImageRequest : IImageRequest
     private readonly Action<int, int>? _resolved;
     private readonly Action<bool>? _qualityResolved;
     private readonly int _resampledWidth;
+    private readonly EhSite? _site;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IImageRequest? _inner;
 
@@ -429,7 +431,8 @@ public sealed class OnlinePageImageRequest : IImageRequest
         bool original,
         Action<int, int>? resolved,
         Action<bool>? qualityResolved,
-        int resampledWidth)
+        int resampledWidth,
+        EhSite? site)
     {
         _service = service;
         _gid = gid;
@@ -440,6 +443,7 @@ public sealed class OnlinePageImageRequest : IImageRequest
         _resolved = resolved;
         _qualityResolved = qualityResolved;
         _resampledWidth = resampledWidth;
+        _site = site;
     }
 
     public string Key { get; }
@@ -471,10 +475,10 @@ public sealed class OnlinePageImageRequest : IImageRequest
 
                     if (page is not null)
                     {
-                        _inner = _service.CreatePageRequest(page, _original, _resolved, _qualityResolved, _resampledWidth);
+                        _inner = _service.CreatePageRequest(page, _original, _resolved, _qualityResolved, _resampledWidth, _site);
                     }
                     else if (_service.TryGetCachedPage(_gid, _pageNumber, _original, _resampledWidth,
-                                 out string cachedPath, out bool cachedOriginal))
+                                 out string cachedPath, out bool cachedOriginal, _site))
                     {
                         // No viewer reference (offline / quota), but the page was read
                         // before: serve the cached bytes instead of a dead page.

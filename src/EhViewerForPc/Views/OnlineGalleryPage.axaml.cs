@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
@@ -28,6 +29,29 @@ public partial class OnlineGalleryPage : DocumentPage
             _initialized = true;
             await viewModel.InitializeAsync();
         };
+    }
+
+    private async void OnCopyLink(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not OnlineGalleryViewModel viewModel) return;
+
+        if (Clipboard is not { } clipboard)
+        {
+            viewModel.NotifyLinkCopyResult(false);
+            return;
+        }
+
+        try
+        {
+            await clipboard.SetTextAsync(viewModel.Url);
+        }
+        catch (Exception)
+        {
+            viewModel.NotifyLinkCopyResult(false);
+            return;
+        }
+
+        viewModel.NotifyLinkCopyResult(true);
     }
 
     /// <summary>
