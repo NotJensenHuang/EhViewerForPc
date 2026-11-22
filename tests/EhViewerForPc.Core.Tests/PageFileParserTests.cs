@@ -119,6 +119,39 @@ public class PageFileParserTests : IDisposable
         Assert.Equal(knownTotal, scan.HasExpectedPages);
     }
 
+    [Theory]
+    [InlineData("00000001", "00000100", 1, 100)]
+    [InlineData("page2", "page10", 1, 2)]
+    public void ScanPagesKeepsReportPageNumbersAndCandidatePriority(string first, string second, int firstNumber, int secondNumber)
+    {
+        Touch(second + ".png");
+        Touch(first + ".jpg", 0);
+        Touch(first + ".webp");
+        Touch(first + ".png");
+        var files = PageFileParser.Enumerate(_root, out _);
+        var report = PageFileParser.Scan(files, new SpiderHeader { HasPages = true, Pages = 500 }, out _);
+        var pages = PageFileParser.ScanPages(files);
+
+        Assert.Equal(new[] { firstNumber, secondNumber }, pages.Select(page => page.Number));
+        Assert.Equal(new[] { first + ".png", first + ".webp", first + ".jpg" },
+            pages[0].Candidates.Select(file => file.FileName));
+        Assert.Equal(
+            report.Pages.SelectMany(page => page.Candidates.Select(file => (page.Number, file.FilePath, file.Length, file.MtimeTicks))),
+            pages.SelectMany(page => page.Candidates.Select(file => (page.Number, file.FilePath, file.Length, file.MtimeTicks))));
+    }
+
+    [Fact]
+    public void ScanPagesHandlesVerySparseNumbering()
+    {
+        Touch("00000001.png");
+        Touch("99999999.png");
+        var files = PageFileParser.Enumerate(_root, out _);
+
+        var pages = PageFileParser.ScanPages(files);
+
+        Assert.Equal(new[] { 1, 99_999_999 }, pages.Select(page => page.Number));
+    }
+
     [Fact]
     public void ParsesPageNames()
     {

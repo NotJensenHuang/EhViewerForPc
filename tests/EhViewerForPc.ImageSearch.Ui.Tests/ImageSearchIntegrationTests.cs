@@ -482,6 +482,45 @@ public sealed class ImageSearchIntegrationTests
         Assert.Equal(105, result.Indexed);
     }
 
+    [AvaloniaFact]
+    public async Task SourceVerificationReconcilesRemovedPagesAndChangedCandidatePriority()
+    {
+        using var scope = new Fixture();
+        var gallery = scope.CreateCopies()[0];
+        scope.Services.Settings.ImageSearch.Enabled = true;
+        var snapshot = new[] { new ImageSearchGallery(gallery.SourceId, gallery.StableId, gallery.WorkId, gallery.FolderPath) };
+        string folder = gallery.FolderPath;
+        bool changed = false;
+        var result = await scope.Services.ImageSearch.BuildAsync(snapshot, new InlineIndexProgress(progress =>
+        {
+            if (changed || progress.Message != "正在核对源目录变更…") return;
+            changed = true;
+            File.Delete(Path.Combine(folder, "00000005.png"));
+            File.Copy(Path.Combine(folder, "00000003.png"), Path.Combine(folder, "00000004.png"));
+            File.Copy(Path.Combine(folder, "00000001.png"), Path.Combine(folder, "00000001.jpg"));
+        }), CancellationToken.None, options: new IndexBuildOptions { UseGpu = false });
+
+        Assert.True(changed);
+        Assert.Equal(3, result.Total);
+        Assert.Equal(3, result.Indexed);
+        string generations = Path.Combine(scope.Services.ImageSearch.DirectoryPath, "generations");
+        string published = Assert.Single(Directory.GetDirectories(generations));
+        using var manifest = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = Path.Combine(published, "manifest.db"),
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        manifest.Open();
+        using var command = manifest.CreateCommand();
+        command.CommandText = "SELECT page,path FROM member ORDER BY page";
+        using var rows = command.ExecuteReader();
+        var members = new List<(int, string)>();
+        while (rows.Read())
+            members.Add((rows.GetInt32(0), Path.GetFileName(rows.GetString(1))));
+        Assert.Equal(new[] { (1, "00000001.jpg"), (3, "00000003.png"), (4, "00000004.png") }, members);
+    }
+
     private static ImageIndexBuildCheckpoint ReadCheckpoint(Fixture scope) => JsonFileStore.LoadOrDefault(
         Path.Combine(scope.Services.ImageSearch.DirectoryPath, "build-job.json"), StorageJsonContext.Default.ImageIndexBuildCheckpoint,
         () => new ImageIndexBuildCheckpoint(), out _);

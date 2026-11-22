@@ -4,10 +4,10 @@ namespace EhViewerForPc.Core.Format;
 
 public static partial class PageFileParser
 {
-    private static PageScanResult ScanNaturalPages(IReadOnlyList<PageCandidate> files, bool validateContainers)
+    private static PageScanResult ScanNaturalPages(IReadOnlyList<PageCandidate> files, bool validateContainers, bool report)
     {
         var pages = new List<GalleryPage>();
-        var missing = new List<PageRange>();
+        var missing = report ? new List<PageRange>() : null;
         int corruptPages = 0;
         foreach (var group in files.Where(file => IsSupportedExtension(file.Extension))
             .GroupBy(file => Path.GetFileNameWithoutExtension(file.FileName), StringComparer.OrdinalIgnoreCase)
@@ -21,12 +21,14 @@ public static partial class PageFileParser
             pages.Add(new() { Number = number, DisplayIndex = number - 1, Candidates = candidates, State = state });
             // 损坏页不是缺页：文件就在磁盘上，只是内容不完整。两者都不可读，
             // 但处理方式不同（损坏要替换，缺页要新增），所以分开统计。
-            if (state == PageState.Empty) missing.Add(new(number, number));
+            if (state == PageState.Empty) missing?.Add(new(number, number));
         }
+        if (!report) return new() { Pages = pages };
+
         return new()
         {
             HasNaturalPageNames = true, Pages = pages, MaxPageNumber = pages.Count, MinPageNumber = pages.Count > 0 ? 1 : 0,
-            MissingRanges = missing, ZeroByteFiles = files.Count(f => f.Length == 0), CorruptPages = corruptPages,
+            MissingRanges = missing!, ZeroByteFiles = files.Count(f => f.Length == 0), CorruptPages = corruptPages,
             ExtensionSummary = string.Join(", ", files.GroupBy(f => f.Extension, StringComparer.OrdinalIgnoreCase)
                 .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.OrdinalIgnoreCase)
                 .Select(g => $"{g.Key.TrimStart('.').ToLowerInvariant()}: {g.Count()}")),

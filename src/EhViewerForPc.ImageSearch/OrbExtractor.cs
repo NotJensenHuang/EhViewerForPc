@@ -1,6 +1,7 @@
 // Managed port of imsearch/orb.rs and ORB-SLAM3/ORBextractor.cc (GPL-3.0).
 // Original copyright and BSD notices: tools/imsearch/ORB-SLAM3-LICENSE.txt.
 using System.Buffers;
+using System.Numerics;
 
 namespace EhViewerForPc.ImageSearch;
 
@@ -68,7 +69,15 @@ public sealed class OrbExtractor
             int width = image.Width - 2 * border, height = image.Height - 2 * border;
             int columns = Math.Max(1, width / 35), rows = Math.Max(1, height / 35);
             int cellWidth = (int)Math.Ceiling((double)width / columns), cellHeight = (int)Math.Ceiling((double)height / rows);
-            var points = new Dictionary<(int, int), Corner>();
+            // 单元有效区域不超过 69 × 69，重用同一块栈缓冲。分数范围为 0–254。
+            Span<byte> cellScores = stackalloc byte[scores is null ? cellWidth * cellHeight : 0];
+            Span<int> offsets = stackalloc int[16];
+            if (scores is null)
+            {
+                for (int i = 0; i < offsets.Length; i++)
+                    offsets[i] = Circle[i].Y * image.Width + Circle[i].X;
+            }
+            var points = new List<Corner>();
             for (int row = 0; row < rows; row++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -76,21 +85,32 @@ public sealed class OrbExtractor
                 {
                     int x0 = border + column * cellWidth, y0 = border + row * cellHeight;
                     int x1 = Math.Min(image.Width - border, x0 + cellWidth + 6), y1 = Math.Min(image.Height - border, y0 + cellHeight + 6);
-                    var cell = scores is null ? Fast(image, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.FastThreshold)
-                        : FastFromScores(image.Width, scores, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.FastThreshold);
-                    if (cell.Count == 0) cell = scores is null ? Fast(image, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.MinFastThreshold)
-                        : FastFromScores(image.Width, scores, x0 + 3, y0 + 3, x1 - 3, y1 - 3, _profile.MinFastThreshold);
-                    foreach (var point in cell) points[(point.X, point.Y)] = point;
+                    if (scores is null)
+                    {
+                        AppendFastCorners(image, x0 + 3, y0 + 3, x1 - 3, y1 - 3, offsets, cellScores,
+                            _profile.FastThreshold, _profile.MinFastThreshold, points);
+                    }
+                    else
+                    {
+                        int start = points.Count;
+                        AppendFastCornersFromScores(image.Width, scores, x0 + 3, y0 + 3, x1 - 3, y1 - 3,
+                            _profile.FastThreshold, points);
+                        if (points.Count == start && _profile.FastThreshold != _profile.MinFastThreshold)
+                            AppendFastCornersFromScores(image.Width, scores, x0 + 3, y0 + 3, x1 - 3, y1 - 3,
+                                _profile.MinFastThreshold, points);
+                    }
                 }
             }
-            return points.Values.ToList();
+
+            // 剔除各边 3 像素后，相邻单元的有效范围互不重叠。
+            return points;
         }
         finally { if (rented is not null) ArrayPool<int>.Shared.Return(rented); }
     }
 
-    private static List<Corner> FastFromScores(int width, int[] scores, int x0, int y0, int x1, int y1, int threshold)
+    private static void AppendFastCornersFromScores(int width, int[] scores, int x0, int y0, int x1, int y1,
+        int threshold, List<Corner> output)
     {
-        var output = new List<Corner>();
         for (int y = y0; y < y1; y++)
         for (int x = x0; x < x1; x++)
         {
@@ -107,52 +127,101 @@ public sealed class OrbExtractor
             }
             if (maximum) output.Add(new(x, y, score));
         }
-        return output;
     }
 
-    private static List<Corner> Fast(GrayImage image, int x0, int y0, int x1, int y1, int threshold)
+    private static void AppendFastCorners(GrayImage image, int x0, int y0, int x1, int y1,
+        ReadOnlySpan<int> offsets, Span<byte> scores, int threshold, int minimum, List<Corner> output)
     {
-        var candidates = new Dictionary<(int, int), int>();
-        Span<int> differences = stackalloc int[25];
-        for (int y = y0; y < y1; y++)
-        for (int x = x0; x < x1; x++)
+        int width = Math.Max(0, x1 - x0), height = Math.Max(0, y1 - y0);
+        scores = scores[..(width * height)];
+        scores.Clear();
+        Span<int> differences = stackalloc int[24];
+        byte[] pixels = image.Pixels;
+        for (int y = 0; y < height; y++)
         {
-            int center = image.Pixels[y * image.Width + x];
-            int bright = 0, dark = 0;
-            for (int i = 0; i < 16; i += 4)
+            int start = (y0 + y) * image.Width + x0;
+            for (int x = 0; x < width; x++)
             {
-                int d = image.At(x + Circle[i].X, y + Circle[i].Y) - center;
-                if (d > threshold) bright++; if (d < -threshold) dark++;
+                int index = start + x;
+                int center = pixels[index];
+                int top = pixels[index + offsets[0]] - center;
+                int right = pixels[index + offsets[4]] - center;
+                int bottom = pixels[index + offsets[8]] - center;
+                int left = pixels[index + offsets[12]] - center;
+                int bright = (top > minimum ? 1 : 0) + (right > minimum ? 1 : 0)
+                    + (bottom > minimum ? 1 : 0) + (left > minimum ? 1 : 0);
+                int dark = (top < -minimum ? 1 : 0) + (right < -minimum ? 1 : 0)
+                    + (bottom < -minimum ? 1 : 0) + (left < -minimum ? 1 : 0);
+                if (bright < 2 && dark < 2) continue;
+
+                uint brighter = 0, darker = 0;
+                for (int i = 0; i < offsets.Length; i++)
+                {
+                    int difference = pixels[index + offsets[i]] - center;
+                    differences[i] = difference;
+                    brighter |= (difference > minimum ? 1U : 0U) << i;
+                    darker |= (difference < -minimum ? 1U : 0U) << i;
+                }
+                uint positive = ArcStarts(brighter), negative = ArcStarts(darker);
+                if ((positive | negative) == 0) continue;
+
+                differences[..8].CopyTo(differences[16..]);
+                // 只有整个弧段超过最低阈值，才可能产生有效分数。
+                scores[y * width + x] = (byte)(Math.Max(ArcScore(positive, differences, 1),
+                    ArcScore(negative, differences, -1)) - 1);
             }
-            if (bright < 2 && dark < 2) continue;
-            for (int i = 0; i < 16; i++) differences[i] = image.At(x + Circle[i].X, y + Circle[i].Y) - center;
-            for (int i = 16; i < 25; i++) differences[i] = differences[i - 16];
-            int positive = 0, negative = 0; bool corner = false;
-            for (int i = 0; i < 24; i++)
-            {
-                positive = differences[i] > threshold ? positive + 1 : 0;
-                negative = differences[i] < -threshold ? negative + 1 : 0;
-                if (positive >= 9 || negative >= 9) { corner = true; break; }
-            }
-            if (!corner) continue;
-            int score = 0;
-            for (int start = 0; start < 16; start++)
-            {
-                int min = 256, max = -256;
-                for (int j = start; j < start + 9; j++) { min = Math.Min(min, differences[j]); max = Math.Max(max, differences[j]); }
-                score = Math.Max(score, Math.Max(min, -max) - 1);
-            }
-            candidates[(x, y)] = score;
         }
-        var output = new List<Corner>();
-        foreach (var (position, score) in candidates)
+
+        int cellStart = output.Count;
+        bool hasStrongCorner = false;
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
         {
-            bool maximum = true;
-            for (int y = -1; y <= 1 && maximum; y++) for (int x = -1; x <= 1; x++)
-                if ((x != 0 || y != 0) && candidates.TryGetValue((position.Item1 + x, position.Item2 + y), out int other) && other >= score) { maximum = false; break; }
-            if (maximum) output.Add(new(position.Item1, position.Item2, score));
+            int score = scores[y * width + x];
+            if (score < (hasStrongCorner ? threshold : minimum)) continue;
+            if (!IsLocalMaximum(scores, width, height, x, y, score)) continue;
+            // 弱角点无法抑制强角点。若存在强极大值，只保留强阈值下的结果。
+            if (!hasStrongCorner && score >= threshold)
+            {
+                output.RemoveRange(cellStart, output.Count - cellStart);
+                hasStrongCorner = true;
+            }
+            output.Add(new(x0 + x, y0 + y, score));
         }
-        return output;
+    }
+
+    private static uint ArcStarts(uint ring)
+    {
+        // 将环复制一周，逐步得到每个长度为 9 的连续弧段的起点。
+        uint repeated = ring | (ring << 16);
+        uint pairs = repeated & (repeated >> 1);
+        uint quads = pairs & (pairs >> 2);
+        return quads & (quads >> 4) & (repeated >> 8) & 0xffff;
+    }
+
+    private static int ArcScore(uint starts, ReadOnlySpan<int> differences, int sign)
+    {
+        int best = 0;
+        while (starts != 0)
+        {
+            int start = BitOperations.TrailingZeroCount(starts);
+            int weakest = differences[start] * sign;
+            for (int i = start + 1; i < start + 9 && weakest > best; i++)
+                weakest = Math.Min(weakest, differences[i] * sign);
+            best = Math.Max(best, weakest);
+            starts &= starts - 1;
+        }
+        return best;
+    }
+
+    private static bool IsLocalMaximum(ReadOnlySpan<byte> scores, int width, int height, int x, int y, int score)
+    {
+        for (int ny = Math.Max(0, y - 1); ny <= Math.Min(height - 1, y + 1); ny++)
+        for (int nx = Math.Max(0, x - 1); nx <= Math.Min(width - 1, x + 1); nx++)
+        {
+            if ((nx != x || ny != y) && scores[ny * width + nx] >= score) return false;
+        }
+        return true;
     }
 
     private static List<Corner> Distribute(List<Corner> points, int width, int height, int target)

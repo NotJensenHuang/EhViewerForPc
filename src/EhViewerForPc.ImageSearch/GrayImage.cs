@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using SkiaSharp;
 
@@ -210,6 +211,13 @@ public sealed class GrayImage
                 int firstRow = (int)top, endRow = (int)Math.Ceiling(bottom);
                 for (int sy = firstRow; sy < endRow; sy++)
                     weights[used + sy - firstRow] = Math.Min(bottom, sy + 1) - Math.Max(top, sy);
+                // 常见金字塔缩放中，两轴的每个目标像素各覆盖 2 或 3 个源像素。
+                if (dx is > 1 and < 2 && dy is > 1 and < 2)
+                {
+                    ResizeAreaRow(output.AsSpan(y * width, width), Pixels, Width, Height, firstRow, endRow,
+                        starts, offsets, weights, used, area);
+                    continue;
+                }
                 for (int x = 0; x < width; x++)
                 {
                     double sum = 0;
@@ -231,6 +239,46 @@ public sealed class GrayImage
             ArrayPool<int>.Shared.Return(axis);
             if (weights is not null) ArrayPool<double>.Shared.Return(weights);
         }
+    }
+
+    private static void ResizeAreaRow(Span<byte> output, byte[] pixels, int width, int height,
+        int firstRow, int endRow, ReadOnlySpan<int> starts, ReadOnlySpan<int> offsets, double[] weights,
+        int verticalOffset, double area)
+    {
+        int stride0 = firstRow * width;
+        int stride1 = Math.Min(firstRow + 1, height - 1) * width;
+        int stride2 = Math.Min(firstRow + 2, height - 1) * width;
+        var row0 = pixels.AsSpan(stride0, width);
+        var row1 = pixels.AsSpan(stride1, width);
+        var row2 = pixels.AsSpan(stride2, width);
+        double vertical0 = weights[verticalOffset], vertical1 = weights[verticalOffset + 1];
+        bool hasThirdRow = endRow - firstRow == 3;
+        double vertical2 = hasThirdRow ? weights[verticalOffset + 2] : 0;
+        for (int x = 0; x < output.Length; x++)
+        {
+            int i0 = starts[x], i1 = Math.Min(i0 + 1, width - 1);
+            int offset = offsets[x];
+            double h0 = weights[offset], h1 = weights[offset + 1];
+            bool hasThirdColumn = offsets[x + 1] - offset == 3;
+            int i2 = Math.Min(i0 + 2, width - 1);
+            double h2 = hasThirdColumn ? weights[offset + 2] : 0;
+            // 按原顺序逐项乘加，保持像素舍入结果。
+            double sum = 0;
+            sum = AddAreaSamples(sum, row0, i0, i1, i2, h0, h1, h2, vertical0, hasThirdColumn);
+            sum = AddAreaSamples(sum, row1, i0, i1, i2, h0, h1, h2, vertical1, hasThirdColumn);
+            if (hasThirdRow) sum = AddAreaSamples(sum, row2, i0, i1, i2, h0, h1, h2, vertical2, hasThirdColumn);
+            output[x] = (byte)Math.Clamp((int)Math.Round(sum / area), 0, 255);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static double AddAreaSamples(double sum, ReadOnlySpan<byte> row, int x0, int x1, int x2,
+        double h0, double h1, double h2, double vertical, bool hasThirdColumn)
+    {
+        sum += row[x0] * h0 * vertical;
+        sum += row[x1] * h1 * vertical;
+        if (hasThirdColumn) sum += row[x2] * h2 * vertical;
+        return sum;
     }
 
     private static double Kernel(double x, ImageInterpolation interpolation)

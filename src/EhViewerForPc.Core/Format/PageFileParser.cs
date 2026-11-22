@@ -70,10 +70,20 @@ public static partial class PageFileParser
         bool validateContainers = false)
     {
         error = null;
+        return ScanCore(files, header, validateContainers, report: true);
+    }
+
+    /// <summary>返回实际页及其有序候选。下载缺页、扩展名摘要及其他统计由 Scan 计算。</summary>
+    public static IReadOnlyList<GalleryPage> ScanPages(IReadOnlyList<PageCandidate> files) =>
+        ScanCore(files, header: null, validateContainers: false, report: false).Pages;
+
+    private static PageScanResult ScanCore(IReadOnlyList<PageCandidate> files, SpiderHeader? header,
+        bool validateContainers, bool report)
+    {
         bool numbered = files.Any(file => TryParsePageName(file.FileName, out _, out _));
         // 编号页本身就是原始页号的依据；缺少元数据或额外封面不能压缩缺页位置。
         if (files.Count > 0 && !numbered)
-            return ScanNaturalPages(files, validateContainers);
+            return ScanNaturalPages(files, validateContainers, report);
         var grouped = new Dictionary<int, List<PageCandidate>>();
         int zeroByteFiles = 0;
 
@@ -120,6 +130,8 @@ public static partial class PageFileParser
                 State = state,
             });
         }
+
+        if (!report) return new() { Pages = pages };
 
         int maxPage = pages.Count == 0 ? 0 : pages[^1].Number;
         int minPage = pages.Count == 0 ? 0 : pages[0].Number;

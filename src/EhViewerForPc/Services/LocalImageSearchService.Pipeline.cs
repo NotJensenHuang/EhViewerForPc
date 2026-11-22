@@ -112,35 +112,45 @@ public sealed partial class LocalImageSearchService
         }
     }
 
-    private static LocalImageSearchStatus? TryReuseUnchangedIndex(string previous,
-        IEnumerable<(ImageSearchGallery Gallery, GalleryPage Page)> pages, int total, Dictionary<string, LibrarySource> sources, CancellationToken token)
+    internal static LocalImageSearchStatus? TryReuseUnchangedIndex(SqliteConnection manifest, string previous, int total, CancellationToken token)
     {
-        using (var manifest = OpenManifest(previous, writable: false))
-        using (var command = manifest.CreateCommand())
+        using var backgroundIo = BackgroundIoScope.Enter();
+        token.ThrowIfCancellationRequested();
+        Execute(manifest, "ATTACH DATABASE $path AS previous_index", ("$path", ManifestUri(previous) + "?mode=ro"));
+        try
         {
-            command.CommandText = "SELECT count(*) FROM member";
-            if ((long)command.ExecuteScalar()! != total) return null;
-        }
-        using var lookup = new ManifestLookup(previous);
-        int indexed = 0, skipped = 0;
-        foreach (var (gallery, page) in pages)
-        {
-            token.ThrowIfCancellationRequested();
-            CachedPage? match = null;
-            foreach (var file in page.Candidates)
+            using var count = manifest.CreateCommand();
+            count.CommandText = "SELECT count(*) FROM previous_index.member";
+            if ((long)count.ExecuteScalar()! != total) return null;
+
+            using var match = manifest.CreateCommand();
+            // 每次只比对一段计划，保持取消响应。只接受首选候选，即使次选曾成功解码。
+            match.CommandText = """
+                SELECT max(p.sequence),count(*),count(m.state),count(CASE WHEN m.state='indexed' THEN 1 END)
+                FROM (SELECT sequence,source,stable,page FROM build.plan_page
+                    WHERE sequence>$after ORDER BY sequence LIMIT 4096) p
+                LEFT JOIN build.plan_candidate c ON c.sequence=p.sequence AND c.priority=0
+                LEFT JOIN previous_index.member m ON m.source_id=p.source AND m.stable_id=p.stable AND m.page=p.page
+                    AND m.path=c.path AND m.length=c.length AND m.mtime=c.mtime AND m.state IN ('indexed','skipped');
+                """;
+            var after = match.Parameters.Add("$after", SqliteType.Integer);
+            after.Value = 0L;
+            int matched = 0, indexed = 0;
+            while (matched < total)
             {
-                // 此快捷分支只消费本轮新枚举的计划：目录安全及链接属性已在计划阶段核对。
-                // 不再为每页重复访问同一组源目录属性；此处只比较完整元数据签名。
-                string relative = Path.GetRelativePath(sources[gallery.SourceId].RootPath, file.FilePath);
-                match = lookup.Find(gallery, page.Number, file, relative);
-                // 新增的更优候选必须先尝试解码，不能因后面的旧候选匹配就跳过更新。
-                break;
+                token.ThrowIfCancellationRequested();
+                using var reader = match.ExecuteReader();
+                reader.Read();
+                int pageCount = reader.GetInt32(1);
+                if (pageCount == 0 || pageCount != reader.GetInt32(2)) return null;
+                after.Value = reader.GetInt64(0);
+                matched += pageCount;
+                indexed += reader.GetInt32(3);
             }
-            if (match is not { } cached) return null;
-            if (cached.State == "indexed") indexed++; else skipped++;
+            return new($"索引无变化 · 已索引 {indexed:N0} 页 · 复用 {total:N0} 页", total, total,
+                indexed, matched - indexed, Reused: total);
         }
-        return new($"索引无变化 · 已索引 {indexed:N0} 页 · 复用 {total:N0} 页", total, total,
-            indexed, skipped, Reused: total);
+        finally { Execute(manifest, "DETACH DATABASE previous_index"); }
     }
 
     private static bool IsUnchangedCandidate(IndexCandidate candidate)
@@ -353,7 +363,7 @@ public sealed partial class LocalImageSearchService
         try
         {
             ReportProgress();
-            if (processed < total) await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, ReadPlannedPages(generation, sources, pendingOnly: true, token), sources, token),
+            if (processed < total) await OrderedImagePipeline.RunAsync(PreparePageWork(generation, previous, ReadPendingPlannedPages(generation, sources, token), sources, token),
                 () => new ExtractionWorker(backend.Profile, root, rebuild, options.UseSimd, _jobAccelerator),
                 (worker, work, ct) => ExtractPageAsync(worker, work, backend.Profile, options, budget, counters, ct),
                 CommitPage, options.Workers, options.Workers * 2, token).ConfigureAwait(false);

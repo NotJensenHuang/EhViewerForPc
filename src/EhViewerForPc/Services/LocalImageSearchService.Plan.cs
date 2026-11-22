@@ -121,35 +121,34 @@ public sealed partial class LocalImageSearchService
         finally { Execute(manifest, "DETACH DATABASE previous_index"); }
     }
 
-    private static bool HasPlannedGallery(SqliteConnection manifest, ImageSearchGallery gallery, SqliteTransaction transaction)
+    private static bool IsSafeIndexFolder(string folder, string root)
     {
-        using var command = manifest.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT 1 FROM build.plan_gallery WHERE source=$source AND stable=$stable";
-        command.Parameters.AddWithValue("$source", gallery.SourceId); command.Parameters.AddWithValue("$stable", gallery.StableId);
-        return command.ExecuteScalar() is not null;
+        root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+        if (!IsInside(folder, root)) return false;
+        for (string? path = folder; path is not null; path = Path.GetDirectoryName(path))
+        {
+            var attributes = File.GetAttributes(path);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+                return false;
+            if (PathIdentity.Comparer.Equals(path, root)) return true;
+        }
+        return false;
     }
 
-    private static PageScanResult ScanIndexPages(string folder, out string? error)
+    private static IReadOnlyList<GalleryPage> ScanIndexPages(string folder, CancellationToken token)
     {
         var files = new List<PageCandidate>();
-        error = null;
-        try
+        foreach (var file in new DirectoryInfo(folder).EnumerateFiles())
         {
-            foreach (var file in new DirectoryInfo(folder).EnumerateFiles())
-            {
-                string extension = file.Extension.ToLowerInvariant();
-                if (!PageFileParser.IsSupportedExtension(extension) || (file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
-                files.Add(new() { FilePath = file.FullName, FileName = file.Name, Extension = extension,
-                    Length = file.Length, MtimeTicks = file.LastWriteTimeUtc.Ticks });
-            }
+            token.ThrowIfCancellationRequested();
+            string extension = file.Extension.ToLowerInvariant();
+            if (!PageFileParser.IsSupportedExtension(extension) || (file.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+            files.Add(new() { FilePath = file.FullName, FileName = file.Name, Extension = extension,
+                Length = file.Length, MtimeTicks = file.LastWriteTimeUtc.Ticks });
         }
-        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
-        {
-            error = failure.GetType().Name;
-        }
-        var header = SpiderInfoParser.TryParseFile(Path.Combine(folder, ".ehviewer"), out _);
-        return PageFileParser.Scan(files, header, out _);
+        // 页号和候选排序只取决于图片条目；索引无需计算下载缺页或读取 .ehviewer。
+        return PageFileParser.ScanPages(files);
     }
 
     private bool PrepareBuildPlan(SqliteConnection manifest, ImageSearchGallery[] galleries, Dictionary<string, LibrarySource> sources,
@@ -158,83 +157,76 @@ public sealed partial class LocalImageSearchService
         using var backgroundIo = BackgroundIoScope.Enter();
         bool changed = false;
         int completedGalleries = 0;
+        using var write = manifest.CreateCommand();
+        write.CommandText = """
+            INSERT OR REPLACE INTO build.plan_gallery VALUES($source,$stable,$work,$folder,$signature,$verified)
+            """;
+        var sourceId = write.Parameters.Add("$source", SqliteType.Text);
+        var stableId = write.Parameters.Add("$stable", SqliteType.Text);
+        var workId = write.Parameters.Add("$work", SqliteType.Text);
+        var folder = write.Parameters.Add("$folder", SqliteType.Text);
+        var gallerySignature = write.Parameters.Add("$signature", SqliteType.Text);
+        write.Parameters.Add("$verified", SqliteType.Integer).Value = verify ? 1 : 0;
+
+        using var prior = manifest.CreateCommand();
+        prior.CommandText = "SELECT signature,verified FROM build.plan_gallery WHERE source=$source AND stable=$stable";
+        var priorSource = prior.Parameters.Add("$source", SqliteType.Text);
+        var priorStable = prior.Parameters.Add("$stable", SqliteType.Text);
+
+        using var batch = new PlanGalleryBatch(manifest);
         foreach (var chunk in galleries.DistinctBy(g => (g.SourceId, g.StableId)).Chunk(16))
         {
             using var transaction = manifest.BeginTransaction();
+            prior.Transaction = transaction;
+            write.Transaction = transaction;
+            batch.SetTransaction(transaction);
             foreach (var gallery in chunk)
             {
                 completedGalleries++;
                 token.ThrowIfCancellationRequested();
                 if (!sources.TryGetValue(gallery.SourceId, out var source)) continue;
-                if (!verify && HasPlannedGallery(manifest, gallery, transaction)) continue;
-                if (verify)
+
+                priorSource.Value = gallery.SourceId;
+                priorStable.Value = gallery.StableId;
+                string? previousSignature = null;
+                using (var reader = prior.ExecuteReader())
                 {
-                    using var checkedGallery = manifest.CreateCommand();
-                    checkedGallery.Transaction = transaction;
-                    checkedGallery.CommandText = "SELECT verified FROM build.plan_gallery WHERE source=$source AND stable=$stable";
-                    checkedGallery.Parameters.AddWithValue("$source", gallery.SourceId); checkedGallery.Parameters.AddWithValue("$stable", gallery.StableId);
-                    if (checkedGallery.ExecuteScalar() is long value && value == 1) continue;
+                    if (reader.Read())
+                    {
+                        if (!verify || reader.GetInt64(1) == 1) continue;
+                        previousSignature = reader.GetString(0);
+                    }
                 }
-                if (!IsSafeSourcePath(gallery.Folder, source.RootPath)) throw new IOException("图库路径已变化，当前索引已保留。");
-                var scan = ScanIndexPages(gallery.Folder, out string? error);
-                if (error is not null) throw new IOException("图库目录暂时无法读取，当前索引已保留。");
+
+                IReadOnlyList<GalleryPage> pages;
+                try
+                {
+                    if (!IsSafeIndexFolder(gallery.Folder, source.RootPath))
+                        throw new IOException("图库路径已变化。");
+                    pages = ScanIndexPages(gallery.Folder, token);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    throw new IOException("图库目录暂时无法读取，当前索引已保留。", error);
+                }
                 if (PlanStatistics is { } statistics) Volatile.Write(ref _planStatistics, statistics with { EnumeratedGalleries = statistics.EnumeratedGalleries + 1 });
                 var signatureText = new StringBuilder();
-                foreach (var page in scan.Pages)
+                foreach (var page in pages)
                 foreach (var file in page.Candidates)
                     signatureText.Append(page.Number).Append('|').Append(Path.GetRelativePath(source.RootPath, file.FilePath)).Append('|').Append(file.Length).Append('|').Append(file.MtimeTicks).Append('\n');
                 string signature = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(signatureText.ToString())));
-                using var prior = manifest.CreateCommand();
-                prior.Transaction = transaction;
-                prior.CommandText = "SELECT signature FROM build.plan_gallery WHERE source=$source AND stable=$stable";
-                prior.Parameters.AddWithValue("$source", gallery.SourceId); prior.Parameters.AddWithValue("$stable", gallery.StableId);
-                bool same = prior.ExecuteScalar() as string == signature;
-                using var command = manifest.CreateCommand(); command.Transaction = transaction;
-                void Run(string sql, params (string Name, object Value)[] values)
-                {
-                    command.CommandText = sql; command.Parameters.Clear();
-                    foreach (var value in values) command.Parameters.AddWithValue(value.Name, value.Value);
-                    command.ExecuteNonQuery();
-                }
-                if (!same)
+                if (previousSignature != signature)
                 {
                     changed = true;
-                    // 修改的画廊按页比较，已提交且签名匹配的页保持完成，候选优先级变化必须重试。
-                    var present = new HashSet<int>();
-                    foreach (var page in scan.Pages)
-                    {
-                        token.ThrowIfCancellationRequested(); present.Add(page.Number);
-                        Run("INSERT OR IGNORE INTO build.plan_page(source,stable,page) VALUES($source,$stable,$page)", ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", page.Number));
-                        command.CommandText = "SELECT sequence FROM build.plan_page WHERE source=$source AND stable=$stable AND page=$page";
-                        long sequence = (long)command.ExecuteScalar()!;
-                        Run("DELETE FROM build.plan_candidate WHERE sequence=$sequence", ("$sequence", sequence));
-                        for (int priority = 0; priority < page.Candidates.Count; priority++)
-                        {
-                            var file = page.Candidates[priority];
-                            Run("INSERT INTO build.plan_candidate VALUES($sequence,$priority,$path,$length,$mtime)", ("$sequence", sequence), ("$priority", priority),
-                                ("$path", Path.GetRelativePath(source.RootPath, file.FilePath)), ("$length", file.Length), ("$mtime", file.MtimeTicks));
-                        }
-                        Run("""
-                            UPDATE build.plan_page SET done=CASE WHEN EXISTS(
-                            SELECT 1 FROM member m JOIN build.plan_candidate c ON c.sequence=$sequence AND c.priority=0
-                            WHERE m.source_id=$source AND m.stable_id=$stable AND m.page=$page AND m.path=c.path AND m.length=c.length AND m.mtime=c.mtime AND m.state IN ('indexed','skipped')) THEN 1 ELSE 0 END WHERE sequence=$sequence
-                            """, ("$sequence", sequence), ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", page.Number));
-                        Run("DELETE FROM member WHERE source_id=$source AND stable_id=$stable AND page=$page AND NOT EXISTS(SELECT 1 FROM build.plan_page WHERE sequence=$sequence AND done=1)",
-                            ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", page.Number), ("$sequence", sequence));
-                    }
-                    var removed = new List<(long Sequence, int Page)>();
-                    command.Parameters.Clear(); command.CommandText = "SELECT sequence,page FROM build.plan_page WHERE source=$source AND stable=$stable";
-                    command.Parameters.AddWithValue("$source", gallery.SourceId); command.Parameters.AddWithValue("$stable", gallery.StableId);
-                    using (var reader = command.ExecuteReader()) while (reader.Read()) if (!present.Contains(reader.GetInt32(1))) removed.Add((reader.GetInt64(0), reader.GetInt32(1)));
-                    foreach (var item in removed)
-                    {
-                        Run("DELETE FROM member WHERE source_id=$source AND stable_id=$stable AND page=$page", ("$source", gallery.SourceId), ("$stable", gallery.StableId), ("$page", item.Page));
-                        Run("DELETE FROM build.plan_candidate WHERE sequence=$sequence", ("$sequence", item.Sequence));
-                        Run("DELETE FROM build.plan_page WHERE sequence=$sequence", ("$sequence", item.Sequence));
-                    }
+                    batch.Replace(gallery, source.RootPath, pages, token);
                 }
-                Run("INSERT OR REPLACE INTO build.plan_gallery VALUES($source,$stable,$work,$folder,$signature,$verified)", ("$source", gallery.SourceId), ("$stable", gallery.StableId),
-                    ("$work", gallery.WorkId), ("$folder", gallery.Folder), ("$signature", signature), ("$verified", verify ? 1 : 0));
+
+                sourceId.Value = gallery.SourceId;
+                stableId.Value = gallery.StableId;
+                workId.Value = gallery.WorkId;
+                folder.Value = gallery.Folder;
+                gallerySignature.Value = signature;
+                write.ExecuteNonQuery();
             }
             transaction.Commit();
             galleryProgress?.Invoke(completedGalleries, galleries.Length);
@@ -242,8 +234,104 @@ public sealed partial class LocalImageSearchService
         return changed;
     }
 
-    private static IEnumerable<(ImageSearchGallery Gallery, GalleryPage Page)> ReadPlannedPages(string generation,
-        Dictionary<string, LibrarySource> sources, bool pendingOnly, CancellationToken token)
+    private sealed class PlanGalleryBatch : IDisposable
+    {
+        private readonly SqliteConnection _manifest;
+        private readonly SqliteCommand _stage;
+        private readonly SqliteCommand _replace;
+        private readonly SqliteParameter _page;
+        private readonly SqliteParameter _priority;
+        private readonly SqliteParameter _path;
+        private readonly SqliteParameter _length;
+        private readonly SqliteParameter _mtime;
+        private readonly SqliteParameter _source;
+        private readonly SqliteParameter _stable;
+
+        internal PlanGalleryBatch(SqliteConnection manifest)
+        {
+            _manifest = manifest;
+            Execute(manifest, """
+                CREATE TEMP TABLE gallery_candidate(
+                    page INTEGER,priority INTEGER,path TEXT,length INTEGER,mtime INTEGER,PRIMARY KEY(page,priority)
+                ) WITHOUT ROWID
+                """);
+            _stage = manifest.CreateCommand();
+            _stage.CommandText = "INSERT INTO temp.gallery_candidate VALUES($page,$priority,$path,$length,$mtime)";
+            _page = _stage.Parameters.Add("$page", SqliteType.Integer);
+            _priority = _stage.Parameters.Add("$priority", SqliteType.Integer);
+            _path = _stage.Parameters.Add("$path", SqliteType.Text);
+            _length = _stage.Parameters.Add("$length", SqliteType.Integer);
+            _mtime = _stage.Parameters.Add("$mtime", SqliteType.Integer);
+
+            _replace = manifest.CreateCommand();
+            _replace.CommandText = """
+                INSERT OR IGNORE INTO build.plan_page(source,stable,page)
+                    SELECT $source,$stable,page FROM temp.gallery_candidate WHERE priority=0 ORDER BY page;
+                DELETE FROM build.plan_candidate WHERE sequence IN (
+                    SELECT sequence FROM build.plan_page WHERE source=$source AND stable=$stable);
+                DELETE FROM member WHERE source_id=$source AND stable_id=$stable AND page IN (
+                    SELECT page FROM build.plan_page WHERE source=$source AND stable=$stable
+                    AND page NOT IN (SELECT page FROM temp.gallery_candidate WHERE priority=0));
+                DELETE FROM build.plan_page WHERE source=$source AND stable=$stable
+                    AND page NOT IN (SELECT page FROM temp.gallery_candidate WHERE priority=0);
+                INSERT INTO build.plan_candidate(sequence,priority,path,length,mtime)
+                    SELECT p.sequence,c.priority,c.path,c.length,c.mtime
+                    FROM build.plan_page p JOIN temp.gallery_candidate c ON c.page=p.page
+                    WHERE p.source=$source AND p.stable=$stable;
+                UPDATE build.plan_page AS p SET done=EXISTS(
+                    SELECT 1 FROM temp.gallery_candidate c JOIN member m
+                        ON m.source_id=$source AND m.stable_id=$stable AND m.page=c.page
+                        AND m.path=c.path AND m.length=c.length AND m.mtime=c.mtime
+                    WHERE c.page=p.page AND c.priority=0 AND m.state IN ('indexed','skipped'))
+                    WHERE p.source=$source AND p.stable=$stable;
+                DELETE FROM member WHERE source_id=$source AND stable_id=$stable AND EXISTS (
+                    SELECT 1 FROM build.plan_page p WHERE p.source=member.source_id AND p.stable=member.stable_id
+                    AND p.page=member.page AND p.done=0);
+                DELETE FROM temp.gallery_candidate;
+                """;
+            _source = _replace.Parameters.Add("$source", SqliteType.Text);
+            _stable = _replace.Parameters.Add("$stable", SqliteType.Text);
+        }
+
+        internal void SetTransaction(SqliteTransaction transaction)
+        {
+            _stage.Transaction = transaction;
+            _replace.Transaction = transaction;
+        }
+
+        internal void Replace(ImageSearchGallery gallery, string root, IReadOnlyList<GalleryPage> pages, CancellationToken token)
+        {
+            // 一个画廊大小的暂存表，保留现有页序号并按首选候选的完整签名恢复完成状态。
+            foreach (var page in pages)
+            {
+                _page.Value = page.Number;
+                for (int priority = 0; priority < page.Candidates.Count; priority++)
+                {
+                    token.ThrowIfCancellationRequested();
+                    var file = page.Candidates[priority];
+                    _priority.Value = priority;
+                    _path.Value = Path.GetRelativePath(root, file.FilePath);
+                    _length.Value = file.Length;
+                    _mtime.Value = file.MtimeTicks;
+                    _stage.ExecuteNonQuery();
+                }
+            }
+            _source.Value = gallery.SourceId;
+            _stable.Value = gallery.StableId;
+            _replace.ExecuteNonQuery();
+        }
+
+        public void Dispose()
+        {
+            _replace.Dispose();
+            _stage.Dispose();
+            Execute(_manifest, "DROP TABLE IF EXISTS temp.gallery_candidate");
+        }
+    }
+
+
+    private static IEnumerable<(ImageSearchGallery Gallery, GalleryPage Page)> ReadPendingPlannedPages(string generation,
+        Dictionary<string, LibrarySource> sources, CancellationToken token)
     {
         long after = 0;
         using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(generation, "build-plan.db"), Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
@@ -256,8 +344,7 @@ public sealed partial class LocalImageSearchService
             {
                 command.CommandText = """
                     SELECT p.sequence,p.source,p.stable,p.page,g.work,g.folder,c.path,c.length,c.mtime
-                    FROM (SELECT * FROM plan_page WHERE sequence>$after
-                    """ + (pendingOnly ? " AND done=0 " : " ") + """
+                    FROM (SELECT * FROM plan_page WHERE sequence>$after AND done=0
                     ORDER BY sequence LIMIT 128) p JOIN plan_gallery g ON g.source=p.source AND g.stable=p.stable
                     LEFT JOIN plan_candidate c ON c.sequence=p.sequence ORDER BY p.sequence,c.priority
                     """;

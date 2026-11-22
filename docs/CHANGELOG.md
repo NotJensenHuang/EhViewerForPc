@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-11-22 加快本地以图搜图建库与增量更新
+
+- `PageFileParser.cs` 与 `LocalImageSearchService.Plan.cs` 直接从目录条目生成索引页，按画廊批量写入或核对页计划。
+- `LocalImageSearchService.Pipeline.cs` 每批比较最多 4,096 页，从已发布清单判定整库是否可直接复用。
+- `OrbExtractor.cs` 在 CPU 上一次计算每格的强弱角点，CPU 与 GPU 路径均按扫描顺序直接收集结果。`GrayImage.cs` 加快两条路径共用的金字塔缩放。机械硬盘、CPU 与 GPU 的实测见[索引性能验证](索引枚举与特征提取-2026-11-22.md)。
+
 ## 2026-11-21 自动代理模式
 
 - `AppSettings.cs` 和 `SettingsViewModel.cs` 将「自动」设为默认选项，保留已有配置保存的代理模式与图片代理开关。

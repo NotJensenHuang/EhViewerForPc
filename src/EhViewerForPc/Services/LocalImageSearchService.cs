@@ -274,7 +274,8 @@ public sealed partial class LocalImageSearchService : IDisposable
             }
             var previous = job.Rebuild ? null : current;
             string? previousDirectory = previous is null ? null : Path.Combine(root, "generations", previous.GenerationId);
-            using var manifest = OpenManifest(generation, writable: true, enableUri: affectedFolders is not null);
+            bool checkUnchanged = !resumed && affectedFolders is null && previousDirectory is not null;
+            using var manifest = OpenManifest(generation, writable: true, enableUri: affectedFolders is not null || checkUnchanged);
             Execute(manifest, "CREATE TABLE IF NOT EXISTS member(alias TEXT NOT NULL,source_id TEXT NOT NULL,stable_id TEXT NOT NULL,page INTEGER NOT NULL,path TEXT NOT NULL,length INTEGER NOT NULL,mtime INTEGER NOT NULL,state TEXT NOT NULL,PRIMARY KEY(source_id,stable_id,page)); CREATE INDEX IF NOT EXISTS member_state ON member(state); PRAGMA user_version=1;");
             AttachBuildPlan(manifest, generation);
             progress?.Report(new(resumed ? "正在读取未完成索引任务…" : "正在枚举本地页图…"));
@@ -297,8 +298,8 @@ public sealed partial class LocalImageSearchService : IDisposable
                 job.PlanPrepared = false;
                 throw new InvalidOperationException("选中的本地库中没有可索引页图。");
             }
-            if (!resumed && affectedFolders is null && previousDirectory is not null && TryReuseUnchangedIndex(previousDirectory,
-                ReadPlannedPages(generation, selected, pendingOnly: false, token), job.TotalPages, selected, token) is { } unchanged)
+            if (checkUnchanged && TryReuseUnchangedIndex(manifest, previousDirectory!,
+                job.TotalPages, token) is { } unchanged)
             {
                 token.ThrowIfCancellationRequested();
                 manifest.Close(); published = true;
