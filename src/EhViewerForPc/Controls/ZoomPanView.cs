@@ -53,6 +53,7 @@ public sealed class ZoomPanView : Control
     private Bitmap? _bitmap;
     private Bitmap? _retiredBitmap;
     private DecodedImage? _preloaded;
+    private ReaderTranslationImage? _translationImage;
     private string? _preloadedKey;
     private DecodedImage? _animated;
     private Task<string>? _animationTask;
@@ -133,6 +134,7 @@ public sealed class ZoomPanView : Control
 
     /// <summary>Test hook: the live animation session (its FrameIndex advances).</summary>
     internal DecodedImage? AnimatedImageForTest => _animated;
+    internal ReaderTranslationImage? TranslationImage => _attached && IsEffectivelyVisible && !_failed ? _translationImage : null;
 
     /// <summary>Test hook: diagnostic reason why the last playback loop ended.</summary>
     internal string? AnimationStopReason { get; private set; }
@@ -245,6 +247,7 @@ public sealed class ZoomPanView : Control
         {
             _bitmap = _preloaded.Bitmap;
             DecodedImage adopted = _preloaded;
+            _translationImage = adopted.TranslationImage;
             _preloaded = null;
             _preloadedKey = null;
             _loading = false;
@@ -264,6 +267,7 @@ public sealed class ZoomPanView : Control
         AnimationFramePool.Release(_retiredBitmap);
         _retiredBitmap = _bitmap;
         _bitmap = null;
+        _translationImage = null;
     }
 
     private void BeginLoad(bool resetView)
@@ -347,6 +351,7 @@ public sealed class ZoomPanView : Control
                 return;
             }
 
+            // 让请求报告的失败原因先于完成回调进入界面状态。
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 if (token.IsCancellationRequested || generation != _generation)
@@ -366,12 +371,13 @@ public sealed class ZoomPanView : Control
                     _failed = false;
                     RetireCurrent();
                     _bitmap = image.Bitmap;
+                    _translationImage = image.TranslationImage;
                     StartAnimation(image, generation, token);
                 }
 
                 InvalidateVisual();
                 TryPreload();
-            });
+            }, DispatcherPriority.Background);
         }
         catch (OperationCanceledException)
         {
@@ -488,6 +494,7 @@ public sealed class ZoomPanView : Control
                 {
                     _bitmap = _preloaded.Bitmap;
                     DecodedImage adopted = _preloaded;
+                    _translationImage = adopted.TranslationImage;
                     _preloaded = null;
                     _preloadedKey = null;
                     _failed = false;

@@ -31,6 +31,7 @@ public sealed partial class AppServices : IDisposable
         CacheStore = new LibraryCacheStore(paths);
         Scanner = new LibraryScanner();
         Decoder = new ImageDecoder(Log);
+        MangaTranslation = new MangaTranslationService(Paths, Decoder, Log);
         Images = new ImageLoader(Decoder, Log);
         Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
@@ -57,6 +58,7 @@ public sealed partial class AppServices : IDisposable
     public LibraryCacheStore CacheStore { get; }
     public LibraryScanner Scanner { get; }
     public ImageDecoder Decoder { get; }
+    internal MangaTranslationService MangaTranslation { get; }
     public ImageLoader Images { get; }
     public CoverService Covers { get; }
     public PageDimensionService Dimensions { get; }
@@ -216,6 +218,7 @@ public sealed partial class AppServices : IDisposable
 
         Downloads.Dispose();
         ImageSearch.Dispose();
+        MangaTranslation.Dispose();
         Writes.Dispose();
         Online.Dispose();
         Covers.Dispose();

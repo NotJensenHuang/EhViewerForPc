@@ -108,6 +108,15 @@
                 </ComboBox.ItemTemplate>
               </ComboBox>
               <Button Height="32" MinHeight="32" Padding="8,0" FontSize="13" FontWeight="Normal"
+                      IsEnabled="{Binding CanTranslateCurrentPage}" Click="OnReaderTranslate"
+                      AutomationProperties.AutomationId="Reader.Translate" AutomationProperties.Name="翻译本页"
+                      ToolTip.Tip="在本机将本页的日文翻译为简体中文">
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                  <ui:FASymbolIcon Symbol="Globe" FontSize="20" />
+                  <TextBlock Classes="readerCommandLabel" Text="翻译本页" FontSize="13" VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
+              <Button Height="32" MinHeight="32" Padding="8,0" FontSize="13" FontWeight="Normal"
                       Click="OnReaderImmersive" AutomationProperties.Name="沉浸" ToolTip.Tip="隐藏导航与页头，Esc 退出">
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                   <ui:FASymbolIcon Symbol="FullScreen" FontSize="20" />

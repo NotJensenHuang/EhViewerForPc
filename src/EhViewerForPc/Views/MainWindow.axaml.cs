@@ -552,6 +552,7 @@ public partial class MainWindow : Window
         _displayedReader = (view as ReaderPage)?.ViewModel;
         if (previousReader is not null && !ReferenceEquals(previousReader, _displayedReader))
         {
+            previousReader.CloseTranslation();
             previousReader.SaveProgress();
             _shell?.Library.RefreshWorkProgress(previousReader.Source.ProgressKey);
             _shell?.History.Reload();
@@ -662,6 +663,11 @@ public partial class MainWindow : Window
     private void OnReaderBackground(object? sender, RoutedEventArgs e) => ActiveReader?.ToggleBackground();
     private void OnReaderHelp(object? sender, RoutedEventArgs e) => ActiveReader?.ShowHelpFlyout();
     private void OnReaderClose(object? sender, RoutedEventArgs e) => ActiveReader?.Close();
+
+    private async void OnReaderTranslate(object? sender, RoutedEventArgs e)
+    {
+        if (ActiveReader is { } reader) await reader.TranslateCurrentPageAsync();
+    }
 
     private void UpdateAdaptiveLayout()
     {

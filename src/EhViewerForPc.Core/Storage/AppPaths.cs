@@ -42,6 +42,8 @@ public sealed class AppPaths
     /// <summary>Thumbnail cache for online listings.</summary>
     public string ThumbnailCacheDirectory => Path.Combine(BaseDirectory, "thumbnails");
 
+    public string MangaTranslationDirectory => Path.Combine(BaseDirectory, "manga-translation");
+
     public string DownloadTasksFile => Path.Combine(BaseDirectory, "downloads.json");
 
     /// <summary>Cached EhTagTranslation database (compact JSON).</summary>

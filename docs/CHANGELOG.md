@@ -1,5 +1,17 @@
 # 变更记录
 
+## 2026-11-23 修复本地 WebP 阅读失败
+
+- `ImageDecoder.cs` 保留底层只读文件流到解码后核对完成，使 WebP 页面正常显示并保留翻译所需的源页信息。
+- `ZoomPanView.cs` 先处理图像请求报告的失败原因。`ImageStatusOverlay.cs` 在无具体原因时显示「请重试」。
+- `ReaderRetryIntegrationTests.cs` 增加完整八页 WebP 图库的逐页解码回归。Windows x64 NativeAOT 便携版实测通过本地库卡片、详情和版本入口。见[本地阅读验证](本地WebP阅读回归-2026-11-23.md)。
+
+## 2026-11-23 阅读器接入本地漫画翻译
+
+- `MainWindow.axaml`、`ReaderPage.axaml` 与 `ReaderViewModel.Translation.cs` 增加「翻译本页」和可复制日文原文、简中译文的结果面板，支持取消当前页翻译。
+- `ImageRequest.cs` 与 `MangaTranslationService.cs` 复用实际加载的静态页身份，以只读方式生成临时 PNG，调度独立后端并清理在途进程与临时文件。
+- `tools/translation/` 提供隔离后端安装和执行入口，使用 DirectML 运行 PaddleOCR、Vulkan 运行 Hy-MT2-1.8B。见[真实页实测记录](本地漫画翻译实测-2026-11-23.md)。
+
 ## 2026-11-22 加快本地以图搜图建库与增量更新
 
 - `PageFileParser.cs` 与 `LocalImageSearchService.Plan.cs` 直接从目录条目生成索引页，按画廊批量写入或核对页计划。

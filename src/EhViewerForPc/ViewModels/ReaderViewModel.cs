@@ -380,6 +380,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (index == _index) CloseTranslation();
         _retryPageNumber = pageNumber;
         SetRetryState(true, -1, $"正在重新下载第 {pageNumber} 页…");
         try
@@ -445,6 +446,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(ShowRetryProgress));
         OnPropertyChanged(nameof(RetryStatusText));
         OnPropertyChanged(nameof(HasRetryStatus));
+        OnPropertyChanged(nameof(CanTranslateCurrentPage));
         UpdateItemRetryState(running, progress, text);
     }
 
@@ -468,6 +470,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             _horizontalItems[index].UpdatePage(_pages[index], _source.CreateRequest(index, refresh: true));
         if (index == _index)
         {
+            CloseTranslation();
             UpdateCurrentRequests(refresh: true);
             OnPropertyChanged(nameof(SingleRequest));
             OnPropertyChanged(nameof(PreloadRequest));
@@ -495,6 +498,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     {
         if (index == _index)
         {
+            if (refresh) CloseTranslation();
             UpdateCurrentRequests(refresh);
             OnPropertyChanged(nameof(SingleRequest));
             OnPropertyChanged(nameof(PreloadRequest));
@@ -529,6 +533,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CurrentPageNumber));
         OnPropertyChanged(nameof(CanPrev));
         OnPropertyChanged(nameof(CanNext));
+        OnPropertyChanged(nameof(CanTranslateCurrentPage));
     }
 
     private void SetIndex(int index, bool scrollContinuous, double offset = 0, bool save = true)
@@ -536,6 +541,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         if (_pages.Count == 0) return;
         index = Math.Clamp(index, 0, _pages.Count - 1);
         bool changed = index != _index;
+        if (changed) CloseTranslation();
         _index = index;
         _pageOffset = Math.Clamp(offset, 0, 1);
         _completed = index == _pages.Count - 1;
@@ -920,7 +926,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
     public void SetContinuousWidth(double width)
     {
-        double target = Math.Clamp(width, 320, 1400);
+        double target = Math.Clamp(width, IsTranslationOpen ? 180 : 320, 1400);
         if (Math.Abs(target - _continuousWidth) < 2 && _continuousItems.Count > 0)
         {
             return;
@@ -1116,6 +1122,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        CloseTranslation();
         if (_source is OnlineReaderSource online) { online.DimensionResolved = null; online.QualityChanged = null; }
         _saveTimer.Stop();
         _hintTimer.Stop();

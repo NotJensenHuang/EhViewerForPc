@@ -58,6 +58,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - The More menu lists both left-to-right and right-to-left options, controlling horizontal continuous layout only and disabled in other modes. Arrow keys, the wheel and single-page click zones keep fixed directions
   - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
   - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
+  - After installing the local translation backend, select "翻译本页" (Translate this page) in the reader header to translate a loaded, static Japanese page into Simplified Chinese. The right-hand panel shows numbered, selectable source text and translations. Changing pages, closing the panel, or leaving the reader cancels the current job
   - Local "Retry this page" downloads only the selected page to the original copy folder and refreshes its placeholder and dimensions. Failed transfers preserve the original file; active writers in the same folder finish first. Ordinary folders without an original gallery link/page number reload local files and show the reason; "Continue download" handles the other missing pages
   - The reader opens inside the main window only; immersive mode hides the sidebar and title, and Esc exits it
   - An image memory budget covers raw decode buffers, the current bitmap, prefetch and animation canvases; the online disk cache has configurable size and retention limits with LRU eviction
@@ -126,6 +127,7 @@ Online browsing is available on first launch. To use the local library, point "L
 | :--- | :--- | :--- |
 | Local Library | Read-only scanning, multi-source merge, version management, search and filters | Virtualized grid, per-source signature cache, cache-first startup |
 | Reader | Single / vertical / horizontal modes, animation, progress, online page source | On-demand pagination, placeholder backfill, shared progress key, image memory budget |
+| Manga Translation | Japanese to Simplified Chinese on the current static page, copyable source text and translations | Optional local backend, DirectML OCR and Vulkan translation |
 | Downloads | Queue, resume, concurrency and throttling, directory relocation | Persisted state, atomic writes, migration journal and rollback |
 | Online Browsing | Search, subscriptions, rankings, bookmarks, details, rating and archives | In-house tolerant HTML parser, fixed-structure fixture tests, cookie session |
 | Image Search | Indexing, cropped queries, matched-page location | Managed C# backend, SkiaSharp / SQLite, separate windowless host |
@@ -271,6 +273,7 @@ covers/                  Local cover cache
 thumbnails/              Online cover cache
 online-cache/            Online reader page cache
 image-search/            Local image index (configurable location, off by default)
+manga-translation/       Optional GPU translation backend (backend/) and per-job PNG snapshots (input/)
 exports/                 Export directory
 logs/                    Runtime logs (no tokens or page content)
 ```
@@ -278,6 +281,22 @@ logs/                    Runtime logs (no tokens or page content)
 The **download root** defaults to `Documents\EhViewerDownloads` (configurable) and is separate from the data directory. Imported libraries are opened with `FileAccess.Read` only and no write APIs are used; `--self-test` compares path, size and modification-time snapshots before and after.
 
 Inside the image-index directory, `features.db` stores deduplicated features and `build-job.json` stores a pending job and its phase. The job directory’s `build-plan.db` stores candidates, signatures and pending/completed page states, and is reclaimed after publication. `generations/` contains published snapshots and work in progress; `current.json` and `current.previous.json` are primary / backup pointers to the same current snapshot after publication cleanup. Once publication completes and old queries finish, only the current snapshot remains; builds and merges still require temporary space. Recovery, updates or cleanup migrate legacy features before reclaiming unused directories. Do not manually delete an unfinished job directory. A legacy unfinished job requires one enumeration to prepare its page plan on the first resume; extracted features remain reusable, and subsequent resumes read the persisted queue.
+
+### Set Up the Local Manga Translation Backend
+
+On Windows x64, run the following in PowerShell 7 with Python and `pip` installed. Setup downloads the isolated runtime, PaddleOCR weights, and the approximately 1.13 GB Hy-MT2-1.8B Q4_K_M weights. Inference uses local models. If starting the app with `--data-dir`, set `$translationData` to the same directory during setup. The `EHVIEWER_MANGA_TRANSLATION_BACKEND` environment variable can also select an absolute backend path.
+
+```powershell
+$translationData = Join-Path $env:LOCALAPPDATA 'EhViewerForPc'
+$translationLegacyData = Join-Path $env:LOCALAPPDATA 'EhViewerReader'
+if (!(Test-Path -LiteralPath $translationData -PathType Container) -and
+    (Test-Path -LiteralPath $translationLegacyData -PathType Container)) {
+    $translationData = $translationLegacyData
+}
+./tools/translation/Install-Backend.ps1 -Destination (Join-Path $translationData 'manga-translation/backend')
+```
+
+The app opens the source image read-only and removes its temporary PNG from the application data directory when the job ends. Translations appear in the reader panel and are kept out of the library and reading history.
 
 ## 🧪 Tests and Verification
 
@@ -319,6 +338,7 @@ The online parser is covered by fixtures captured from fixed page structures; `-
 - Image access is subject to account and IP quotas. View-page requests are serialized, but bulk downloads can still trigger rate limiting
 - Favourite category names are local display labels and are not written back to the account
 - Continuous and horizontal modes fit whole pages to the viewport and have no in-page zoom (single-page mode supports 1x–8x)
+- Local manga translation runs manually on the current static Japanese page. It requires a configured local backend, a GPU with DirectML and Vulkan support, and matching drivers. OCR reading order and translations can contain errors
 - Page and cover bitmaps are owned by their controls. Download events update the affected copy, and a manual refresh picks up external file changes
 - Recall on a real image library and full-library search performance for local image search are not verified
 

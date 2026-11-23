@@ -386,7 +386,7 @@ public sealed class GalleryPageImageRequest(GalleryImageStore pages, ImageLoader
             .ConfigureAwait(false);
         qualityResolved?.Invoke(cached.IsOriginal);
         progress?.Report(ImageLoadStatus.Decoding());
-        DecodedImage? image = await loader.LoadFileAsync(cached.Path, targetWidth, targetHeight, token).ConfigureAwait(false);
+        DecodedImage? image = await loader.LoadFileAsync(cached.Path, targetWidth, targetHeight, token, captureReaderSource: true).ConfigureAwait(false);
         if (image is not null)
         {
             resolved?.Invoke(image.DecodedWidth, image.DecodedHeight);
@@ -483,7 +483,7 @@ public sealed class OnlinePageImageRequest : IImageRequest
                         // No viewer reference (offline / quota), but the page was read
                         // before: serve the cached bytes instead of a dead page.
                         _qualityResolved?.Invoke(cachedOriginal);
-                        _inner = new CachedFileImageRequest(_service, "cached:" + Key, cachedPath);
+                        _inner = new CachedFileImageRequest(_service, "cached:" + Key, cachedPath, captureReaderSource: true);
                     }
                     else
                     {
@@ -580,12 +580,14 @@ public sealed class CachedFileImageRequest : IImageRequest
 {
     private readonly OnlineImageService _service;
     private readonly string _path;
+    private readonly bool _captureReaderSource;
 
-    public CachedFileImageRequest(OnlineImageService service, string key, string path)
+    public CachedFileImageRequest(OnlineImageService service, string key, string path, bool captureReaderSource = false)
     {
         _service = service;
         Key = key;
         _path = path;
+        _captureReaderSource = captureReaderSource;
     }
 
     public string Key { get; }
@@ -599,7 +601,7 @@ public sealed class CachedFileImageRequest : IImageRequest
         OnlineImageService.Touch(_path);
         progress?.Report(ImageLoadStatus.Decoding());
         DecodedImage? image = await _service.ImageLoader
-            .LoadFileAsync(_path, targetWidth, targetHeight, cancellationToken)
+            .LoadFileAsync(_path, targetWidth, targetHeight, cancellationToken, _captureReaderSource)
             .ConfigureAwait(false);
         progress?.Report(image is null ? ImageLoadStatus.Failed("缓存图片无法解码") : ImageLoadStatus.Ready());
         return image;

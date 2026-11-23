@@ -45,7 +45,7 @@ public sealed class PageImageRequest : IImageRequest
         PageCandidate? candidate = _candidates.FirstOrDefault(c => c.Length > 0);
         progress?.Report(ImageLoadStatus.Decoding(candidate?.Length ?? 0));
         DecodedImage? image = await _loader
-            .LoadCandidatesAsync(_candidates, targetWidth, targetHeight, cancellationToken)
+            .LoadCandidatesAsync(_candidates, targetWidth, targetHeight, cancellationToken, captureReaderSource: true)
             .ConfigureAwait(false);
         progress?.Report(image is null
             ? ImageLoadStatus.Failed(_candidates.Count == 0 ? "没有可读页面文件" : "无法解码页面文件")
@@ -104,7 +104,8 @@ public sealed class ImageLoader
         IReadOnlyList<PageCandidate> candidates,
         int targetWidth,
         int targetHeight,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool captureReaderSource = false)
     {
         foreach (PageCandidate candidate in candidates)
         {
@@ -117,7 +118,8 @@ public sealed class ImageLoader
                 targetHeight > 0 ? targetHeight : null,
                 MaxMegapixels,
                 MaxDimension,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                captureReaderSource).ConfigureAwait(false);
 
             if (image is not null)
             {
@@ -132,7 +134,8 @@ public sealed class ImageLoader
         string path,
         int targetWidth,
         int targetHeight,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool captureReaderSource = false)
     {
         if (!File.Exists(path))
         {
@@ -145,7 +148,8 @@ public sealed class ImageLoader
             targetHeight > 0 ? targetHeight : null,
             MaxMegapixels,
             MaxDimension,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            captureReaderSource).ConfigureAwait(false);
     }
 
     public void ReportCandidatesFailed(IReadOnlyList<PageCandidate> candidates, string reason)

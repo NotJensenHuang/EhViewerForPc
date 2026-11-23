@@ -12,8 +12,8 @@
         Background="{Binding BackgroundBrush}">
   <!-- The work title and the reading commands live in the shell header; this
        page is the canvas plus one compact progress row. -->
-  <Grid RowDefinitions="*,Auto" Background="{Binding BackgroundBrush}">
-    <Grid Grid.Row="0">
+  <Grid RowDefinitions="*,Auto" ColumnDefinitions="*,Auto" Background="{Binding BackgroundBrush}">
+    <Grid Grid.Row="0" SizeChanged="OnCanvasSizeChanged">
       <controls:ZoomPanView x:Name="SingleView"
                            IsVisible="{Binding ShowSingleView}"
                            Request="{Binding SingleRequest}"
@@ -136,13 +136,38 @@
         <SelectableTextBlock Text="{Binding RestoreHint}" Foreground="#F2F4F8" FontSize="12" />
       </Border>
 
-      <!-- Immersive leaves the canvas clean but keeps one discoverable exit. -->
+      <!-- 沉浸模式保留退出入口。 -->
       <Button x:Name="ImmersiveExit" Content="退出沉浸（Esc）" IsVisible="False"
               HorizontalAlignment="Right" VerticalAlignment="Top" Margin="16"
               Click="OnExitImmersive" ToolTip.Tip="恢复导航与页头（Esc）" />
     </Grid>
 
-    <Border Grid.Row="1" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+      <Border x:Name="TranslationPanel" Grid.Column="1" IsVisible="{Binding IsTranslationOpen}" Width="320"
+              Padding="12" BorderThickness="1,0,0,0"
+              Background="{DynamicResource AppBgBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
+              AutomationProperties.AutomationId="Reader.TranslationPanel">
+        <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
+          <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="6" VerticalAlignment="Center">
+            <SelectableTextBlock Text="本页翻译" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Content="取消" Command="{Binding CancelTranslationCommand}"
+                    IsVisible="{Binding IsTranslationRunning}"
+                    AutomationProperties.AutomationId="Reader.CancelTranslation" AutomationProperties.Name="取消翻译" />
+            <Button Grid.Column="2" Content="关闭" Command="{Binding CloseTranslationCommand}"
+                    AutomationProperties.AutomationId="Reader.CloseTranslation" AutomationProperties.Name="关闭本页翻译" />
+          </Grid>
+          <StackPanel Grid.Row="1" Spacing="8">
+            <SelectableTextBlock Text="{Binding TranslationStatus}" TextWrapping="Wrap" Classes="secondary"
+                                 AutomationProperties.AutomationId="Reader.TranslationStatus" />
+            <ProgressBar IsVisible="{Binding IsTranslationRunning}" IsIndeterminate="True" Height="4" />
+          </StackPanel>
+          <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <SelectableTextBlock Text="{Binding TranslationText}" TextWrapping="Wrap"
+                                 AutomationProperties.AutomationId="Reader.TranslationText" />
+          </ScrollViewer>
+        </Grid>
+      </Border>
+
+    <Border Grid.Row="1" Grid.ColumnSpan="2" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0" Padding="16,8" MinHeight="40">
       <Grid ColumnDefinitions="Auto,10,*,10,Auto,14,Auto" ColumnSpacing="0">
         <Button Grid.Column="0" Content="上一页" Command="{Binding PrevPageCommand}" />

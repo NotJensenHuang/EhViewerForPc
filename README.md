@@ -58,6 +58,7 @@ dotnet run --project src/EhViewerForPc -c Release
   - 更多菜单同时列出「左→右 / 右→左」，只控制横向连续模式的页面排列，其他模式禁用；方向键、滚轮及单页点击区域始终保持固定方向
   - 在线页面源按需解析当前页所在的预览分页，图片按需下载并缓存到 `online-cache`；未解析页显示占位，解码后回填真实尺寸
   - 加载状态可见，失败只影响该页并提供「重试本页」；GIF / WebP 动图循环播放、全屏、背景色切换
+  - 安装本地翻译后端后，使用页头「翻译本页」将已加载的静态日文页译为简体中文。阅读器右侧显示带编号、可选中复制的原文和译文。翻页、关闭面板或离开阅读器会取消当前任务
   - 本地「重试本页」仅重新下载选中页到副本原路径，更新当前占位和尺寸；失败保留原文件，同目录下载在途时等待写入结束。不具备原画廊链接 / 页号的普通目录只重新载入文件并显示原因；其他缺页仍由「继续下载」处理
   - 阅读器仅在主窗口内打开，沉浸模式隐藏侧栏与标题，按 Esc 退出
   - 图像内存预算覆盖原始解码缓冲、当前位图、预读与动画画布；在线磁盘缓存可设置容量上限与保留时间并按 LRU 淘汰
@@ -126,6 +127,7 @@ dotnet run --project src/EhViewerForPc -c Release
 | :--- | :--- | :--- |
 | 本地资料库 | 只读扫描、多源合并、版本管理、搜索筛选 | 虚拟化网格、按源隔离的签名缓存、缓存优先启动 |
 | 阅读器 | 单页 / 纵向 / 横向、动图、进度、在线页面源 | 按需解析分页、占位回填、共享进度键、图像内存预算 |
+| 漫画翻译 | 当前静态页日译简中、可复制原文和译文 | 可选本地后端，DirectML OCR 与 Vulkan 翻译 |
 | 下载 | 队列、断点续传、并发与限速、目录搬迁 | 持久化状态、原子写入、迁移日志与回滚 |
 | 在线浏览 | 搜索、订阅、排行榜、书签、详情、评分与归档 | 自研容错 HTML 解析、固定结构夹具回归、Cookie 会话 |
 | 以图搜图 | 索引、裁剪检索、命中页定位 | 托管 C# 后端、SkiaSharp / SQLite、独立无窗口 Host |
@@ -271,6 +273,7 @@ covers/                  本地封面缓存
 thumbnails/              在线封面缓存
 online-cache/            在线阅读页面缓存
 image-search/            可配置位置的本地图片索引（默认关闭）
+manga-translation/       可选 GPU 翻译后端（backend/）与任务期间的 PNG 快照（input/）
 exports/                 导出文件目录
 logs/                    运行日志（不含 token 与页面内容）
 ```
@@ -278,6 +281,22 @@ logs/                    运行日志（不含 token 与页面内容）
 **下载根目录**默认为 `文档\EhViewerDownloads`（可配置），与数据目录分离。导入的资料库仅以 `FileAccess.Read` 打开，不使用写入 API；`--self-test` 会对资料库做路径、大小与修改时间的前后快照比对。
 
 图片索引目录中，`features.db` 保存去重特征，`build-job.json` 保存未完成任务与阶段，任务目录中的 `build-plan.db` 保存页候选 / 签名、待办和完成状态，发布后回收；`generations/` 保存发布快照与在途任务，`current.json` / `current.previous.json` 在发布清理后为指向同一当前快照的主 / 备指针。正常完成且旧查询结束后只保留当前快照，建库及合并时仍需临时空间。旧缓存会在恢复 / 更新或清理时先迁移特征，再回收未使用目录；不要手动删除未完成任务目录。旧版未完成任务首次接续需要一次枚举以补齐页计划，已提取特征仍可复用，后续接续读取持久化待办。
+
+### 准备本地漫画翻译后端
+
+在 Windows x64 使用 PowerShell 7 和已安装 `pip` 的 Python，执行以下命令。安装时联网下载隔离运行时、PaddleOCR 权重和约 1.13 GB 的 Hy-MT2-1.8B Q4_K_M 权重；翻译使用本机模型。若用 `--data-dir` 启动，安装时将 `$translationData` 换成同一目录。也可通过环境变量 `EHVIEWER_MANGA_TRANSLATION_BACKEND` 指定后端的绝对路径。
+
+```powershell
+$translationData = Join-Path $env:LOCALAPPDATA 'EhViewerForPc'
+$translationLegacyData = Join-Path $env:LOCALAPPDATA 'EhViewerReader'
+if (!(Test-Path -LiteralPath $translationData -PathType Container) -and
+    (Test-Path -LiteralPath $translationLegacyData -PathType Container)) {
+    $translationData = $translationLegacyData
+}
+./tools/translation/Install-Backend.ps1 -Destination (Join-Path $translationData 'manga-translation/backend')
+```
+
+原图以只读方式打开，任务结束后清理应用数据目录中的临时 PNG。译文在阅读器面板中显示，不写入资料库或阅读进度。
 
 ## 🧪 测试与验证
 
@@ -319,6 +338,7 @@ dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
 - 图片访问受账号与 IP 配额限制，应用已串行化视图页请求，但批量下载仍可能触发限流
 - 收藏分类名称是本地显示名，不写回站点账号配置
 - 连续 / 横向模式为整页适配滚动，不提供页内缩放（单页模式支持 1x–8x）
+- 本地漫画翻译限手动翻译当前静态日文页。需要已配置本地后端、支持 DirectML 和 Vulkan 的 GPU 及匹配驱动； OCR 行序和译文可能出错
 - 无全局位图缓存，页面与封面位图由控件独占；资料库通过下载事件定向更新副本，外部文件变化可手动刷新
 - 本地以图搜图的真实图库召回率与全库检索性能未验证
 

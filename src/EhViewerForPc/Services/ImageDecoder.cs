@@ -20,6 +20,7 @@ public sealed class DecodedImage : IDisposable
     public int DecodedHeight { get; }
     public string Path { get; }
     public long ApproximateBytes => (long)DecodedWidth * DecodedHeight * 4;
+    internal ReaderTranslationImage? TranslationImage { get; set; }
 
     /// <summary>True when the file carries more than one animation frame.</summary>
     public bool IsAnimated { get; init; }
@@ -93,8 +94,13 @@ public sealed class ImageDecoder : IDisposable
         int? targetHeight,
         int maxMegapixels,
         int maxDimension,
-        CancellationToken cancellationToken) =>
-        DecodeFrameAsync(path, 0, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken);
+        CancellationToken cancellationToken,
+        bool captureReaderSource = false) =>
+        DecodeFrameAsync(path, 0, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken, captureReaderSource);
+
+    internal DecodedImage DecodeTranslationPage(string path, FileStream source, CancellationToken token) =>
+        DecodeStream(source, path, null, null, ImageBudget.DefaultMaxMegapixels, ImageBudget.DefaultMaxDimension,
+            token, frameIndex: 0, captureReaderSource: false);
 
     /// <summary>
     /// Decodes one animation frame of the file. Frame 0 uses the standard
@@ -108,12 +114,13 @@ public sealed class ImageDecoder : IDisposable
         int? targetHeight,
         int maxMegapixels,
         int maxDimension,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool captureReaderSource = false)
     {
         try
         {
             return await Task.Run(
-                () => DecodeCore(path, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken, frameIndex),
+                () => DecodeCore(path, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken, frameIndex, captureReaderSource),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -209,12 +216,33 @@ public sealed class ImageDecoder : IDisposable
         int maxMegapixels,
         int maxDimension,
         CancellationToken cancellationToken,
-        int frameIndex = 0)
+        int frameIndex,
+        bool captureReaderSource)
     {
         cancellationToken.ThrowIfCancellationRequested();
         using FileStream stream = OpenRead(path);
+        return DecodeStream(stream, path, targetWidth, targetHeight, maxMegapixels, maxDimension,
+            cancellationToken, frameIndex, captureReaderSource);
+    }
 
-        using SKCodec? codec = SKCodec.Create(stream, out SKCodecResult createResult);
+    private DecodedImage DecodeStream(
+        FileStream stream,
+        string path,
+        int? targetWidth,
+        int? targetHeight,
+        int maxMegapixels,
+        int maxDimension,
+        CancellationToken cancellationToken,
+        int frameIndex,
+        bool captureReaderSource)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ReaderTranslationImage? source = captureReaderSource ? ReaderTranslationImage.TryCapture(path, stream) : null;
+
+        // WebP 等解码器可能提前释放 Skia 的输入包装。底层文件流由调用方持有，
+        // 以便解码后仍能通过同一个句柄核对图片版本。
+        using var codecStream = new SKManagedStream(stream, disposeManagedStream: false);
+        using SKCodec? codec = SKCodec.Create(codecStream, out SKCodecResult createResult);
         if (codec is null || createResult != SKCodecResult.Success)
         {
             throw new InvalidOperationException("Unsupported or corrupt image (" + createResult + ").");
@@ -223,9 +251,15 @@ public sealed class ImageDecoder : IDisposable
         SKBitmap? scratch = null;
         try
         {
-            return DecodeFrameWithCodec(
+            DecodedImage image = DecodeFrameWithCodec(
                 codec, path, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken, frameIndex,
                 pooledBuffer: false, ref scratch);
+            if (source is { } captured && captured.Matches(stream))
+            {
+                image.TranslationImage = captured with { IsAnimated = image.IsAnimated };
+            }
+
+            return image;
         }
         finally
         {
@@ -675,9 +709,8 @@ public sealed class ImageDecoder : IDisposable
         return matrix;
     }
 
-    internal static FileStream OpenRead(string path)
+    internal static FileStream OpenRead(string path, FileShare share = FileShare.ReadWrite | FileShare.Delete)
     {
-        const FileShare share = FileShare.ReadWrite | FileShare.Delete;
         try
         {
             return new FileStream(path, FileMode.Open, FileAccess.Read, share, 64 * 1024, FileOptions.SequentialScan);

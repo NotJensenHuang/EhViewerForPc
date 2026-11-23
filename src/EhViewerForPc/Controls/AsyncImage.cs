@@ -34,6 +34,7 @@ public sealed class AsyncImage : Control
     private static readonly IBrush MutedTextBrush = new SolidColorBrush(Color.Parse("#8A93A6"));
 
     private Bitmap? _bitmap;
+    private ReaderTranslationImage? _translationImage;
     private Bitmap? _retiredBitmap;
     private DecodedImage? _animated;
     private CancellationTokenSource? _cancellation;
@@ -83,6 +84,8 @@ public sealed class AsyncImage : Control
 
     /// <summary>Test hook: the live animation session, if any.</summary>
     internal DecodedImage? AnimatedImageForTest => _animated;
+    internal ReaderTranslationImage? TranslationImage => _attached && IsEffectivelyVisible && !_failed &&
+        string.Equals(_lastSourceKey, Source?.Key, StringComparison.Ordinal) ? _translationImage : null;
 
     protected override Size MeasureOverride(Size availableSize)
     {
@@ -227,6 +230,7 @@ public sealed class AsyncImage : Control
                 }
 
                 _loading = false;
+                _translationImage = image?.TranslationImage;
                 Bitmap? previous = _bitmap;
                 if (image is null)
                 {
@@ -319,6 +323,7 @@ public sealed class AsyncImage : Control
         AnimationFramePool.Release(_retiredBitmap);
         _retiredBitmap = _bitmap;
         _bitmap = null;
+        _translationImage = null;
     }
 
     private void ReleaseBitmaps()

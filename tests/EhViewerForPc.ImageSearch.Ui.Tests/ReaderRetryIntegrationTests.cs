@@ -11,11 +11,50 @@ using EhViewerForPc.ImageSearch;
 using EhViewerForPc.Services;
 using EhViewerForPc.ViewModels;
 using EhViewerForPc.Views;
+using SkiaSharp;
 
 namespace EhViewerForPc.ImageSearch.Ui.Tests;
 
 public sealed class ReaderRetryIntegrationTests
 {
+    [AvaloniaFact]
+    public async Task CompleteWebpCopyOpensLocallyWithItsTranslationSource()
+    {
+        using var fixture = new Fixture();
+        string root = fixture.Services.Settings.Sources.Single().RootPath;
+        string folder = Directory.CreateDirectory(Path.Combine(root, "43-webp")).FullName;
+        File.WriteAllText(Path.Combine(folder, ".ehviewer"), "VERSION2\n0\n43\n0123456789\n0\n0\n0\n8\n");
+        using var bitmap = new SKBitmap(32, 48);
+        bitmap.Erase(SKColors.Orange);
+        using var webp = bitmap.Encode(SKEncodedImageFormat.Webp, 90);
+        byte[] pageBytes = webp.ToArray();
+        for (int number = 1; number <= 8; number++)
+            File.WriteAllBytes(Path.Combine(folder, $"{number:D8}.webp"), pageBytes);
+
+        using var library = new MainViewModel(fixture.Services);
+        await library.RescanAllAsync();
+        var copy = library.SnapshotAllWorks().Single(item => item.Gid == 43).Info;
+        Assert.Empty(copy.MissingRanges);
+        Assert.Equal(8, copy.PageCount);
+        using var reader = new ReaderViewModel(fixture.Services, copy);
+        await reader.InitializeAsync();
+        Assert.Equal("1 / 8", reader.PageLabel);
+        Assert.False(reader.IsCurrentPageMissing);
+
+        var firstPage = Assert.IsType<LocalReaderSource>(reader.Source).Pages[0].Primary!;
+        using var control = await fixture.Services.Images.LoadFileAsync(firstPage.FilePath, 32, 48, CancellationToken.None);
+        Assert.NotNull(control);
+
+        var request = Assert.IsType<PageImageRequest>(reader.SingleRequest);
+        using var decoded = await request.LoadAsync(32, 48, CancellationToken.None);
+        Assert.NotNull(decoded);
+        var translation = Assert.IsType<ReaderTranslationImage>(decoded.TranslationImage);
+        Assert.Equal(firstPage.FilePath, translation.Path);
+        Assert.Equal(firstPage.Length, translation.Length);
+        Assert.Equal(firstPage.MtimeTicks, translation.ModifiedUtc.Ticks);
+        Assert.Empty(fixture.Handler.Requests);
+    }
+
     [AvaloniaFact]
     public async Task OnlineListDownloadAppearsBeforeGalleryDetailsReturnAndIsRemovedWithAnEmptyTask()
     {

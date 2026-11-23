@@ -92,7 +92,7 @@ internal static class ImageStatusOverlay
     {
         if (failed || status.Phase == ImageLoadPhase.Failed)
         {
-            return ("无法加载", error ?? status.Message ?? "请检查网络后重试", false, 0, false);
+            return ("无法加载", error ?? status.Message ?? "请重试", false, 0, false);
         }
 
         switch (status.Phase)

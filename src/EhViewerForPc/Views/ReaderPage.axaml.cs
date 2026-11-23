@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using EhViewerForPc.Controls;
 using EhViewerForPc.Services;
 using EhViewerForPc.Core.Models;
@@ -47,12 +48,28 @@ public partial class ReaderPage : DocumentPage
     public bool IsImmersive { get; private set; }
     public event EventHandler<bool>? ImmersiveChanged;
 
+    internal Task TranslateCurrentPageAsync()
+    {
+        ReaderTranslationImage? image = SingleView.TranslationImage;
+        if (!_viewModel.IsSingleMode)
+        {
+            int pageNumber = _viewModel.CurrentPageNumber;
+            ScrollViewer pages = _viewModel.IsContinuousMode ? ContinuousScroll : HorizontalScroll;
+            image = pages.GetVisualDescendants().OfType<AsyncImage>()
+                .FirstOrDefault(control => control.DataContext is ContinuousPageItem item && item.Number == pageNumber)
+                ?.TranslationImage;
+        }
+
+        return _viewModel.TranslateCurrentPageAsync(image);
+    }
+
     private void OnExitImmersive(object? sender, RoutedEventArgs e) => SetImmersive(false);
 
     internal void ToggleImmersive() => SetImmersive(!IsImmersive);
 
     private void SetImmersive(bool value)
     {
+        if (value) _viewModel.CloseTranslation();
         IsImmersive = value;
         ImmersiveExit.IsVisible = value;
         ImmersiveChanged?.Invoke(this, value);
@@ -100,7 +117,12 @@ public partial class ReaderPage : DocumentPage
 
     private void OnWindowSizeChanged(object? sender, SizeChangedEventArgs e)
     {
-        if (_viewModel.IsSingleMode) return;
+        TranslationPanel.Width = Math.Clamp(e.NewSize.Width * 0.39, 208, 320);
+    }
+
+    private void OnCanvasSizeChanged(object? sender, SizeChangedEventArgs e)
+    {
+        if (_resizeTimer is null || _viewModel.IsSingleMode) return;
         _resizeTimer.Stop();
         _resizeTimer.Start();
     }
@@ -256,6 +278,14 @@ public partial class ReaderPage : DocumentPage
         switch (e.Key)
         {
             case Key.Escape:
+                if (_viewModel.IsTranslationOpen)
+                {
+                    _viewModel.CloseTranslation();
+                    FocusReader();
+                    e.Handled = true;
+                    return;
+                }
+
                 if (IsImmersive) { SetImmersive(false); e.Handled = true; return; }
                 if (WindowState == WindowState.FullScreen)
                 {
