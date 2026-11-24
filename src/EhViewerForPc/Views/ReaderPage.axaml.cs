@@ -47,6 +47,10 @@ public partial class ReaderPage : DocumentPage
     public ReaderViewModel ViewModel => _viewModel;
     public bool IsImmersive { get; private set; }
     public event EventHandler<bool>? ImmersiveChanged;
+    public event EventHandler? MangaTranslationSettingsRequested;
+
+    private void OnMangaTranslationSettings(object? sender, RoutedEventArgs e) =>
+        MangaTranslationSettingsRequested?.Invoke(this, EventArgs.Empty);
 
     internal Task TranslateCurrentPageAsync()
     {
@@ -280,7 +284,7 @@ public partial class ReaderPage : DocumentPage
             case Key.Escape:
                 if (_viewModel.IsTranslationOpen)
                 {
-                    _viewModel.CloseTranslation();
+                    _viewModel.CloseTranslationPanel();
                     FocusReader();
                     e.Handled = true;
                     return;

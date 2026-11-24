@@ -31,7 +31,9 @@ public sealed partial class AppServices : IDisposable
         CacheStore = new LibraryCacheStore(paths);
         Scanner = new LibraryScanner();
         Decoder = new ImageDecoder(Log);
-        MangaTranslation = new MangaTranslationService(Paths, Decoder, Log);
+        MangaTranslationBackend = new MangaTranslationBackendService(Paths);
+        MangaTranslation = new MangaTranslationService(Paths, Decoder, Log, MangaTranslationBackend,
+            () => Settings.MangaTranslationModelDirectory);
         Images = new ImageLoader(Decoder, Log);
         Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
@@ -59,6 +61,7 @@ public sealed partial class AppServices : IDisposable
     public LibraryScanner Scanner { get; }
     public ImageDecoder Decoder { get; }
     internal MangaTranslationService MangaTranslation { get; }
+    internal MangaTranslationBackendService MangaTranslationBackend { get; }
     public ImageLoader Images { get; }
     public CoverService Covers { get; }
     public PageDimensionService Dimensions { get; }
@@ -124,6 +127,13 @@ public sealed partial class AppServices : IDisposable
         Writes.Schedule("settings", () => { lock (_settingsSaveGate) { if (revision != _settingsRevision) return; if (!SettingsStore.Save(snapshot, out var failure)) Log.Warn("Settings save failed: " + failure); } });
         error = null;
         return true;
+    }
+
+    internal void SaveMangaTranslationModelDirectory(string directory)
+    {
+        if (PathIdentity.Comparer.Equals(Settings.MangaTranslationModelDirectory, directory)) return;
+        Settings.MangaTranslationModelDirectory = directory;
+        TrySaveSettings(out _);
     }
 
     public Task<bool> RelocateDownloadsAsync(string target, IProgress<DownloadMoveProgress>? progress, CancellationToken token) =>
@@ -219,6 +229,7 @@ public sealed partial class AppServices : IDisposable
         Downloads.Dispose();
         ImageSearch.Dispose();
         MangaTranslation.Dispose();
+        MangaTranslationBackend.Dispose();
         Writes.Dispose();
         Online.Dispose();
         Covers.Dispose();

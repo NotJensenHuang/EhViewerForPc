@@ -1,5 +1,18 @@
 # 变更记录
 
+## 2026-11-24 漫画翻译切换至原生 GPU 后端
+
+- `MangaTranslationWorker.cs`、`MangaOcr.cs` 与 `HyMtTranslator.cs` 让阅读器在无窗 C# 工作进程里直接运行 ONNX DirectML 与 Hy-MT2 Vulkan，保留竖列分组及图上译文。
+- `MangaTranslationAssetInstaller.cs` 与设置页只准备四个模型资源，显示当前文件和字节进度，区分连接、校验、取消收尾和失败重试。
+- `MangaTranslationNative.targets` 与 MSIX 打包工程保留原生依赖的子目录。旧目录里的模型权重继续可验证复用。见[原生后端验证](本地漫画翻译原生后端验证-2026-11-24.md)。
+
+## 2026-11-24 漫画翻译资源设置与图上译文
+
+- `MangaTranslationSettingsPage.axaml` 与 `MangaTranslationBackendService.cs` 提供独立的模型目录设置、按需下载、校验、进度和取消，应用内准备所需本机运行时。
+- `ReaderViewModel.Translation.cs`、`MangaTranslationOverlay.cs`、`ZoomPanView.cs` 与 `AsyncImage.cs` 将译文绘制在图片的对应区块，支持单页、连续和横向模式、原图切换及可复制的双语文本。
+- `tools/translation/worker.py` 将同气泡内满足间距、对齐和边界条件的竖列一起送译，为明底竖排增加窄列字形识别候选，并保留模型原样返回的区域。
+- Windows x64 NativeAOT 通过隔离设置安装、目录切换、实际 HTTPS 补齐以及 DirectML/Vulkan 图上翻译实测。见[漫画翻译设置与覆字验证](漫画翻译设置与覆字验证-2026-11-24.md)。
+
 ## 2026-11-23 修复本地 WebP 阅读失败
 
 - `ImageDecoder.cs` 保留底层只读文件流到解码后核对完成，使 WebP 页面正常显示并保留翻译所需的源页信息。

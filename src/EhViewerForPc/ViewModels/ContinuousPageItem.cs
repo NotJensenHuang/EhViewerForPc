@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using EhViewerForPc.Controls;
 using EhViewerForPc.Core.Models;
 using EhViewerForPc.Services;
 
@@ -20,6 +21,7 @@ public sealed class ContinuousPageItem : ObservableObject
     private double _displayWidth;
     private double _displayHeight;
     private IImageRequest _request;
+    private MangaTranslationOverlay? _translationOverlay;
     private int _originalWidth;
     private int _originalHeight;
 
@@ -38,6 +40,12 @@ public sealed class ContinuousPageItem : ObservableObject
     {
         get => _request;
         private set => SetProperty(ref _request, value);
+    }
+
+    public MangaTranslationOverlay? TranslationOverlay
+    {
+        get => _translationOverlay;
+        internal set => SetProperty(ref _translationOverlay, value);
     }
 
     /// <summary>Swaps the request so a failed page can retry without rebuilding

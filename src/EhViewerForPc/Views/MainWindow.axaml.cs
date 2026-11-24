@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private long _imageReadSequence;
     private OnlineFeedPage? _onlinePage;
     private SettingsPage? _settingsPage;
+    private MangaTranslationSettingsPage? _mangaTranslationSettingsPage;
     private readonly Dictionary<Control, NavigationTarget> _targets = [];
     private readonly NavigationPageFactory _navigationFactory = new();
     private WebLoginPage? _loginPage;
@@ -174,6 +175,7 @@ public partial class MainWindow : Window
                 _settingsPage = new SettingsPage();
                 _settingsPage.SettingsApplied += OnSettingsApplied;
                 _settingsPage.WebLoginRequested += OnWebLoginRequested;
+                _settingsPage.MangaTranslationSettingsRequested += OnMangaTranslationSettingsRequested;
                 _settingsPage.RescanRequested += OnLibraryRescanRequested;
                 _settingsPage.CancelRescanRequested += (_, _) => _shell?.Library.CancelScanNow();
                 return _settingsPage;
@@ -211,6 +213,14 @@ public partial class MainWindow : Window
         _loginPage = page;
         vm.Completed += (_, result) => { _shell?.ApplyLoginResult(result); if (ContentHost.Content == page) CloseDocument(page); };
         PushDocument(page);
+    }
+
+    private void OnMangaTranslationSettingsRequested(object? sender, EventArgs e)
+    {
+        if (_shell is null || _shell.Settings.IsSaving || _closing) return;
+        _mangaTranslationSettingsPage ??= new MangaTranslationSettingsPage(_shell.MangaTranslationSettings);
+        NavItem settings = _shell.NavItems.First(item => ReferenceEquals(item.Page, _shell.Settings));
+        PushDocument(_mangaTranslationSettingsPage, settings);
     }
 
     private void OnWindowClosing(object? sender, WindowClosingEventArgs e)
@@ -512,14 +522,18 @@ public partial class MainWindow : Window
         PushDocument(page);
     }
 
-    private void PushDocument(DocumentPage page)
+    private void PushDocument(DocumentPage page, NavItem? section = null)
     {
         if (!_targets.ContainsKey(page))
         {
-            if (page is ReaderPage reader) reader.ImmersiveChanged += OnReaderImmersiveChanged;
+            if (page is ReaderPage reader)
+            {
+                reader.ImmersiveChanged += OnReaderImmersiveChanged;
+                reader.MangaTranslationSettingsRequested += OnMangaTranslationSettingsRequested;
+            }
             page.CloseRequested += OnDocumentClose;
         }
-        NavigateTo(page, _shell!.SelectedNav!);
+        NavigateTo(page, section ?? _shell!.SelectedNav!);
     }
     private void OnDocumentClose(object? sender, EventArgs e)
     {
@@ -597,11 +611,16 @@ public partial class MainWindow : Window
         foreach (var page in _targets.Keys.OfType<DocumentPage>().Where(p => !retained.Contains(p)).ToArray())
         {
             page.CloseRequested -= OnDocumentClose;
-            if (page is ReaderPage reader) reader.ImmersiveChanged -= OnReaderImmersiveChanged;
+            if (page is ReaderPage reader)
+            {
+                reader.ImmersiveChanged -= OnReaderImmersiveChanged;
+                reader.MangaTranslationSettingsRequested -= OnMangaTranslationSettingsRequested;
+            }
             page.Dispose();
             _targets.Remove(page);
             if (ReferenceEquals(page, _loginPage)) _loginPage = null;
             if (ReferenceEquals(page, _imageSearchPage)) _imageSearchPage = null;
+            if (ReferenceEquals(page, _mangaTranslationSettingsPage)) _mangaTranslationSettingsPage = null;
         }
     }
     private void ClearDocuments()

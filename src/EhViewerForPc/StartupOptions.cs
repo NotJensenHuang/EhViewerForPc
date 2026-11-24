@@ -1,3 +1,5 @@
+using EhViewerForPc.Services;
+
 namespace EhViewerForPc;
 
 /// <summary>
@@ -13,6 +15,7 @@ public sealed class StartupOptions
     public string? DataDirectory { get; private set; }
     public string? OutputPath { get; private set; }
     public string? ProbeFile { get; private set; }
+    internal string[]? MangaTranslationWorkerArguments { get; private set; }
     /// <summary>Gets an empty isolated root for the managed image-search application probe.</summary>
     public string? ImageSearchProbeRoot { get; private set; }
     /// <summary>Gets an empty isolated root for windowless bookmark compatibility verification.</summary>
@@ -81,6 +84,9 @@ public sealed class StartupOptions
                 case "--probe-file":
                     options.ProbeFile = Next(args, ref i);
                     break;
+                case MangaTranslationWorker.Invocation:
+                    options.MangaTranslationWorkerArguments = args[(i + 1)..];
+                    return options;
                 case "--image-search-probe-root":
                     options.ImageSearchProbeRoot = Next(args, ref i);
                     break;

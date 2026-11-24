@@ -333,6 +333,12 @@
             </controls:SettingsRow.Action>
           </controls:SettingsRow>
           <TextBlock Classes="group-title" Text="默认阅读" />
+          <controls:SettingsRow Header="漫画翻译" Description="选择模型目录，下载或校验日文漫画翻译资源。">
+            <controls:SettingsRow.Action>
+              <Button Content="打开翻译设置" Click="OnMangaTranslationSettings"
+                      AutomationProperties.AutomationId="Settings.MangaTranslation" />
+            </controls:SettingsRow.Action>
+          </controls:SettingsRow>
           <controls:SettingsRow Header="默认模式">
             <controls:SettingsRow.Action>
               <ComboBox Width="180" ItemsSource="{Binding ModeLabels}" SelectedIndex="{Binding ModeIndex}" AutomationProperties.Name="默认模式" />

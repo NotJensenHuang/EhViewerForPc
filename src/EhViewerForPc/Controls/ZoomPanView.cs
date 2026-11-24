@@ -34,6 +34,9 @@ public sealed class ZoomPanView : Control
     public static readonly StyledProperty<IImageRequest?> PreloadRequestProperty =
         AvaloniaProperty.Register<ZoomPanView, IImageRequest?>(nameof(PreloadRequest));
 
+    public static readonly StyledProperty<MangaTranslationOverlay?> TranslationOverlayProperty =
+        AvaloniaProperty.Register<ZoomPanView, MangaTranslationOverlay?>(nameof(TranslationOverlay));
+
     public static readonly StyledProperty<FitMode> FitModeProperty =
         AvaloniaProperty.Register<ZoomPanView, FitMode>(nameof(FitMode), FitMode.FitPage);
 
@@ -101,6 +104,12 @@ public sealed class ZoomPanView : Control
         set => SetValue(PreloadRequestProperty, value);
     }
 
+    public MangaTranslationOverlay? TranslationOverlay
+    {
+        get => GetValue(TranslationOverlayProperty);
+        set => SetValue(TranslationOverlayProperty, value);
+    }
+
     public FitMode FitMode
     {
         get => GetValue(FitModeProperty);
@@ -162,6 +171,7 @@ public sealed class ZoomPanView : Control
         Bitmap? retired = _retiredBitmap;
         DecodedImage? preloaded = _preloaded;
         _bitmap = null;
+        _translationImage = null;
         _retiredBitmap = null;
         _preloaded = null;
         _preloadedKey = null;
@@ -201,7 +211,7 @@ public sealed class ZoomPanView : Control
         {
             TryPreload();
         }
-        else if (change.Property == RightToLeftProperty)
+        else if (change.Property == RightToLeftProperty || change.Property == TranslationOverlayProperty)
         {
             InvalidateVisual();
         }
@@ -552,9 +562,12 @@ public sealed class ZoomPanView : Control
         double left = (Bounds.Width - width) / 2 + _offsetX;
         double top = (Bounds.Height - height) / 2 + _offsetY;
 
-        using (context.PushClip(new Rect(Bounds.Size)))
+        var destination = new Rect(left, top, width, height);
+        using (context.PushClip(bounds))
         {
-            context.DrawImage(bitmap, new Rect(bitmap.PixelSize.ToSize(1)), new Rect(left, top, width, height));
+            context.DrawImage(bitmap, new Rect(bitmap.PixelSize.ToSize(1)), destination);
+            if (TranslationOverlay is { } overlay && overlay.Matches(TranslationImage))
+                overlay.Draw(context, destination, bounds);
         }
     }
 

@@ -26,7 +26,8 @@ internal readonly record struct ReaderTranslationImage(string Path, long Length,
         Length == current.Length && ModifiedUtc == current.ModifiedUtc;
 }
 
-internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decoder, LogService log) : IDisposable
+internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decoder, LogService log,
+    MangaTranslationBackendService backend, Func<string?> getModelDirectory) : IDisposable
 {
     private const int MaxResponseCharacters = 512 * 1024;
     private readonly object _gate = new();
@@ -70,26 +71,11 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
 
     private async Task<MangaTranslationResponse> TranslateCoreAsync(ReaderTranslationImage image, CancellationToken token)
     {
-        string? configured = Environment.GetEnvironmentVariable("EHVIEWER_MANGA_TRANSLATION_BACKEND");
-        if (!string.IsNullOrWhiteSpace(configured) && !Path.IsPathFullyQualified(configured))
-        {
-            throw new MangaTranslationException("本地翻译后端路径需要是绝对路径。");
-        }
+        if (!MangaTranslationBackendService.HasNativeLibraries())
+            throw new MangaTranslationException(MangaTranslationBackendService.MissingNativeLibrariesMessage);
 
-        string backend = string.IsNullOrWhiteSpace(configured)
-            ? Path.Combine(paths.MangaTranslationDirectory, "backend")
-            : Path.GetFullPath(configured);
-        if (!IsOnLocalDrive(backend))
-        {
-            throw new MangaTranslationException("本地漫画翻译后端需要安装在本机磁盘。");
-        }
-
-        string python = Path.Combine(backend, "python", "python.exe");
-        string worker = Path.Combine(backend, "worker.py");
-        if (!File.Exists(python) || !File.Exists(worker))
-        {
-            throw new MangaTranslationException("未安装本地漫画翻译后端，请先准备 GPU 运行时和模型。");
-        }
+        MangaTranslationBackendPaths resources = backend.Resolve(getModelDirectory()) ??
+            throw new MangaTranslationException("本地翻译模型尚未就绪，请在漫画翻译设置中下载或校验。", requiresSetup: true);
 
         string inputRoot = Path.GetFullPath(Path.Combine(paths.MangaTranslationDirectory, "input"));
         if (!IsLocalInputDirectory(inputRoot))
@@ -113,7 +99,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
                 height = decoded.DecodedHeight;
             }
 
-            return await RunWorkerAsync(python, worker, backend, snapshot, width, height, token).ConfigureAwait(false);
+            return await RunWorkerAsync(MangaTranslationWorker.CreateStartInfo(snapshot, resources), width, height, token)
+                .ConfigureAwait(false);
         }
         catch (FileNotFoundException)
         {
@@ -125,7 +112,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         }
         finally
         {
-            // ONNX 性能记录也放在作业目录，退出后一起移除。只删除独占的一级子目录。
+            // 页图暂存于独占的一级目录，工作进程退出后再清理。
             if (PathIdentity.Comparer.Equals(Path.GetDirectoryName(jobDirectory), inputRoot))
             {
                 try { Directory.Delete(jobDirectory, recursive: true); }
@@ -137,36 +124,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         }
     }
 
-    private static bool IsOnLocalDrive(string path)
-    {
-        if (!OperatingSystem.IsWindows()) return true;
-        string? drive = Path.GetPathRoot(path);
-        if (drive?.StartsWith(@"\\?\", StringComparison.Ordinal) == true) drive = drive[4..];
-        return drive is { Length: 3 } && drive[1] == ':' &&
-            new DriveInfo(drive).DriveType is DriveType.Fixed or DriveType.Removable or DriveType.CDRom or DriveType.Ram;
-    }
-
-    internal static bool IsLocalInputDirectory(string path)
-    {
-        if (!IsOnLocalDrive(path)) return false;
-
-        string root = Path.GetPathRoot(path)!;
-        string directory = root;
-        // 从盘符向下检查，遇到联接立即返回，避免通过它访问后续目录。
-        foreach (string segment in path[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
-        {
-            directory = Path.Combine(directory, segment);
-            try
-            {
-                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0) return false;
-            }
-            catch (FileNotFoundException) { return true; }
-            catch (DirectoryNotFoundException) { return true; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
-        }
-
-        return true;
-    }
+    internal static bool IsLocalInputDirectory(string path) => MangaTranslationBackendService.IsLocalDirectory(path);
 
     private DecodedImage DecodeSnapshot(ReaderTranslationImage image, CancellationToken token)
     {
@@ -180,23 +138,9 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         return decoder.DecodeTranslationPage(image.Path, source, token);
     }
 
-    private static async Task<MangaTranslationResponse> RunWorkerAsync(
-        string python, string worker, string backend, string snapshot, int width, int height, CancellationToken token)
+    internal static async Task<MangaTranslationResponse> RunWorkerAsync(
+        ProcessStartInfo start, int width, int height, CancellationToken token)
     {
-        var start = new ProcessStartInfo(python)
-        {
-            WorkingDirectory = backend,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = new UTF8Encoding(false, true),
-        };
-        foreach (string argument in new[] { "-I", worker, "--image", snapshot, "--backend-dir", backend, "--source", "ja", "--target", "zh-Hans" })
-        {
-            start.ArgumentList.Add(argument);
-        }
-
         token.ThrowIfCancellationRequested();
         using Process process = Process.Start(start) ?? throw new MangaTranslationException("无法启动本地漫画翻译后端。");
         Task errors = process.StandardError.BaseStream.CopyToAsync(Stream.Null, token);
@@ -212,23 +156,26 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
             {
                 throw new MangaTranslationException(process.ExitCode switch
                 {
-                    3 => "本地漫画翻译后端的运行时或模型不完整。",
-                    4 => "本页图片无法识别，或超出翻译后端的大小限制。",
-                    5 => "GPU 文字识别失败，请检查 DirectML 运行时和显卡驱动。",
-                    6 => "GPU 翻译失败，请检查 Vulkan 运行时和翻译模型。",
+                    MangaTranslationWorker.ResourcesUnavailable => "本地翻译资源不完整，请检查模型设置与发行包。",
+                    MangaTranslationWorker.InvalidImage => "本页图片无法识别，或超出翻译后端的大小限制。",
+                    MangaTranslationWorker.OcrFailed => "GPU 文字识别失败，请检查 DirectML 运行时和显卡驱动。",
+                    MangaTranslationWorker.TranslationFailed => "GPU 翻译失败，请检查 Vulkan 运行时和翻译模型。",
                     _ => "本地漫画翻译后端运行失败。",
-                });
+                }, requiresSetup: process.ExitCode == MangaTranslationWorker.ResourcesUnavailable);
             }
 
-            MangaTranslationResponse? result = JsonSerializer.Deserialize(json, MangaTranslationJsonContext.Default.MangaTranslationResponse);
-            if (result is not { SchemaVersion: 1, OcrProvider: "DmlExecutionProvider", Regions: not null } ||
-                result.Width != width || result.Height != height || result.Regions.Length > 1000 ||
-                result.Regions.Length > 0 && (result.TranslationBackend?.StartsWith("Vulkan", StringComparison.Ordinal) != true ||
-                    Array.Exists(result.Regions, static region => region?.SourceText is null || region.TranslatedText is null)))
-            {
-                throw new MangaTranslationException("本地漫画翻译后端返回了无法使用的结果。");
-            }
+            MangaTranslationResponse? result;
+            try { result = JsonSerializer.Deserialize(json, MangaTranslationJsonContext.Default.MangaTranslationResponse); }
+            catch (JsonException) { throw InvalidResponse(); }
+            if (result is not { SchemaVersion: 1, OcrProvider: MangaOcrOrt.Provider, Regions: not null } ||
+                result.Width != width || result.Height != height || result.Regions.Length > 120)
+                throw InvalidResponse();
 
+            bool valid = result.Regions.Length == 0 ? result.TranslationBackend is null :
+                result.TranslationBackend?.StartsWith("Vulkan", StringComparison.Ordinal) == true &&
+                Array.TrueForAll(result.Regions, region => region?.SourceText is not null && region.TranslatedText is not null &&
+                    region.HasValidBounds(width, height));
+            if (!valid) throw InvalidResponse();
             return result;
         }
         finally
@@ -244,6 +191,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
             catch (Exception) { /* 上方已处理进程结果，收尾只观察管道读取。 */ }
         }
     }
+
+    private static MangaTranslationException InvalidResponse() => new("本地漫画翻译后端返回了无法使用的结果。");
 
     private static async Task<string> ReadResponseAsync(StreamReader reader, CancellationToken token)
     {
@@ -279,9 +228,13 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
     }
 }
 
-internal sealed class MangaTranslationException(string message) : Exception(message);
-
-internal sealed record MangaTranslationRegion(string SourceText, string TranslatedText);
+internal sealed record MangaTranslationRegion(string SourceText, string TranslatedText,
+    int X, int Y, int Width, int Height)
+{
+    public bool HasValidBounds(int imageWidth, int imageHeight) =>
+        X >= 0 && Y >= 0 && Width > 0 && Height > 0 && X <= imageWidth && Y <= imageHeight &&
+        Width <= imageWidth - X && Height <= imageHeight - Y;
+}
 
 internal sealed record MangaTranslationResponse(int SchemaVersion, int Width, int Height, string OcrProvider,
     string? TranslationBackend, MangaTranslationRegion[] Regions);

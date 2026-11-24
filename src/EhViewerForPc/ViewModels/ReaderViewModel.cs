@@ -862,6 +862,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
 
             ContinuousItems = vertical;
             HorizontalItems = horizontal;
+            UpdateTranslationOverlayItems();
             RebuildHorizontalDisplay();
             ApplyContinuousWidth();
             ApplyContinuousHeight();

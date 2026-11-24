@@ -19,6 +19,9 @@ public sealed class AsyncImage : Control
     public static readonly StyledProperty<IImageRequest?> SourceProperty =
         AvaloniaProperty.Register<AsyncImage, IImageRequest?>(nameof(Source));
 
+    public static readonly StyledProperty<MangaTranslationOverlay?> TranslationOverlayProperty =
+        AvaloniaProperty.Register<AsyncImage, MangaTranslationOverlay?>(nameof(TranslationOverlay));
+
     public static readonly StyledProperty<Stretch> StretchProperty =
         AvaloniaProperty.Register<AsyncImage, Stretch>(nameof(Stretch), Stretch.UniformToFill);
 
@@ -62,6 +65,12 @@ public sealed class AsyncImage : Control
     {
         get => GetValue(SourceProperty);
         set => SetValue(SourceProperty, value);
+    }
+
+    public MangaTranslationOverlay? TranslationOverlay
+    {
+        get => GetValue(TranslationOverlayProperty);
+        set => SetValue(TranslationOverlayProperty, value);
     }
 
     public Stretch Stretch
@@ -143,7 +152,8 @@ public sealed class AsyncImage : Control
         {
             BeginLoad();
         }
-        else if (change.Property == DecodeWidthOnlyProperty || change.Property == StretchProperty)
+        else if (change.Property == DecodeWidthOnlyProperty || change.Property == StretchProperty ||
+                 change.Property == TranslationOverlayProperty)
         {
             InvalidateVisual();
         }
@@ -371,6 +381,8 @@ public sealed class AsyncImage : Control
         using (context.PushClip(bounds))
         {
             context.DrawImage(_bitmap, new Rect(imageSize), destination);
+            if (TranslationOverlay is { } overlay && overlay.Matches(TranslationImage))
+                overlay.Draw(context, destination, bounds);
         }
     }
 

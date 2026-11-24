@@ -18,6 +18,7 @@
                            IsVisible="{Binding ShowSingleView}"
                            Request="{Binding SingleRequest}"
                            PreloadRequest="{Binding PreloadRequest}"
+                           TranslationOverlay="{Binding ActiveTranslationOverlay}"
                            FitMode="{Binding FitMode}"
                            RightToLeft="False"
                            MaxMegapixels="{Binding MaxMegapixels}"
@@ -59,7 +60,8 @@
               <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
                       HorizontalAlignment="Center" Background="{DynamicResource AppBgAltBrush}">
                 <Grid>
-                  <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
+                  <controls:AsyncImage Source="{Binding Request}" TranslationOverlay="{Binding TranslationOverlay}"
+                                       Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
                   <StackPanel IsVisible="{Binding IsMissing}" HorizontalAlignment="Center" VerticalAlignment="Center"
                               Spacing="10" MaxWidth="320">
                     <SelectableTextBlock Text="{Binding MissingPageText}"
@@ -98,7 +100,8 @@
               <Border Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
                       Background="{DynamicResource AppBgAltBrush}">
                 <Grid>
-                  <controls:AsyncImage Source="{Binding Request}" Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
+                  <controls:AsyncImage Source="{Binding Request}" TranslationOverlay="{Binding TranslationOverlay}"
+                                       Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
                   <StackPanel IsVisible="{Binding IsMissing}" HorizontalAlignment="Center" VerticalAlignment="Center"
                               Spacing="10" MaxWidth="320">
                     <SelectableTextBlock Text="{Binding MissingPageText}"
@@ -152,13 +155,15 @@
             <Button Grid.Column="1" Content="取消" Command="{Binding CancelTranslationCommand}"
                     IsVisible="{Binding IsTranslationRunning}"
                     AutomationProperties.AutomationId="Reader.CancelTranslation" AutomationProperties.Name="取消翻译" />
-            <Button Grid.Column="2" Content="关闭" Command="{Binding CloseTranslationCommand}"
-                    AutomationProperties.AutomationId="Reader.CloseTranslation" AutomationProperties.Name="关闭本页翻译" />
+            <Button Grid.Column="2" Content="关闭" Command="{Binding CloseTranslationPanelCommand}"
+                    AutomationProperties.AutomationId="Reader.CloseTranslation" AutomationProperties.Name="关闭翻译面板" />
           </Grid>
           <StackPanel Grid.Row="1" Spacing="8">
             <SelectableTextBlock Text="{Binding TranslationStatus}" TextWrapping="Wrap" Classes="secondary"
                                  AutomationProperties.AutomationId="Reader.TranslationStatus" />
             <ProgressBar IsVisible="{Binding IsTranslationRunning}" IsIndeterminate="True" Height="4" />
+            <Button Content="打开翻译设置" Click="OnMangaTranslationSettings" IsVisible="{Binding ShowTranslationSettings}"
+                    AutomationProperties.AutomationId="Reader.OpenTranslationSettings" />
           </StackPanel>
           <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
             <SelectableTextBlock Text="{Binding TranslationText}" TextWrapping="Wrap"
@@ -169,7 +174,7 @@
 
     <Border Grid.Row="1" Grid.ColumnSpan="2" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0" Padding="16,8" MinHeight="40">
-      <Grid ColumnDefinitions="Auto,10,*,10,Auto,14,Auto" ColumnSpacing="0">
+      <Grid ColumnDefinitions="Auto,10,*,10,Auto,14,Auto,Auto" ColumnSpacing="0">
         <Button Grid.Column="0" Content="上一页" Command="{Binding PrevPageCommand}" />
         <Slider Grid.Column="2" Minimum="1" Maximum="{Binding SliderMaximum}" Value="{Binding SliderValue}"
                 VerticalAlignment="Center" IsEnabled="{Binding HasPages}" AutomationProperties.Name="阅读进度" />
@@ -177,6 +182,13 @@
         <SelectableTextBlock Grid.Column="6" Text="{Binding PageLabel}" Classes="secondary" FontSize="12"
                    FontFamily="{DynamicResource AppMonoFont}" VerticalAlignment="Center" MinWidth="64"
                    TextAlignment="Right" />
+        <StackPanel Grid.Column="7" Orientation="Horizontal" Margin="10,0,0,0" Spacing="6"
+                    IsVisible="{Binding HasTranslationText}">
+          <Button Content="{Binding TranslationImageButtonText}" Command="{Binding ToggleTranslationImageCommand}"
+                  IsVisible="{Binding HasImageTranslation}" AutomationProperties.AutomationId="Reader.ToggleTranslationImage" />
+          <Button Content="双语文本" Command="{Binding OpenTranslationTextCommand}"
+                  AutomationProperties.AutomationId="Reader.OpenTranslationText" />
+        </StackPanel>
       </Grid>
     </Border>
   </Grid>

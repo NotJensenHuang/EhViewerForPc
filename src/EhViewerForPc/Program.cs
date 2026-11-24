@@ -22,6 +22,9 @@ internal static class Program
         StartupOptions options = StartupOptions.Parse(args);
         StartupOptions.Current = options;
 
+        if (options.MangaTranslationWorkerArguments is { } translationArguments)
+            return MangaTranslationWorker.Run(translationArguments);
+
         if (!string.IsNullOrWhiteSpace(options.BookmarkProbeRoot))
             return BookmarkTransferProbe.Run(options.BookmarkProbeRoot, options.OutputPath);
 

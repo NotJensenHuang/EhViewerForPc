@@ -21,6 +21,7 @@ public partial class SettingsPage : UserControl
 
     /// <summary>Raised by the "网页登录" button; the shell owns the login window.</summary>
     public event EventHandler? WebLoginRequested;
+    public event EventHandler? MangaTranslationSettingsRequested;
 
     /// <summary>Raised by "开始扫描"; the shell runs the full library rescan.</summary>
     public event EventHandler? RescanRequested;
@@ -56,6 +57,9 @@ public partial class SettingsPage : UserControl
 
     private void OnWebLogin(object? sender, RoutedEventArgs e) =>
         WebLoginRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnMangaTranslationSettings(object? sender, RoutedEventArgs e) =>
+        MangaTranslationSettingsRequested?.Invoke(this, EventArgs.Empty);
 
     private void OnOpenDataDirectory(object? sender, RoutedEventArgs e)
     {

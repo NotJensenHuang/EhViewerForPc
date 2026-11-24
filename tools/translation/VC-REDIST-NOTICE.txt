@@ -1,0 +1,12 @@
+Microsoft Visual C++ Redistributable (x64)
+Copyright Microsoft Corporation. All rights reserved.
+
+The application-local msvcp140.dll, msvcp140_1.dll, vcruntime140.dll and
+vcruntime140_1.dll files are unmodified redistributable files from a licensed
+release installation of Microsoft Visual Studio 2026, VC\Redist\MSVC.
+These files are distributed under the applicable Microsoft Software License
+Terms. They are not licensed under this application's source-code license.
+
+Redistribution list and Visual Studio license terms:
+https://learn.microsoft.com/visualstudio/releases/2026/redistribution
+https://visualstudio.microsoft.com/license-terms/

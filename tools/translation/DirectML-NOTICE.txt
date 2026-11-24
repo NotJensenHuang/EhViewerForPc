@@ -1,0 +1,10 @@
+Microsoft DirectX Machine Learning (DirectML)
+Copyright Microsoft Corporation. All rights reserved.
+
+DirectML.dll (1.15.4) is the unmodified redistributable supplied in Microsoft's
+ONNX Runtime DirectML 1.24.4 wheel. It is licensed under the Microsoft Software
+License Terms for DirectML and not under this application's source license.
+
+Microsoft's redistributable and license terms:
+https://learn.microsoft.com/windows/ai/directml/dml-version-history
+https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4/License

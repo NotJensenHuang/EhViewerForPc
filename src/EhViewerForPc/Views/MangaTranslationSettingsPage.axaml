@@ -1,0 +1,54 @@
+<views:DocumentPage xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:vm="using:EhViewerForPc.ViewModels"
+                    xmlns:views="using:EhViewerForPc.Views"
+                    x:Class="EhViewerForPc.Views.MangaTranslationSettingsPage"
+                    x:DataType="vm:MangaTranslationSettingsViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <StackPanel MaxWidth="880" Margin="24,12,24,24" Spacing="16">
+      <Border Classes="settings-row">
+        <StackPanel Spacing="10">
+          <SelectableTextBlock Text="模型目录" FontWeight="SemiBold" />
+          <TextBox Text="{Binding ModelDirectory, Mode=TwoWay}" IsEnabled="{Binding CanEditDirectory}"
+                   AutomationProperties.Name="漫画翻译模型目录" AutomationProperties.AutomationId="MangaTranslation.ModelDirectory" />
+          <WrapPanel Classes="actions">
+            <Button Content="选择目录…" Click="OnPickDirectory" IsEnabled="{Binding CanEditDirectory}"
+                    AutomationProperties.AutomationId="MangaTranslation.PickDirectory" />
+            <Button Content="保存位置" Command="{Binding SaveDirectoryCommand}" IsEnabled="{Binding CanSaveDirectory}"
+                    AutomationProperties.AutomationId="MangaTranslation.SaveDirectory" />
+            <Button Content="恢复默认位置" Command="{Binding RestoreDefaultDirectoryCommand}" IsEnabled="{Binding CanEditDirectory}"
+                    AutomationProperties.AutomationId="MangaTranslation.RestoreDirectory" />
+          </WrapPanel>
+          <SelectableTextBlock Text="模型下载到已保存的位置，可复用该目录中的权重。切换位置会保留原目录的模型文件。"
+                               Classes="caption" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="请保存新位置，资源检查与下载随后使用该目录。"
+                               Classes="caption" TextWrapping="Wrap" IsVisible="{Binding HasUnsavedDirectory}" />
+          <SelectableTextBlock Text="{Binding DirectoryError}" IsVisible="{Binding HasDirectoryError}"
+                               Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap"
+                               AutomationProperties.AutomationId="MangaTranslation.DirectoryError" />
+        </StackPanel>
+      </Border>
+
+      <Border Classes="settings-row">
+        <StackPanel Spacing="10">
+          <SelectableTextBlock Text="本地模型" FontWeight="SemiBold" />
+          <SelectableTextBlock Text="日文漫画译为简体中文。首次下载四个模型文件，合计约 1.15 GB。建议模型磁盘预留 1.2 GB，图片在本机处理。"
+                               Classes="caption" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="{Binding OperationStatus}" TextWrapping="Wrap" IsVisible="{Binding !HasUnsavedDirectory}"
+                               AutomationProperties.AutomationId="MangaTranslation.InstallStatus" />
+          <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}"
+                       IsIndeterminate="{Binding IsProgressIndeterminate}" IsVisible="{Binding IsInstalling}"
+                       AutomationProperties.Name="漫画翻译资源准备进度" AutomationProperties.AutomationId="MangaTranslation.InstallProgress" />
+          <WrapPanel Classes="actions">
+            <Button Content="{Binding InstallLabel}" Classes="accent" Command="{Binding InstallCommand}" IsEnabled="{Binding CanInstall}"
+                    AutomationProperties.AutomationId="MangaTranslation.Install" />
+            <Button Content="取消" Command="{Binding CancelInstallCommand}" IsEnabled="{Binding CanCancel}" IsVisible="{Binding IsInstalling}"
+                    AutomationProperties.Name="取消准备翻译资源" AutomationProperties.AutomationId="MangaTranslation.CancelInstall" />
+            <Button Content="检查资源" Command="{Binding CheckResourcesCommand}" IsEnabled="{Binding CanCheckResources}"
+                    AutomationProperties.AutomationId="MangaTranslation.CheckResources" />
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</views:DocumentPage>

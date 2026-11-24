@@ -94,6 +94,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
             OpenExternal(EhUrls.Home(services.Online.Site) + "history.php");
         Downloads = new DownloadsViewModel(services, Library);
         Settings = new SettingsViewModel(services);
+        MangaTranslationSettings = new MangaTranslationSettingsViewModel(services);
         Settings.AccountChanged += (_, _) => RaiseAccount();
         Library.LocalIndexChanged += OnImageIndexLibraryChanged;
         Library.PropertyChanged += OnImageIndexLibraryPropertyChanged;
@@ -158,6 +159,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
     public HistoryViewModel History { get; }
     public DownloadsViewModel Downloads { get; }
     public SettingsViewModel Settings { get; }
+    internal MangaTranslationSettingsViewModel MangaTranslationSettings { get; }
 
     public ObservableCollection<NavItem> NavItems { get; }
 
@@ -517,6 +519,7 @@ public sealed partial class ShellViewModel : ObservableObject, IOnlineHost, IDis
         History.Dispose();
         Library.Dispose();
         Settings.Dispose();
+        MangaTranslationSettings.Dispose();
         Online.Dispose(); Favorites.Dispose();
     }
 

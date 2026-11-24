@@ -1,0 +1,37 @@
+<Project>
+  <PropertyGroup>
+    <MangaTranslationNativeDirectory Condition="'$(MangaTranslationNativeDirectory)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\translation-native</MangaTranslationNativeDirectory>
+    <_MangaTranslationNativeEnabled Condition="$([MSBuild]::IsOSPlatform('Windows')) and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64')">true</_MangaTranslationNativeEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)backend-assets.tsv" LogicalName="MangaTranslation.Assets" />
+    <_MangaNativeFile Include="ort\onnxruntime.dll;ort\DirectML.dll;ort\onnxruntime_providers_shared.dll;ort\onnxruntime-LICENSE;ort\onnxruntime-ThirdPartyNotices.txt;ort\DirectML-NOTICE.txt" />
+    <_MangaNativeFile Include="gguf\llama.dll;gguf\ggml.dll;gguf\ggml-base.dll;gguf\ggml-vulkan.dll;gguf\ggml-cpu-x64.dll;gguf\libomp.dll;gguf\llama-LICENSE.txt;gguf\LICENSE-LLVM-OpenMP" />
+    <_MangaNativeFile Include="ort\msvcp140.dll;ort\msvcp140_1.dll;ort\vcruntime140.dll;ort\vcruntime140_1.dll" />
+    <_MangaNativeFile Include="gguf\msvcp140.dll;gguf\msvcp140_1.dll;gguf\vcruntime140.dll;gguf\vcruntime140_1.dll" />
+    <_MangaNativeFile Include="VC-REDIST-NOTICE.txt;sha256.txt" />
+    <_MangaNativeFile Update="@(_MangaNativeFile)">
+      <Destination>manga-native\%(Identity)</Destination>
+    </_MangaNativeFile>
+  </ItemGroup>
+
+  <Target Name="IncludeMangaTranslationNativePayload" BeforeTargets="PrepareForBuild;AssignTargetPaths"
+          Condition="'$(_MangaTranslationNativeEnabled)' == 'true'">
+    <ItemGroup>
+      <_MangaNativeSource Include="@(_MangaNativeFile->'$(MangaTranslationNativeDirectory)\%(Identity)')" />
+      <_MangaNativeMissing Include="@(_MangaNativeSource)" Condition="!Exists('%(_MangaNativeSource.Identity)')" />
+      <Content Include="@(_MangaNativeSource)" Condition="'@(_MangaNativeMissing)' == ''">
+        <Link>%(Destination)</Link>
+        <TargetPath>%(Destination)</TargetPath>
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </Content>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="RequireMangaTranslationNativePayload" BeforeTargets="Publish" DependsOnTargets="IncludeMangaTranslationNativePayload"
+          Condition="'$(_MangaTranslationNativeEnabled)' == 'true'">
+    <Error Condition="'@(_MangaNativeMissing)' != ''" Text="Windows x64 发布缺少漫画翻译原生库。请先运行 tools/translation/Prepare-NativeAssets.ps1，或用 MangaTranslationNativeDirectory 指定已验证的资产目录。" />
+  </Target>
+</Project>

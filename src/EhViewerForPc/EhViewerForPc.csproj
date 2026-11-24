@@ -26,6 +26,8 @@
     <AvaloniaResource Include="Assets\icon.ico" />
   </ItemGroup>
 
+  <Import Project="..\..\tools\translation\MangaTranslationNative.targets" />
+
   <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Desktop" />

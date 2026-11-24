@@ -139,18 +139,18 @@
       <_FileToCopy Remove="@(_EntryManagedPayload)" />
       <_UploadFileToCopy Remove="@(_EntryManagedPayload)" />
       <WapProjPackageFile Include="%(_AotSourceFile.Identity)">
-        <TargetPath>$(EntryPayloadPrefix)%(Filename)%(Extension)</TargetPath>
+        <TargetPath>$(EntryPayloadPrefix)%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
       </WapProjPackageFile>
       <UploadWapProjPackageFile Include="%(_AotSourceFile.Identity)">
-        <TargetPath>$(EntryPayloadPrefix)%(Filename)%(Extension)</TargetPath>
+        <TargetPath>$(EntryPayloadPrefix)%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
       </UploadWapProjPackageFile>
       <_FileToCopy Include="%(_AotSourceFile.Identity)">
-        <TargetPath>$(EntryPayloadPrefix)%(Filename)%(Extension)</TargetPath>
-        <CopyToTargetPath>$([System.IO.Path]::Combine($(AotPayloadLayoutRoot), '$(EntryPayloadPrefix)', '%(Filename)%(Extension)'))</CopyToTargetPath>
+        <TargetPath>$(EntryPayloadPrefix)%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+        <CopyToTargetPath>$([System.IO.Path]::Combine($(AotPayloadLayoutRoot), '$(EntryPayloadPrefix)', '%(RecursiveDir)%(Filename)%(Extension)'))</CopyToTargetPath>
       </_FileToCopy>
       <_UploadFileToCopy Include="%(_AotSourceFile.Identity)">
-        <TargetPath>$(EntryPayloadPrefix)%(Filename)%(Extension)</TargetPath>
-        <CopyToTargetPath>$([System.IO.Path]::Combine($(AotPayloadLayoutRoot), '$(EntryPayloadPrefix)', '%(Filename)%(Extension)'))</CopyToTargetPath>
+        <TargetPath>$(EntryPayloadPrefix)%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+        <CopyToTargetPath>$([System.IO.Path]::Combine($(AotPayloadLayoutRoot), '$(EntryPayloadPrefix)', '%(RecursiveDir)%(Filename)%(Extension)'))</CopyToTargetPath>
       </_UploadFileToCopy>
     </ItemGroup>
     <Message Condition="'@(_AotSourceFile)' == '' and '$(SkipAotPublish)' == 'true'" Importance="high" Text="MSIX: AOT payload not found at $(AotPayloadDir); packaging managed build output instead. Run without -p:SkipAotPublish=true." />

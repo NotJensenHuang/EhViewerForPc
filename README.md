@@ -58,7 +58,7 @@ dotnet run --project src/EhViewerForPc -c Release
   - 更多菜单同时列出「左→右 / 右→左」，只控制横向连续模式的页面排列，其他模式禁用；方向键、滚轮及单页点击区域始终保持固定方向
   - 在线页面源按需解析当前页所在的预览分页，图片按需下载并缓存到 `online-cache`；未解析页显示占位，解码后回填真实尺寸
   - 加载状态可见，失败只影响该页并提供「重试本页」；GIF / WebP 动图循环播放、全屏、背景色切换
-  - 安装本地翻译后端后，使用页头「翻译本页」将已加载的静态日文页译为简体中文。阅读器右侧显示带编号、可选中复制的原文和译文。翻页、关闭面板或离开阅读器会取消当前任务
+  - 在「设置 → 界面与阅读 → 漫画翻译」选择模型目录并下载资源。使用页头「翻译本页」后，简体中文译文直接覆盖已加载的静态日文页上的识别区块。可切换原图与译文，以及打开可复制的双语文本。翻页、关闭进行中的面板或离开阅读器会取消当前任务
   - 本地「重试本页」仅重新下载选中页到副本原路径，更新当前占位和尺寸；失败保留原文件，同目录下载在途时等待写入结束。不具备原画廊链接 / 页号的普通目录只重新载入文件并显示原因；其他缺页仍由「继续下载」处理
   - 阅读器仅在主窗口内打开，沉浸模式隐藏侧栏与标题，按 Esc 退出
   - 图像内存预算覆盖原始解码缓冲、当前位图、预读与动画画布；在线磁盘缓存可设置容量上限与保留时间并按 LRU 淘汰
@@ -127,7 +127,7 @@ dotnet run --project src/EhViewerForPc -c Release
 | :--- | :--- | :--- |
 | 本地资料库 | 只读扫描、多源合并、版本管理、搜索筛选 | 虚拟化网格、按源隔离的签名缓存、缓存优先启动 |
 | 阅读器 | 单页 / 纵向 / 横向、动图、进度、在线页面源 | 按需解析分页、占位回填、共享进度键、图像内存预算 |
-| 漫画翻译 | 当前静态页日译简中、可复制原文和译文 | 可选本地后端，DirectML OCR 与 Vulkan 翻译 |
+| 漫画翻译 | 当前静态页日译简中、图上译文、原图切换与可复制双语文本 | 应用内按需准备资源，可选本机模型目录，DirectML OCR 与 Vulkan 翻译 |
 | 下载 | 队列、断点续传、并发与限速、目录搬迁 | 持久化状态、原子写入、迁移日志与回滚 |
 | 在线浏览 | 搜索、订阅、排行榜、书签、详情、评分与归档 | 自研容错 HTML 解析、固定结构夹具回归、Cookie 会话 |
 | 以图搜图 | 索引、裁剪检索、命中页定位 | 托管 C# 后端、SkiaSharp / SQLite、独立无窗口 Host |
@@ -185,7 +185,7 @@ dotnet run --project src/EhViewerForPc -c Release
    # 依赖框架（体积小，需要 .NET 11 运行时）
    dotnet publish src/EhViewerForPc -c Release -r win-x64 --self-contained false -p:PublishAot=false -o artifacts/win-x64
 
-   # NativeAOT（自包含原生单文件，无需 .NET 运行时）
+   # NativeAOT（自包含，无需 .NET 运行时）
    dotnet publish src/EhViewerForPc -c Release -r win-x64 -p:PublishAot=true -o artifacts/win-x64-aot
    ```
 
@@ -195,7 +195,8 @@ Release 配置默认启用 `PublishAot`，依赖框架的托管发布需显式�
 
 - 需要 MSVC 链接器与 Windows SDK 导入库；若本机 SDK 只装了头文件，构建期会通过 NuGet 包补齐（不进入输出）
 - HTML 解析、JSON 持久化与绑定均为 AOT 兼容实现；Avalonia 12 起 Dev Tools 为独立产品，项目不引用调试器包，文本整形由 `Avalonia.HarfBuzz` 提供
-- 输出为原生 exe 与少量原生库（`libSkiaSharp.dll`、`libHarfBuzzSharp.dll`、`av_libglesv2.dll`）
+- 发布前用 PowerShell 7 运行 `tools/translation/Prepare-NativeAssets.ps1` 准备原生翻译依赖，或通过 `-p:MangaTranslationNativeDirectory=<已准备的目录>` 指定现有资产。归档来源与构建步骤见[原生翻译后端记录](docs/本地漫画翻译原生后端验证-2026-11-24.md)
+- 输出包括原生 exe、Avalonia 原生库以及 `manga-native/` 下的 DirectML、ONNX Runtime、llama.cpp 和所需的 C++ 运行库。发布 ZIP 保持目录结构，模型由应用内按需准备
 - MSIX 打包：`packaging/EhViewerForPc.Msix` 是 Visual Studio 的 Windows 应用程序打包项目，打包前自动执行 AOT 发布到 `artifacts/msix/aot` 再注入负载（可用 `-p:SkipAotPublish=true` 复用上次产物）
 - AOT 代码生成只在 publish 管线发生，因此打包工程通过 `PublishAotForMsix` / `InjectAotPayload` 两个 target 完成替换；VS 升级后如打包异常，优先回归这里
 - 包标识更名后旧包无法就地升级，需先卸载旧版本
@@ -224,6 +225,7 @@ Release 配置默认启用 `PublishAot`，依赖框架的托管发布需显式�
 | `--single-instance-probe <out.json>` | 无人值守验证单实例唤醒：隐藏窗口 → 第二进程投递请求 → 断言窗口恢复并转发作品 ID |
 | `--image-search-probe-root <dir> --out <json>` | 无窗口验证以图搜图的应用服务链路（需空目录） |
 | `--bookmark-probe-root <dir> --out <json>` | 无窗口验证书签导入导出兼容性（需空目录） |
+| `--manga-translation-worker <PNG> <模型目录> <原生库目录>` | 阅读器内部使用的无窗进程入口，通过标准输出返回一页 JSON，不初始化应用数据 |
 | `--verbose` | 输出更详细的诊断信息 |
 
 示例：
@@ -273,7 +275,7 @@ covers/                  本地封面缓存
 thumbnails/              在线封面缓存
 online-cache/            在线阅读页面缓存
 image-search/            可配置位置的本地图片索引（默认关闭）
-manga-translation/       可选 GPU 翻译后端（backend/）与任务期间的 PNG 快照（input/）
+manga-translation/       默认模型（backend/models/）、模型校验记录与临时页快照（input/）
 exports/                 导出文件目录
 logs/                    运行日志（不含 token 与页面内容）
 ```
@@ -284,19 +286,11 @@ logs/                    运行日志（不含 token 与页面内容）
 
 ### 准备本地漫画翻译后端
 
-在 Windows x64 使用 PowerShell 7 和已安装 `pip` 的 Python，执行以下命令。安装时联网下载隔离运行时、PaddleOCR 权重和约 1.13 GB 的 Hy-MT2-1.8B Q4_K_M 权重；翻译使用本机模型。若用 `--data-dir` 启动，安装时将 `$translationData` 换成同一目录。也可通过环境变量 `EHVIEWER_MANGA_TRANSLATION_BACKEND` 指定后端的绝对路径。
+打开「设置 → 界面与阅读 → 漫画翻译 → 打开翻译设置」，选定本机模型目录后点击「下载并准备模型」。完全缺失时下载四个 PaddleOCR 和 Hy-MT2-1.8B Q4_K_M 相关文件，约 1.15 GB。建议模型磁盘预留 1.2 GB。设置页显示当前文件、已传输量和总量，连接和校验单独显示，可取消后重试并保留已校验的完整文件。如果选定目录已有这些文件，应用校验后复用。更换目录会保留原处的模型。
 
-```powershell
-$translationData = Join-Path $env:LOCALAPPDATA 'EhViewerForPc'
-$translationLegacyData = Join-Path $env:LOCALAPPDATA 'EhViewerReader'
-if (!(Test-Path -LiteralPath $translationData -PathType Container) -and
-    (Test-Path -LiteralPath $translationLegacyData -PathType Container)) {
-    $translationData = $translationLegacyData
-}
-./tools/translation/Install-Backend.ps1 -Destination (Join-Path $translationData 'manga-translation/backend')
-```
+识别和翻译在应用自己的 C# 工作进程内运行，直接调用随包的 DirectML 和 Vulkan 库。模型准备完成即可断网处理。旧版默认模型目录继续可用。未在应用内保存自定义目录时，`EHVIEWER_MANGA_TRANSLATION_BACKEND` 仍可指定旧后端的绝对路径，应用复用其 `models` 子目录。
 
-原图以只读方式打开，任务结束后清理应用数据目录中的临时 PNG。译文在阅读器面板中显示，不写入资料库或阅读进度。
+应用以只读方式打开原图，任务结束后清理应用数据目录中的临时 PNG。译文显示在图上和可复制的双语面板，保留在当前阅读会话中。
 
 ## 🧪 测试与验证
 
@@ -338,7 +332,7 @@ dotnet test tests/EhViewerForPc.ImageSearch.Tests -c Debug
 - 图片访问受账号与 IP 配额限制，应用已串行化视图页请求，但批量下载仍可能触发限流
 - 收藏分类名称是本地显示名，不写回站点账号配置
 - 连续 / 横向模式为整页适配滚动，不提供页内缩放（单页模式支持 1x–8x）
-- 本地漫画翻译限手动翻译当前静态日文页。需要已配置本地后端、支持 DirectML 和 Vulkan 的 GPU 及匹配驱动； OCR 行序和译文可能出错
+- 本地漫画翻译限手动翻译当前静态日文页，需要支持 DirectML 和 Vulkan 的 GPU 及匹配驱动。同一气泡的相邻竖列在满足分组条件时合并送译，模型原样返回的内容保留原画面。OCR、译文和覆字位置可能出错，长译文可在双语文本中查看全文
 - 无全局位图缓存，页面与封面位图由控件独占；资料库通过下载事件定向更新副本，外部文件变化可手动刷新
 - 本地以图搜图的真实图库召回率与全库检索性能未验证
 
