@@ -5,6 +5,8 @@ using EhViewerForPc.Core.Storage;
 
 namespace EhViewerForPc.Services;
 
+internal sealed class MangaTranslationRegionLimitException : Exception;
+
 internal static class MangaTranslationWorker
 {
     public const string Invocation = "--manga-translation-worker";
@@ -13,7 +15,7 @@ internal static class MangaTranslationWorker
     public const int OcrFailed = 5;
     public const int TranslationFailed = 6;
 
-    internal static ProcessStartInfo CreateStartInfo(string snapshot, MangaTranslationBackendPaths resources)
+    internal static ProcessStartInfo CreateStartInfo(string snapshot, MangaTranslationBackendPaths resources, MangaTranslationLanguageOption language)
     {
         string executable = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "EhViewerForPc.exe");
         var start = new ProcessStartInfo(executable)
@@ -34,17 +36,25 @@ internal static class MangaTranslationWorker
         start.ArgumentList.Add(snapshot);
         start.ArgumentList.Add(resources.ModelDirectory);
         start.ArgumentList.Add(resources.RuntimeDirectory);
+        start.ArgumentList.Add(resources.Model.Id);
+        start.ArgumentList.Add(language.Id);
         return start;
     }
 
     public static int Run(string[] arguments)
     {
-        if (arguments is not [var image, var models, var native] ||
+        // 旧版诊断入口只有三个参数，继续使用原默认模型与语言。
+        if (arguments.Length == 3) arguments = [.. arguments, MangaTranslationModelOption.Choices[0].Id,
+            MangaTranslationLanguageOption.Choices[0].Id];
+        if (arguments is not [var image, var models, var native, var modelId, var languageId] ||
             !Path.IsPathFullyQualified(image) || !MangaTranslationBackendService.IsLocalFile(image)) return InvalidImage;
         if (!Path.IsPathFullyQualified(models) || !MangaTranslationBackendService.IsLocalDirectory(models) || !Directory.Exists(models) ||
             !Path.IsPathFullyQualified(native) || !PathIdentity.Comparer.Equals(
                 native, Path.Combine(AppContext.BaseDirectory, "manga-native")) || !Directory.Exists(native))
             return ResourcesUnavailable;
+
+        if (MangaTranslationModelOption.Find(modelId) is not { } model ||
+            MangaTranslationLanguageOption.Find(languageId) is not { } language) return ResourcesUnavailable;
 
         MangaOcrResult ocr;
         try
@@ -62,12 +72,13 @@ internal static class MangaTranslationWorker
             MangaTranslationResponse response;
             if (ocr.Regions.Count == 0)
             {
-                response = BuildResponse(ocr, null, null);
+                response = BuildResponse(ocr, null, null, model, language);
             }
             else
             {
-                using var translator = HyMtTranslator.Load(native, models, CancellationToken.None);
-                response = BuildResponse(ocr, translator.Device, text => translator.Translate(text, CancellationToken.None));
+                using var translator = HyMtTranslator.Load(native, models, model, CancellationToken.None);
+                response = BuildResponse(ocr, translator.Device, text => translator.Translate(text, language, CancellationToken.None),
+                    model, language);
             }
 
             using Stream output = Console.OpenStandardOutput();
@@ -79,19 +90,32 @@ internal static class MangaTranslationWorker
         catch (Exception ex) { return Fail(TranslationFailed, ex); }
     }
 
-    internal static MangaTranslationResponse BuildResponse(MangaOcrResult ocr, string? device, Func<string, string>? translate)
+    internal static MangaTranslationResponse BuildResponse(MangaOcrResult ocr, string? device, Func<string, string>? translate,
+        MangaTranslationModelOption? model = null, MangaTranslationLanguageOption? language = null)
     {
         var regions = new MangaTranslationRegion[ocr.Regions.Count];
         for (int i = 0; i < regions.Length; i++)
         {
             MangaOcrRegion region = ocr.Regions[i];
             string original = region.Text.Trim();
-            string translated = string.IsNullOrEmpty(original) || translate is null ? "" : translate(original).Trim();
+            string translated = "";
+            if (original.Length > 0 && translate is not null)
+            {
+                try { translated = translate(original).Trim(); }
+                catch (MangaTranslationRegionLimitException)
+                {
+                    // 单个对白超出上下文时保留可复制的原文，并继续翻译其他区块。
+                }
+            }
             if (SameDisplayText(original, translated)) translated = "";
             regions[i] = new MangaTranslationRegion(original, translated, region.X, region.Y, region.Width, region.Height);
         }
 
-        return new MangaTranslationResponse(1, ocr.Width, ocr.Height, ocr.Provider, device, regions);
+        return new MangaTranslationResponse(1, ocr.Width, ocr.Height, ocr.Provider, device, regions)
+        {
+            ModelId = (model ?? MangaTranslationModelOption.Choices[0]).Id,
+            TargetLanguage = (language ?? MangaTranslationLanguageOption.Choices[0]).Id,
+        };
     }
 
     private static bool SameDisplayText(string original, string translated)

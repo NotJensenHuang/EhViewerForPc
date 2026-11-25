@@ -1,5 +1,12 @@
 # 变更记录
 
+## 2026-11-25 漫画气泡翻译与目标语言
+
+- `MangaOcr.cs` 加强同气泡竖列合并，恢复部分检测到但整框识别置信不足的双列文本。
+- `MangaTranslationOverlay.cs` 按目标语言选择字体和段落方向，译文在各自气泡内横排换行。窄框缩小字号以容纳多字。
+- `ReaderViewModel.Translation.cs` 使用工作进程返回的目标语言排版，切换翻译首选项时重置图上译文和在途任务。
+- `MangaTranslationSettingsPage.axaml` 和漫画翻译服务提供目标语言与 Hy-MT2 1.8B / 7B Q4_K_M 模型选择，按需校验和复用资源。旧设置默认沿用 1.8B 和简体中文。见[漫画气泡翻译验证](漫画气泡翻译验证-2026-11-25.md)。
+
 ## 2026-11-24 漫画翻译切换至原生 GPU 后端
 
 - `MangaTranslationWorker.cs`、`MangaOcr.cs` 与 `HyMtTranslator.cs` 让阅读器在无窗 C# 工作进程里直接运行 ONNX DirectML 与 Hy-MT2 Vulkan，保留竖列分组及图上译文。

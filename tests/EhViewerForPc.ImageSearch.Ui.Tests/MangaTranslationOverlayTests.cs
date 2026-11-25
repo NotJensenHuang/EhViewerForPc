@@ -33,7 +33,7 @@ public sealed class MangaTranslationOverlayTests
         var overlay = new MangaTranslationOverlay(400, 300,
         [
             new(new Rect(30, 20, 200, 70), "欢迎来到这里。今天也请多关照。"),
-            new(new Rect(260, 45, 31, 180), "翻译沿着竖直文字从上到下排列。"),
+            new(new Rect(260, 45, 31, 180), "欢迎来到这里。今天也请多关照。"),
         ]);
 
         using var bitmap = new RenderTargetBitmap(new PixelSize(680, 530), new Vector(96, 96));
@@ -53,8 +53,23 @@ public sealed class MangaTranslationOverlayTests
         Assert.Equal(SKColors.Red, actual.GetPixel(320, 40));
         Assert.Equal(SKColors.White, actual.GetPixel(35, 104));
         Assert.Equal(SKColors.White, actual.GetPixel(415, 372));
+        Assert.Equal(SKColors.Red, actual.GetPixel(423, 190));
         Assert.True(CountInk(actual, new PixelRect(45, 25, 248, 80)) > 200);
-        Assert.True(CountInk(actual, new PixelRect(362, 24, 58, 350)) > 200);
+        Assert.True(CountInk(actual, new PixelRect(363, 130, 56, 140)) > 200);
+        Assert.Equal(0, CountInk(actual, new PixelRect(363, 25, 56, 80)));
+        Assert.Equal(0, CountInk(actual, new PixelRect(363, 295, 56, 78)));
+    }
+
+    [Theory]
+    [InlineData("zh-CN", FlowDirection.LeftToRight)]
+    [InlineData("zh-Hant", FlowDirection.LeftToRight)]
+    [InlineData("en", FlowDirection.LeftToRight)]
+    [InlineData("ar", FlowDirection.RightToLeft)]
+    [InlineData("he", FlowDirection.RightToLeft)]
+    public void ParagraphDirectionFollowsTargetLanguage(string targetLanguage, FlowDirection direction)
+    {
+        var overlay = new MangaTranslationOverlay(400, 300, [], targetLanguage);
+        Assert.Equal(direction, overlay.TextFlowDirection);
     }
 
     private static int CountInk(SKBitmap image, PixelRect bounds)

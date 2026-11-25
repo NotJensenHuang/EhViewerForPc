@@ -295,90 +295,162 @@ internal static partial class MangaOcr
         return merged;
     }
 
-    private static IReadOnlyList<MangaOcrRegion> ArrangeDialogue(List<MangaOcrRegion> regions, ImagePixels source)
+    internal static IReadOnlyList<MangaOcrRegion> ArrangeDialogue(List<MangaOcrRegion> regions,
+        ReadOnlySpan<byte> pixels, int width, int height, int stride, CancellationToken token)
     {
-        regions.Sort(static (first, second) => first.Y == second.Y ? second.X.CompareTo(first.X) : first.Y.CompareTo(second.Y));
+        token.ThrowIfCancellationRequested();
+        if (regions.Count < 2) return regions;
+        var source = new ImagePixels(pixels, width, height, stride, 4);
+        var result = new List<MangaOcrRegion>(regions.Count);
+        var vertical = new List<MangaOcrRegion>();
+        var horizontal = new List<MangaOcrRegion>();
+        foreach (MangaOcrRegion region in regions)
+        {
+            if (region.Text.Length >= 2 && region.Height >= 1.65 * region.Width) vertical.Add(region);
+            else if (region.Text.Length >= 2 && region.Width >= 1.65 * region.Height) horizontal.Add(region);
+            else result.Add(region);
+        }
+        AppendDialogue(vertical, result, source, vertical: true, token);
+        AppendDialogue(horizontal, result, source, vertical: false, token);
+
+        result.Sort(static (first, second) => first.Y == second.Y ? second.X.CompareTo(first.X) : first.Y.CompareTo(second.Y));
         var rightToLeft = Comparer<MangaOcrRegion>.Create(static (first, second) =>
             first.X == second.X ? first.Y.CompareTo(second.Y) : second.X.CompareTo(first.X));
-        for (int start = 0; start < regions.Count;)
+        for (int start = 0; start < result.Count;)
         {
-            MangaOcrRegion anchor = regions[start];
+            MangaOcrRegion anchor = result[start];
             int end = start + 1;
-            while (end < regions.Count && regions[end].Y - anchor.Y <= Math.Max(12, Math.Min(regions[end].Height, anchor.Height) * 0.5)) end++;
-            regions.Sort(start, end - start, rightToLeft);
-            start = end;
-        }
-
-        var result = new List<MangaOcrRegion>(regions.Count);
-        for (int start = 0; start < regions.Count;)
-        {
-            MangaOcrRegion anchor = regions[start];
-            int end = start + 1;
-            if (IsVertical(anchor))
-            {
-                while (end < regions.Count && end - start < 6 && IsVertical(regions[end]) &&
-                       SameVerticalRow(anchor, regions[end]) && SameVerticalRow(regions[end - 1], regions[end]) &&
-                       ClearVerticalSeam(regions[end - 1], regions[end], source)) end++;
-            }
-            result.Add(end == start + 1 ? anchor : JoinDialogue(regions, start, end));
+            while (end < result.Count && result[end].Y - anchor.Y <= Math.Max(12, Math.Min(result[end].Height, anchor.Height) * 0.5)) end++;
+            result.Sort(start, end - start, rightToLeft);
             start = end;
         }
         return result;
     }
 
-    private static bool IsVertical(MangaOcrRegion box) => box.Height >= 1.65 * box.Width && box.Text.Length >= 2;
-
-    private static bool SameVerticalRow(MangaOcrRegion first, MangaOcrRegion second)
+    private static void AppendDialogue(List<MangaOcrRegion> candidates, List<MangaOcrRegion> output,
+        ImagePixels source, bool vertical, CancellationToken token)
     {
-        int overlap = Math.Min(first.Y + first.Height, second.Y + second.Height) - Math.Max(first.Y, second.Y);
-        return overlap >= 0.82 * Math.Max(first.Height, second.Height) &&
-            Math.Abs(first.Y - second.Y) <= 0.45 * Math.Min(first.Width, second.Width);
+        if (candidates.Count < 2)
+        {
+            if (candidates.Count == 1) output.Add(candidates[0]);
+            return;
+        }
+        if (vertical)
+            candidates.Sort(static (first, second) => CenterX(second).CompareTo(CenterX(first)));
+        else
+            candidates.Sort(static (first, second) => CenterY(first).CompareTo(CenterY(second)));
+
+        // 用书写方向上的最近邻组成一条链。页内排序时穿插的音效不会截断对话。
+        int[] next = new int[candidates.Count];
+        int[] previous = new int[candidates.Count];
+        Array.Fill(next, -1);
+        Array.Fill(previous, -1);
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            MangaOcrRegion first = candidates[i];
+            for (int j = i + 1; j < candidates.Count; j++)
+            {
+                MangaOcrRegion second = candidates[j];
+                double distance = vertical ? CenterX(first) - CenterX(second) : CenterY(second) - CenterY(first);
+                if (distance > (vertical ? first.Width * 1.55 : first.Height * 1.60)) break;
+                bool adjacent = vertical ? AdjacentColumns(first, second, distance, source) : AdjacentLines(first, second, distance, source);
+                if (!adjacent) continue;
+                // 已占用时，当前候选更靠近第二行或列。
+                if (previous[j] >= 0) next[previous[j]] = -1;
+                previous[j] = i;
+                next[i] = j;
+                break;
+            }
+        }
+
+        for (int i = 0; i < candidates.Count; i++)
+            if (previous[i] < 0) output.Add(next[i] < 0 ? candidates[i] : JoinDialogue(candidates, next, i, vertical));
     }
 
-    private static bool ClearVerticalSeam(MangaOcrRegion right, MangaOcrRegion left, ImagePixels source)
+    private static double CenterX(MangaOcrRegion region) => region.X + region.Width * 0.5;
+
+    private static double CenterY(MangaOcrRegion region) => region.Y + region.Height * 0.5;
+
+    private static bool AdjacentColumns(MangaOcrRegion right, MangaOcrRegion left, double distance, ImagePixels source)
     {
         int width = Math.Min(right.Width, left.Width);
-        double rightCenter = right.X + right.Width * 0.5;
-        double leftCenter = left.X + left.Width * 0.5;
-        double centers = rightCenter - leftCenter;
         int gap = right.X - left.X - left.Width;
-        if (centers < 0.42 * width || centers > 1.2 * width || gap > 0.22 * width) return false;
+        if (distance < 0.42 * width || distance > 1.55 * width || gap > 0.40 * width ||
+            Math.Max(right.Width, left.Width) > 1.65 * width) return false;
 
-        int middle = (int)Math.Round((rightCenter + leftCenter) / 2);
-        int margin = Math.Max(1, (int)Math.Round(width * 0.10));
         int top = Math.Max(right.Y, left.Y);
         int bottom = Math.Min(right.Y + right.Height, left.Y + left.Height);
-        int start = Math.Max(0, middle - margin);
-        int end = Math.Min(source.Width, middle + margin);
-        int brightness = 0;
-        for (int x = start; x < end; x++)
-        {
-            int dark = 0;
-            for (int y = top; y < bottom; y++)
-            {
-                int gray = source.Get(x, y).Gray;
-                if (gray >= 195) brightness++;
-                if (gray < 90) dark++;
-            }
-            if (dark >= (bottom - top) * 0.45) return false;
-        }
-        return brightness >= (end - start) * (bottom - top) * 0.84;
+        if (bottom - top < 0.72 * Math.Min(right.Height, left.Height) || Math.Abs(right.Y - left.Y) > 0.55 * width)
+            return false;
+
+        int middle = (int)Math.Round((CenterX(right) + CenterX(left)) / 2);
+        return ClearDialogueSeam(source, middle, width, top, bottom, vertical: true);
     }
 
-    private static MangaOcrRegion JoinDialogue(List<MangaOcrRegion> regions, int start, int end)
+    private static bool AdjacentLines(MangaOcrRegion upper, MangaOcrRegion lower, double distance, ImagePixels source)
+    {
+        int height = Math.Min(upper.Height, lower.Height);
+        int gap = lower.Y - upper.Y - upper.Height;
+        if (distance < 0.65 * height || distance > 1.60 * height || gap > 0.50 * height ||
+            Math.Max(upper.Height, lower.Height) > 1.45 * height) return false;
+
+        int left = Math.Max(upper.X, lower.X);
+        int right = Math.Min(upper.X + upper.Width, lower.X + lower.Width);
+        if (right - left < 0.84 * Math.Min(upper.Width, lower.Width)) return false;
+        if (Math.Abs(CenterX(upper) - CenterX(lower)) > 0.90 * height && Math.Abs(upper.X - lower.X) > 0.55 * height)
+            return false;
+
+        // 横排行长常有差异。间隙采用实际边缘位置，避免中间扫描线穿过较高一行的文字。
+        int middle = (upper.Y + upper.Height + lower.Y) / 2;
+        return ClearDialogueSeam(source, middle, height, left, right, vertical: false);
+    }
+
+    private static bool ClearDialogueSeam(ImagePixels source, int middle, int thickness,
+        int begin, int finish, bool vertical)
+    {
+        int margin = Math.Max(1, (int)Math.Round(thickness * 0.10));
+        int limit = vertical ? source.Width : source.Height;
+        int start = Math.Max(0, middle - margin);
+        int end = Math.Min(limit, middle + margin);
+        // 检测框带外扩留白，边框可能在间隙两侧，需在比亮度采样更宽的范围内检查。
+        int borderMargin = Math.Max(margin, (int)Math.Ceiling(thickness * 0.25));
+        int borderStart = Math.Max(0, middle - borderMargin);
+        int borderEnd = Math.Min(limit, middle + borderMargin + 1);
+        int length = finish - begin;
+        int open = 0;
+        // 竖列允许浅灰底纹。横排换行采用更严格的浅色间隙，以免跨连上下两个气泡。
+        int light = vertical ? 115 : 195;
+        for (int across = borderStart; across < borderEnd; across++)
+        {
+            bool inCenter = across >= start && across < end;
+            int dark = 0;
+            for (int along = begin; along < finish; along++)
+            {
+                int gray = vertical ? source.Get(across, along).Gray : source.Get(along, across).Gray;
+                if (inCenter && gray >= light) open++;
+                if (gray < 90) dark++;
+            }
+            if (dark >= length * 0.45) return false;
+        }
+        return open >= (end - start) * length * (vertical ? 0.72 : 0.85);
+    }
+
+    private static MangaOcrRegion JoinDialogue(List<MangaOcrRegion> regions, int[] next, int start, bool vertical)
     {
         int x = int.MaxValue;
         int y = int.MaxValue;
         int right = 0;
         int bottom = 0;
         var text = new StringBuilder();
-        for (int i = start; i < end; i++)
+        for (int i = start; i >= 0; i = next[i])
         {
             MangaOcrRegion region = regions[i];
             x = Math.Min(x, region.X);
             y = Math.Min(y, region.Y);
             right = Math.Max(right, region.X + region.Width);
             bottom = Math.Max(bottom, region.Y + region.Height);
+            if (!vertical && i != start) text.Append('\n');
             text.Append(region.Text);
         }
         return new MangaOcrRegion(x, y, right - x, bottom - y, text.ToString());

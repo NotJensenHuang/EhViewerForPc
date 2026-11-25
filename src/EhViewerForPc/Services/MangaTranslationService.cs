@@ -27,19 +27,24 @@ internal readonly record struct ReaderTranslationImage(string Path, long Length,
 }
 
 internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decoder, LogService log,
-    MangaTranslationBackendService backend, Func<string?> getModelDirectory) : IDisposable
+    MangaTranslationBackendService backend, Func<MangaTranslationPreferences> getPreferences) : IDisposable
 {
     private const int MaxResponseCharacters = 512 * 1024;
     private readonly object _gate = new();
     private readonly CancellationTokenSource _lifetime = new();
     private Task _lastJob = Task.CompletedTask;
     private bool _disposed;
+    private CachedPage? _cachedPage;
+
+    private sealed record CachedPage(ReaderTranslationImage Image, MangaTranslationBackendPaths Resources,
+        MangaTranslationLanguageOption Language, MangaTranslationResponse Result);
 
     public Task<MangaTranslationResponse> TranslateAsync(ReaderTranslationImage image, CancellationToken token)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            MangaTranslationPreferences preferences = getPreferences();
             Task previous = _lastJob;
             var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _lastJob = completed.Task;
@@ -54,7 +59,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
                     timeout.CancelAfter(TimeSpan.FromMinutes(5));
                     try
                     {
-                        return await TranslateCoreAsync(image, timeout.Token).ConfigureAwait(false);
+                        return await TranslateCoreAsync(image, preferences, timeout.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (!token.IsCancellationRequested && !_lifetime.IsCancellationRequested)
                     {
@@ -69,12 +74,13 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         }
     }
 
-    private async Task<MangaTranslationResponse> TranslateCoreAsync(ReaderTranslationImage image, CancellationToken token)
+    private async Task<MangaTranslationResponse> TranslateCoreAsync(ReaderTranslationImage image, MangaTranslationPreferences preferences,
+        CancellationToken token)
     {
         if (!MangaTranslationBackendService.HasNativeLibraries())
             throw new MangaTranslationException(MangaTranslationBackendService.MissingNativeLibrariesMessage);
 
-        MangaTranslationBackendPaths resources = backend.Resolve(getModelDirectory()) ??
+        MangaTranslationBackendPaths resources = backend.Resolve(preferences.ModelDirectory, preferences.Model) ??
             throw new MangaTranslationException("本地翻译模型尚未就绪，请在漫画翻译设置中下载或校验。", requiresSetup: true);
 
         string inputRoot = Path.GetFullPath(Path.Combine(paths.MangaTranslationDirectory, "input"));
@@ -84,10 +90,20 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         }
 
         string jobDirectory = Path.GetFullPath(Path.Combine(inputRoot, Guid.NewGuid().ToString("N")));
-        Directory.CreateDirectory(jobDirectory);
         string snapshot = Path.Combine(jobDirectory, "page.png");
+        bool createdJobDirectory = false;
         try
         {
+            if (_cachedPage is { } cached && cached.Image == image && cached.Resources == resources &&
+                cached.Language == preferences.Language)
+            {
+                using FileStream source = OpenCurrentSource(image);
+                token.ThrowIfCancellationRequested();
+                return cached.Result;
+            }
+
+            Directory.CreateDirectory(jobDirectory);
+            createdJobDirectory = true;
             int width;
             int height;
             using (DecodedImage decoded = DecodeSnapshot(image, token))
@@ -99,8 +115,14 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
                 height = decoded.DecodedHeight;
             }
 
-            return await RunWorkerAsync(MangaTranslationWorker.CreateStartInfo(snapshot, resources), width, height, token)
+            MangaTranslationResponse result = await RunWorkerAsync(
+                MangaTranslationWorker.CreateStartInfo(snapshot, resources, preferences.Language), width, height, token)
                 .ConfigureAwait(false);
+            if (result.ModelId != preferences.Model.Id || result.TargetLanguage != preferences.Language.Id)
+                throw InvalidResponse();
+
+            _cachedPage = new CachedPage(image, resources, preferences.Language, result);
+            return result;
         }
         catch (FileNotFoundException)
         {
@@ -113,7 +135,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         finally
         {
             // 页图暂存于独占的一级目录，工作进程退出后再清理。
-            if (PathIdentity.Comparer.Equals(Path.GetDirectoryName(jobDirectory), inputRoot))
+            if (createdJobDirectory && PathIdentity.Comparer.Equals(Path.GetDirectoryName(jobDirectory), inputRoot))
             {
                 try { Directory.Delete(jobDirectory, recursive: true); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -128,14 +150,17 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
 
     private DecodedImage DecodeSnapshot(ReaderTranslationImage image, CancellationToken token)
     {
-        // 校验和解码共用文件句柄，允许下载服务原子更换路径，同时阻止原地写入这份输入。
-        using FileStream source = ImageDecoder.OpenRead(image.Path, FileShare.Read | FileShare.Delete);
-        if (!image.Matches(source))
-        {
-            throw new MangaTranslationException("本页图片已变更，请重新打开这一页。");
-        }
-
+        using FileStream source = OpenCurrentSource(image);
         return decoder.DecodeTranslationPage(image.Path, source, token);
+    }
+
+    private static FileStream OpenCurrentSource(ReaderTranslationImage image)
+    {
+        // 校验和解码共用文件句柄，允许下载服务原子更换路径，同时阻止原地写入这份输入。
+        FileStream source = ImageDecoder.OpenRead(image.Path, FileShare.Read | FileShare.Delete);
+        if (image.Matches(source)) return source;
+        source.Dispose();
+        throw new MangaTranslationException("本页图片已变更，请重新打开这一页。");
     }
 
     internal static async Task<MangaTranslationResponse> RunWorkerAsync(
@@ -237,7 +262,11 @@ internal sealed record MangaTranslationRegion(string SourceText, string Translat
 }
 
 internal sealed record MangaTranslationResponse(int SchemaVersion, int Width, int Height, string OcrProvider,
-    string? TranslationBackend, MangaTranslationRegion[] Regions);
+    string? TranslationBackend, MangaTranslationRegion[] Regions)
+{
+    public string ModelId { get; init; } = "";
+    public string TargetLanguage { get; init; } = "zh-CN";
+}
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 [JsonSerializable(typeof(MangaTranslationResponse))]

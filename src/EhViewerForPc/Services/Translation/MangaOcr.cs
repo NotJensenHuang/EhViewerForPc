@@ -7,6 +7,7 @@ internal static partial class MangaOcr
 {
     private const int MaxDetectionDimension = 1536;
     private const int RecognitionHeight = 48;
+    private const float MinimumRecognitionConfidence = 0.50f;
     private const int MaxPixels = 40_000_000;
     private const int MaxInputBytes = 160 * 1024 * 1024;
     private const string SmallKana = "ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ";
@@ -46,7 +47,9 @@ internal static partial class MangaOcr
             token.ThrowIfCancellationRequested();
             Crop crop = CropRegion(pixels, box, token);
             Recognition reading = RecognizeLine(crop, recognizer, dictionary, token);
-            if (reading.Text.Length == 0 || reading.Confidence < 0.50f) continue;
+            if (reading.Confidence < MinimumRecognitionConfidence)
+                reading = RecoverVerticalColumns(crop, recognizer, dictionary, token);
+            if (reading.Confidence < MinimumRecognitionConfidence || reading.Text.Length == 0) continue;
             Bounds bounds = box.GetBounds();
             int left = Math.Max(0, bounds.X);
             int top = Math.Max(0, bounds.Y);
@@ -56,7 +59,7 @@ internal static partial class MangaOcr
                 regions.Add(new MangaOcrRegion(left, top, right - left, bottom - top, reading.Text));
         }
         token.ThrowIfCancellationRequested();
-        return new MangaOcrResult(width, height, ArrangeDialogue(regions, pixels), MangaOcrOrt.Provider);
+        return new MangaOcrResult(width, height, ArrangeDialogue(regions, bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, token), MangaOcrOrt.Provider);
     }
 
     private static SKBitmap DecodeImage(string path)
@@ -105,25 +108,42 @@ internal static partial class MangaOcr
         return dictionary;
     }
 
-    private static Recognition RecognizeLine(Crop crop, MangaOcrOrt.Session recognizer, string[] dictionary, CancellationToken token)
+    private static Recognition RecognizeLine(Crop crop, MangaOcrOrt.Session recognizer, string[] dictionary,
+        CancellationToken token, bool cleaned = false)
     {
         if (crop.Height <= crop.Width * 1.5) return RecognizeCrop(crop, recognizer, dictionary, token);
         Recognition best = RecognizeCrop(RotateVertical(crop, clockwise: false), recognizer, dictionary, token);
-        if (best.Confidence >= 0.85f && ContainsKana(best.Text)) return best;
-
-        Recognition reversed = RecognizeCrop(RotateVertical(crop, clockwise: true), recognizer, dictionary, token);
-        if (reversed.Score > best.Score) best = reversed;
+        bool strong = best.Confidence >= 0.85f && ContainsKana(best.Text);
+        if (strong && !cleaned) return best;
+        if (!strong)
+        {
+            Recognition reversed = RecognizeCrop(RotateVertical(crop, clockwise: true), recognizer, dictionary, token);
+            if (reversed.Score > best.Score) best = reversed;
+        }
         if (LayOutVerticalGlyphs(crop) is { } horizontal)
         {
             Recognition reading = RecognizeCrop(horizontal, recognizer, dictionary, token);
-            if (reading.Score > best.Score) best = reading;
+            if (cleaned ? ContainsKana(reading.Text) && PreferCleanedVertical(best, reading) : reading.Score > best.Score)
+                best = reading;
         }
-        if (CleanBrightVerticalGlyphs(crop) is { } cleaned)
+        if (!cleaned && CleanBrightVerticalGlyphs(crop) is { } cleanedGlyphs)
         {
-            Recognition reading = RecognizeCrop(cleaned, recognizer, dictionary, token);
+            Recognition reading = RecognizeCrop(cleanedGlyphs, recognizer, dictionary, token);
             if (PreferCleanedVertical(best, reading)) best = reading;
         }
         return best;
+    }
+
+    private static Recognition RecoverVerticalColumns(Crop crop, MangaOcrOrt.Session recognizer,
+        string[] dictionary, CancellationToken token)
+    {
+        if (SplitVerticalColumns(crop, token) is not { } columns) return new Recognition("", 0);
+        // 一次检测把相邻竖列框到一起时，逐列识别，仍以原检测框提交一次翻译。
+        Recognition right = RecognizeLine(columns.Right, recognizer, dictionary, token, cleaned: true);
+        if (right.Confidence < 0.65f || !ContainsKana(right.Text)) return new Recognition("", 0);
+        Recognition left = RecognizeLine(columns.Left, recognizer, dictionary, token, cleaned: true);
+        if (left.Confidence < 0.65f || !ContainsKana(left.Text)) return new Recognition("", 0);
+        return new Recognition(string.Concat(right.Text, left.Text), Math.Min(right.Confidence, left.Confidence));
     }
 
     private static Recognition RecognizeCrop(Crop crop, MangaOcrOrt.Session recognizer, string[] dictionary, CancellationToken token)

@@ -19,7 +19,7 @@ internal sealed record MangaTranslationInstallProgress(string Message, double Fr
     MangaTranslationInstallStage Stage = MangaTranslationInstallStage.Preparing, string? FileName = null,
     long BytesReceived = 0, long TotalBytes = 0, string? SourceHost = null);
 
-internal sealed record MangaTranslationBackendPaths(string RuntimeDirectory, string ModelDirectory);
+internal sealed record MangaTranslationBackendPaths(string RuntimeDirectory, string ModelDirectory, MangaTranslationModelOption Model, string ModelSignature);
 
 internal sealed class MangaTranslationException(string message, bool requiresSetup = false) : Exception(message)
 {
@@ -62,13 +62,13 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
             "请选择本机磁盘上的实际模型目录，目录应使用完整路径且不能经过链接或联接。");
     }
 
-    public bool IsReady(string? configured)
+    public bool IsReady(string? configured, MangaTranslationModelOption? model = null)
     {
-        try { return Resolve(configured) is not null; }
+        try { return Resolve(configured, model) is not null; }
         catch (MangaTranslationException) { return false; }
     }
 
-    public Task InstallAsync(string? configured, IProgress<MangaTranslationInstallProgress>? progress, CancellationToken token)
+    public Task InstallAsync(string? configured, IProgress<MangaTranslationInstallProgress>? progress, CancellationToken token, MangaTranslationModelOption? model = null)
     {
         lock (_gate)
         {
@@ -77,21 +77,23 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
             _install = Task.Run(async () =>
             {
                 using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
-                await InstallCoreAsync(configured, progress, cancellation.Token).ConfigureAwait(false);
+                await InstallCoreAsync(configured, progress, cancellation.Token, model ?? MangaTranslationModelOption.Resolve(null)).ConfigureAwait(false);
             });
             return _install;
         }
     }
 
-    internal MangaTranslationBackendPaths? Resolve(string? configured)
+    internal MangaTranslationBackendPaths? Resolve(string? configured, MangaTranslationModelOption? model = null)
     {
+        model ??= MangaTranslationModelOption.Resolve(null);
         string models = GetModelDirectory(configured);
-        string? signature = MangaTranslationAssetInstaller.GetModelSignature(models);
-        return signature is not null && HasModelReceipt(models, signature) && HasNativeLibraries()
-            ? new MangaTranslationBackendPaths(NativeDirectory, models) : null;
+        string? signature = MangaTranslationAssetInstaller.GetModelSignature(models, model);
+        return signature is not null && HasModelReceipt(models, signature, model) && HasNativeLibraries()
+            ? new MangaTranslationBackendPaths(NativeDirectory, models, model, signature) : null;
     }
 
-    private async Task InstallCoreAsync(string? configured, IProgress<MangaTranslationInstallProgress>? progress, CancellationToken token)
+    private async Task InstallCoreAsync(string? configured, IProgress<MangaTranslationInstallProgress>? progress,
+        CancellationToken token, MangaTranslationModelOption model)
     {
         token.ThrowIfCancellationRequested();
         if (!HasNativeLibraries())
@@ -109,12 +111,12 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
         {
             Directory.CreateDirectory(staging);
             Directory.CreateDirectory(models);
-            string? signature = MangaTranslationAssetInstaller.GetModelSignature(models);
-            if (signature is null || !HasModelReceipt(models, signature))
+            string? signature = MangaTranslationAssetInstaller.GetModelSignature(models, model);
+            if (signature is null || !HasModelReceipt(models, signature, model))
             {
                 using var installer = new MangaTranslationAssetInstaller(cache, progress);
-                signature = await installer.InstallAsync(models, token).ConfigureAwait(false);
-                await WriteModelReceiptAsync(models, signature, staging, token).ConfigureAwait(false);
+                signature = await installer.InstallAsync(models, token, model).ConfigureAwait(false);
+                await WriteModelReceiptAsync(models, signature, staging, token, model).ConfigureAwait(false);
             }
             progress?.Report(new MangaTranslationInstallProgress("本地翻译模型已就绪。", 1, MangaTranslationInstallStage.Completed));
         }
@@ -136,27 +138,29 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
         }
     }
 
-    private string ModelReceiptPath(string modelDirectory)
+    private string ModelReceiptPath(string modelDirectory, MangaTranslationModelOption model)
     {
         string pathKey = OperatingSystem.IsWindows() ? modelDirectory.ToUpperInvariant() : modelDirectory;
-        byte[] key = SHA256.HashData(Encoding.UTF8.GetBytes(ModelReceiptVersion + pathKey));
+        string version = model == MangaTranslationModelOption.Choices[0]
+            ? ModelReceiptVersion : ModelReceiptVersion + model.Id + "|";
+        byte[] key = SHA256.HashData(Encoding.UTF8.GetBytes(version + pathKey));
         return Path.Combine(paths.MangaTranslationDirectory, "verified-models", Convert.ToHexString(key) + ".txt");
     }
 
-    private bool HasModelReceipt(string models, string signature)
+    private bool HasModelReceipt(string models, string signature, MangaTranslationModelOption model)
     {
-        string receipt = ModelReceiptPath(models);
+        string receipt = ModelReceiptPath(models, model);
         if (!IsLocalFile(receipt, Encoding.UTF8.GetByteCount(signature))) return false;
         try { return File.ReadAllText(receipt) == signature; }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
-    private async Task WriteModelReceiptAsync(string models, string signature, string staging, CancellationToken token)
+    private async Task WriteModelReceiptAsync(string models, string signature, string staging, CancellationToken token, MangaTranslationModelOption model)
     {
-        if (MangaTranslationAssetInstaller.GetModelSignature(models) != signature)
+        if (MangaTranslationAssetInstaller.GetModelSignature(models, model) != signature)
             throw new MangaTranslationException("模型文件在验证后发生变化。请关闭可能占用该目录的程序，再重试下载。");
 
-        string receipt = ModelReceiptPath(models);
+        string receipt = ModelReceiptPath(models, model);
         string directory = Path.GetDirectoryName(receipt)!;
         if (!IsLocalDirectory(directory)) throw new IOException("本地模型校验记录目录无效。");
         Directory.CreateDirectory(directory);

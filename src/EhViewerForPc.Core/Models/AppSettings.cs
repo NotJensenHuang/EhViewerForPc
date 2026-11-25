@@ -89,6 +89,8 @@ public sealed class AppSettings
     /// <summary>Gets or sets optional on-device image retrieval preferences.</summary>
     public LocalImageSearchSettings ImageSearch { get; set; } = new();
     public string MangaTranslationModelDirectory { get; set; } = string.Empty;
+    public string MangaTranslationModelId { get; set; } = string.Empty;
+    public string MangaTranslationTargetLanguage { get; set; } = string.Empty;
 
     /// <summary>Legacy single-root field; migrated into <see cref="Sources"/> on load.</summary>
     public string? LibraryRoot { get; set; }
@@ -164,6 +166,8 @@ public sealed class AppSettings
         ImageSearch ??= new();
         ImageSearch.Normalize();
         MangaTranslationModelDirectory ??= string.Empty;
+        MangaTranslationModelId ??= string.Empty;
+        MangaTranslationTargetLanguage ??= string.Empty;
         if (SchemaVersion < 5) { ImageQuality = ImageQuality.Resampled; SchemaVersion = 5; }
 
         if (SchemaVersion < 6)

@@ -10,13 +10,15 @@ public readonly record struct MangaTranslationOverlayRegion(Rect Bounds, string 
 /// <summary>在用于识别的定向图片坐标中排版，绘制时复用阅读器的图像矩形。</summary>
 public sealed class MangaTranslationOverlay
 {
-    private static readonly Typeface TextTypeface = new("Microsoft YaHei UI, Microsoft YaHei, Segoe UI");
-    private static readonly CultureInfo Culture = CultureInfo.GetCultureInfo("zh-CN");
     private const int MaximumTextElements = 384;
     private readonly MangaTranslationOverlayRegion[] _regions;
     private readonly RegionLayout?[] _layouts;
+    private readonly CultureInfo _culture;
+    private readonly FlowDirection _flowDirection;
+    private readonly Typeface _typeface;
 
-    public MangaTranslationOverlay(int width, int height, IReadOnlyList<MangaTranslationOverlayRegion> regions)
+    public MangaTranslationOverlay(
+        int width, int height, IReadOnlyList<MangaTranslationOverlayRegion> regions, string targetLanguage = "zh-CN")
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
@@ -24,10 +26,22 @@ public sealed class MangaTranslationOverlay
         Height = height;
         _regions = regions.ToArray();
         _layouts = new RegionLayout?[_regions.Length];
+        _culture = CultureInfo.GetCultureInfo(targetLanguage);
+        _flowDirection = _culture.TextInfo.IsRightToLeft ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
+        _typeface = new Typeface(_culture.TwoLetterISOLanguageName switch
+        {
+            "zh" when _culture.Name.Contains("Hant", StringComparison.OrdinalIgnoreCase) ||
+                _culture.Name is "zh-TW" or "zh-HK" or "zh-MO" => "Microsoft JhengHei UI, Microsoft JhengHei, Segoe UI",
+            "zh" => "Microsoft YaHei UI, Microsoft YaHei, Segoe UI",
+            "ja" => "Yu Gothic UI, Yu Gothic, Segoe UI",
+            "ko" => "Malgun Gothic, Segoe UI",
+            _ => "Segoe UI",
+        });
     }
 
     public int Width { get; }
     public int Height { get; }
+    internal FlowDirection TextFlowDirection => _flowDirection;
     internal ReaderTranslationImage? ImageSource { get; init; }
 
     internal bool Matches(ReaderTranslationImage? image) => ImageSource is { } source && source == image;
@@ -61,7 +75,7 @@ public sealed class MangaTranslationOverlay
         {
             if (layout is null || !layout.Bounds.Intersects(visiblePixels)) continue;
             using var clip = context.PushClip(layout.Bounds);
-            foreach (TextRun run in layout.Runs) context.DrawText(run.Text, run.Origin);
+            context.DrawText(layout.Text, layout.Origin);
         }
     }
 
@@ -69,67 +83,22 @@ public sealed class MangaTranslationOverlay
     {
         double padding = Math.Clamp(Math.Min(cover.Width, cover.Height) * 0.08, 0.4, 6);
         var inner = new Rect(cover.X + padding, cover.Y + padding, cover.Width - 2 * padding, cover.Height - 2 * padding);
-        double preferredMinimum = Math.Clamp(Math.Max(Width, Height) / 125d, 7, 17);
-        string text = LimitText(translation.Trim());
-        TextRun[] runs = inner.Height > inner.Width * 1.5
-            ? LayoutVertical(inner, text, preferredMinimum)
-            : [LayoutHorizontal(inner, text, preferredMinimum)];
-        return new RegionLayout(cover, runs);
-    }
+        string text = LimitText(translation.Trim(), out int textElements);
 
-    private static TextRun LayoutHorizontal(Rect bounds, string text, double preferredMinimum)
-    {
-        double largest = Math.Max(1, Math.Min(bounds.Width, bounds.Height / 1.35));
-        double smallest = Math.Min(largest, preferredMinimum);
-        double size = LargestFittingSize(smallest, largest, fontSize =>
+        // 窄框保留约三个全角字符的行宽，避免放大的单字一行。常规换行由文本排版器处理。
+        int charactersPerLine = Math.Min(3, textElements);
+        double largest = Math.Max(1, Math.Min(inner.Width / (charactersPerLine + 0.15), inner.Height / 1.35));
+        double size = LargestFittingSize(1, largest, fontSize =>
         {
-            FormattedText probe = CreateText(text, fontSize, bounds.Width);
-            return probe.Height <= bounds.Height && probe.Width <= bounds.Width;
+            FormattedText probe = CreateText(text, fontSize, inner.Width);
+            return probe.Height <= inner.Height && probe.Width <= inner.Width;
         });
 
-        FormattedText formatted = CreateText(text, size, bounds.Width);
-        formatted.MaxTextHeight = bounds.Height;
+        FormattedText formatted = CreateText(text, size, inner.Width);
+        formatted.MaxTextHeight = inner.Height;
         formatted.Trimming = TextTrimming.CharacterEllipsis;
-        return new TextRun(formatted, new Point(bounds.X, bounds.Y + Math.Max(0, (bounds.Height - formatted.Height) / 2)));
-    }
-
-    private static TextRun[] LayoutVertical(Rect bounds, string text, double preferredMinimum)
-    {
-        var elements = new List<string>();
-        TextElementEnumerator enumerator = StringInfo.GetTextElementEnumerator(text);
-        while (enumerator.MoveNext())
-        {
-            string element = enumerator.GetTextElement();
-            if (!string.IsNullOrWhiteSpace(element)) elements.Add(element);
-        }
-
-        double lineHeight = CreateText("中", 10, 20).Height / 10;
-        const double columnWidth = 1.15;
-        double largest = Math.Max(1, Math.Min(bounds.Width / columnWidth, bounds.Height / lineHeight));
-        double smallest = Math.Min(largest, preferredMinimum);
-        double size = LargestFittingSize(smallest, largest, fontSize =>
-            Math.Floor(bounds.Height / (fontSize * lineHeight)) *
-            Math.Floor(bounds.Width / (fontSize * columnWidth)) >= elements.Count);
-
-        double cellHeight = size * lineHeight;
-        double cellWidth = size * columnWidth;
-        int rows = Math.Max(1, (int)Math.Floor(bounds.Height / cellHeight));
-        int columnCapacity = Math.Max(1, (int)Math.Floor(bounds.Width / cellWidth));
-        int visible = Math.Min(elements.Count, rows * columnCapacity);
-        if (visible == 0) return [];
-
-        int columns = (visible + rows - 1) / rows;
-        double right = bounds.X + (bounds.Width + columns * cellWidth) / 2;
-        double top = bounds.Y + (bounds.Height - Math.Min(visible, rows) * cellHeight) / 2;
-        var runs = new TextRun[visible];
-        for (int i = 0; i < runs.Length; i++)
-        {
-            string glyph = i == visible - 1 && visible < elements.Count ? "…" : elements[i];
-            var origin = new Point(right - (i / rows + 1) * cellWidth, top + i % rows * cellHeight);
-            runs[i] = new TextRun(CreateText(glyph, size, cellWidth), origin);
-        }
-
-        return runs;
+        var origin = new Point(inner.X, inner.Y + Math.Max(0, (inner.Height - formatted.Height) / 2));
+        return new RegionLayout(cover, formatted, origin);
     }
 
     private static double LargestFittingSize(double minimum, double maximum, Func<double, bool> fits)
@@ -145,21 +114,20 @@ public sealed class MangaTranslationOverlay
         return minimum;
     }
 
-    private static FormattedText CreateText(string text, double size, double width) =>
-        new(text, Culture, FlowDirection.LeftToRight, TextTypeface, size, Brushes.Black)
+    private FormattedText CreateText(string text, double size, double width) =>
+        new(text, _culture, TextFlowDirection, _typeface, size, Brushes.Black)
         {
             MaxTextWidth = width,
             TextAlignment = TextAlignment.Center,
         };
 
-    private static string LimitText(string text)
+    private static string LimitText(string text, out int textElements)
     {
         int length = 0;
-        for (int i = 0; i < MaximumTextElements && length < text.Length; i++)
+        for (textElements = 0; textElements < MaximumTextElements && length < text.Length; textElements++)
             length += StringInfo.GetNextTextElementLength(text.AsSpan(length));
         return length < text.Length ? string.Concat(text.AsSpan(0, length), "…") : text;
     }
 
-    private sealed record RegionLayout(Rect Bounds, TextRun[] Runs);
-    private readonly record struct TextRun(FormattedText Text, Point Origin);
+    private sealed record RegionLayout(Rect Bounds, FormattedText Text, Point Origin);
 }

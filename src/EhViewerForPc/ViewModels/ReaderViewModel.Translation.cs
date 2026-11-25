@@ -1,5 +1,6 @@
 using System.Text;
 using Avalonia;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.Input;
 using EhViewerForPc.Controls;
 using EhViewerForPc.Services;
@@ -128,7 +129,7 @@ public sealed partial class ReaderViewModel
             if (overlays.Count > 0)
             {
                 TranslationStatus = $"图上显示 {overlays.Count} 个区块的译文 · GPU 已启用";
-                _translationOverlay = new MangaTranslationOverlay(result.Width, result.Height, overlays)
+                _translationOverlay = new MangaTranslationOverlay(result.Width, result.Height, overlays, result.TargetLanguage)
                 {
                     ImageSource = image.Value,
                 };
@@ -197,6 +198,20 @@ public sealed partial class ReaderViewModel
     {
         if (HasTranslationText) IsTranslationOpen = false;
         else CloseTranslation();
+    }
+
+    private void OnTranslationPreferencesChanged(object? sender, EventArgs e)
+    {
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            if (!_disposed) CloseTranslation();
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_disposed) CloseTranslation();
+        });
     }
 
     internal void CloseTranslation()

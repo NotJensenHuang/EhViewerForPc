@@ -9,7 +9,9 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
 {
     private readonly AppServices _services;
     private readonly MangaTranslationBackendService _backend;
-    private readonly Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, Task> _installResources;
+    private readonly Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, MangaTranslationModelOption, Task> _installResources;
+    private MangaTranslationModelOption _selectedModel;
+    private MangaTranslationLanguageOption _selectedTargetLanguage;
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _installation;
     private Task? _cancelCallbacks;
@@ -33,12 +35,47 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
 
     internal MangaTranslationSettingsViewModel(AppServices services,
         Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, Task> installResources)
+        : this(services, (directory, progress, token, _) => installResources(directory, progress, token))
+    {
+    }
+
+    private MangaTranslationSettingsViewModel(AppServices services,
+        Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, MangaTranslationModelOption, Task> installResources)
     {
         _services = services;
         _backend = services.MangaTranslationBackend;
         _installResources = installResources;
-        string configured = services.Settings.MangaTranslationModelDirectory;
+        MangaTranslationPreferences preferences = services.GetMangaTranslationPreferences();
+        _selectedModel = preferences.Model;
+        _selectedTargetLanguage = preferences.Language;
+        string configured = preferences.ModelDirectory ?? "";
         _savedDirectory = _modelDirectory = configured.Length == 0 ? _backend.DefaultModelDirectory : configured;
+    }
+
+    public IReadOnlyList<MangaTranslationModelOption> Models => MangaTranslationModelOption.Choices;
+    public IReadOnlyList<MangaTranslationLanguageOption> TargetLanguages => MangaTranslationLanguageOption.Choices;
+
+    public MangaTranslationModelOption SelectedModel
+    {
+        get => _selectedModel;
+        set
+        {
+            if (!CanEditDirectory || value is null || !SetProperty(ref _selectedModel, value)) return;
+            _services.SaveTranslationModel(value);
+            IsReady = false;
+            OperationStatus = "正在检查所选模型…";
+            _ = CheckDirectoryAsync(_services.Settings.MangaTranslationModelDirectory, save: false, preserveInput: true);
+        }
+    }
+
+    public MangaTranslationLanguageOption SelectedTargetLanguage
+    {
+        get => _selectedTargetLanguage;
+        set
+        {
+            if (_disposed || value is null || !SetProperty(ref _selectedTargetLanguage, value)) return;
+            _services.SaveTranslationLanguage(value);
+        }
     }
 
     public string ModelDirectory
@@ -140,11 +177,12 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
         UpdateActions();
     }
 
-    private async Task CheckDirectoryAsync(string configured, bool save)
+    private async Task CheckDirectoryAsync(string configured, bool save, bool preserveInput = false)
     {
         IsBusy = true;
         DirectoryError = "";
         if (save && configured.Length > 0) ModelDirectory = configured;
+        var model = SelectedModel;
         string[] protectedRoots = SnapshotProtectedRoots();
         try
         {
@@ -153,7 +191,7 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
                 string directory = _backend.GetModelDirectory(configured);
                 EnsureOutsideLibrary(directory, protectedRoots);
                 bool native = MangaTranslationBackendService.HasNativeLibraries();
-                return (Directory: directory, Native: native, Ready: native && _backend.IsReady(configured));
+                return (Directory: directory, Native: native, Ready: native && _backend.IsReady(configured, model));
             }, _lifetime.Token);
             if (_disposed) return;
 
@@ -163,8 +201,9 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
                 _services.SaveMangaTranslationModelDirectory(configured.Length == 0 ? "" : result.Directory);
             }
 
+            bool restoreSavedDirectory = !preserveInput || !HasUnsavedDirectory;
             _savedDirectory = result.Directory;
-            ModelDirectory = result.Directory;
+            if (restoreSavedDirectory) ModelDirectory = result.Directory;
             _nativeLibrariesAvailable = result.Native;
             IsReady = result.Ready;
             SetRetryLabel(false);
@@ -191,6 +230,7 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
     {
         if (!CanInstall) return;
         string configured = _services.Settings.MangaTranslationModelDirectory;
+        var model = SelectedModel;
         string[] protectedRoots = SnapshotProtectedRoots();
         using var job = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _installation = job;
@@ -210,11 +250,11 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
             await Task.Run(async () =>
             {
                 EnsureOutsideLibrary(_backend.GetModelDirectory(configured), protectedRoots);
-                await _installResources(configured, progress, job.Token).ConfigureAwait(false);
+                await _installResources(configured, progress, job.Token, model).ConfigureAwait(false);
             }, job.Token);
             if (_disposed) return;
 
-            bool ready = await Task.Run(() => _backend.IsReady(configured), job.Token);
+            bool ready = await Task.Run(() => _backend.IsReady(configured, model), job.Token);
             job.Token.ThrowIfCancellationRequested();
             if (!_disposed)
             {

@@ -170,6 +170,79 @@ internal static partial class MangaOcr
         return crop;
     }
 
+    private static (Crop Left, Crop Right)? SplitVerticalColumns(Crop crop, CancellationToken token)
+    {
+        int width = crop.Width;
+        int height = crop.Height;
+        if (width < 24 || height < width * 1.50 || height > width * 4.0) return null;
+
+        // 用竖向墨迹投影寻找两列之间的低谷。外缘常带气泡轮廓，避开后再量文字。
+        Span<int> ink = stackalloc int[width];
+        ink.Clear();
+        ImagePixels pixels = crop.Pixels;
+        int trimY = height / 20;
+        int bright = 0;
+        for (int y = trimY; y < height - trimY; y++)
+        {
+            token.ThrowIfCancellationRequested();
+            for (int x = 0; x < width; x++)
+            {
+                int gray = pixels.Get(x, y).Gray;
+                if (gray <= 110) ink[x]++;
+                if (gray >= 155) bright++;
+            }
+        }
+
+        int sampleHeight = height - 2 * trimY;
+        if (bright < width * sampleHeight * 0.60) return null;
+        int half = width / 2;
+        int split = half;
+        int lowestInk = int.MaxValue;
+        for (int x = width * 2 / 5; x <= width * 3 / 5; x++)
+        {
+            int density = ink[x - 1] + ink[x] + ink[x + 1];
+            if (density > lowestInk || density == lowestInk && Math.Abs(x - half) >= Math.Abs(split - half)) continue;
+            lowestInk = density;
+            split = x;
+        }
+
+        int margin = width / 5;
+        int leftPeak = MaxInk(ink[margin..split]);
+        int rightPeak = MaxInk(ink[split..(width - margin)]);
+        int commonPeak = Math.Min(leftPeak, rightPeak);
+        if (commonPeak < sampleHeight * 0.055 || lowestInk > commonPeak) return null;
+
+        int left = margin;
+        while (left < split && ink[left] < Math.Max(2, leftPeak / 5)) left++;
+        int right = width - margin - 1;
+        while (right > split && ink[right] < Math.Max(2, rightPeak / 5)) right--;
+        int padding = Math.Max(2, width / 24);
+        left = Math.Max(margin, left - padding);
+        right = Math.Min(width - margin + padding, right + padding + 1);
+        if (split - left < 8 || right - split < 8) return null;
+        return (CopyColumn(pixels, left, split, token), CopyColumn(pixels, split, right, token));
+    }
+
+    private static int MaxInk(ReadOnlySpan<int> ink)
+    {
+        int maximum = 0;
+        foreach (int count in ink) maximum = Math.Max(maximum, count);
+        return maximum;
+    }
+
+    private static Crop CopyColumn(ImagePixels pixels, int start, int end, CancellationToken token)
+    {
+        int width = end - start;
+        byte[] data = new byte[width * pixels.Height * 3];
+        for (int y = 0; y < pixels.Height; y++)
+        {
+            token.ThrowIfCancellationRequested();
+            for (int x = 0; x < width; x++)
+                data.AsSpan((y * width + x) * 3, 3).Fill(pixels.Get(start + x, y).Gray > 110 ? (byte)255 : (byte)0);
+        }
+        return new Crop(data, width, pixels.Height);
+    }
+
     private static Crop RotateVertical(Crop crop, bool clockwise)
     {
         int width = crop.Height;

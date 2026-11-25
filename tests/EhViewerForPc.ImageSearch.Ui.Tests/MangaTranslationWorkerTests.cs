@@ -32,6 +32,46 @@ public sealed class MangaTranslationWorkerTests
     }
 
     [Fact]
+    public void ModelAndTargetLanguageReachWorkerAndSurviveJson()
+    {
+        MangaTranslationModelOption model = MangaTranslationModelOption.Resolve("hy-mt2-7b");
+        MangaTranslationLanguageOption language = MangaTranslationLanguageOption.Resolve("en");
+        var resources = new MangaTranslationBackendPaths("runtime", "models", model, "verified");
+        ProcessStartInfo start = MangaTranslationWorker.CreateStartInfo(
+            Path.Combine(AppContext.BaseDirectory, "page.png"), resources, language);
+        Assert.Equal(new[] { "hy-mt2-7b", "en" }, start.ArgumentList.TakeLast(2));
+        Assert.Equal("Hy-MT2-7B-Q4_K_M.gguf", model.FileName);
+        Assert.Contains("into English", language.CreatePrompt("行こう！"));
+        Assert.Contains("译为繁体中文", MangaTranslationLanguageOption.Resolve("zh-Hant").CreatePrompt("行こう！"));
+        Assert.Contains("into Arabic", MangaTranslationLanguageOption.Resolve("ar").CreatePrompt("行こう！"));
+
+        var page = new MangaOcrResult(8, 8, [], MangaOcrOrt.Provider);
+        var response = MangaTranslationWorker.BuildResponse(page, null, null, model, language);
+        byte[] json = JsonSerializer.SerializeToUtf8Bytes(response, MangaTranslationJsonContext.Default.MangaTranslationResponse);
+        var decoded = JsonSerializer.Deserialize(json, MangaTranslationJsonContext.Default.MangaTranslationResponse)!;
+        Assert.Equal(model.Id, decoded.ModelId);
+        Assert.Equal(language.Id, decoded.TargetLanguage);
+    }
+
+    [Fact]
+    public void OversizedDialoguePreservesItsSourceAndKeepsNeighboringTranslations()
+    {
+        var page = new MangaOcrResult(80, 80,
+            [new(1, 1, 5, 5, "前"), new(8, 8, 5, 5, "長いセリフ"), new(16, 16, 5, 5, "後")], MangaOcrOrt.Provider);
+        var response = MangaTranslationWorker.BuildResponse(page, "Vulkan0",
+            text => text switch
+            {
+                "前" => "First",
+                "後" => "Last",
+                _ => throw new MangaTranslationRegionLimitException(),
+            });
+        Assert.Equal(new[] { "First", "", "Last" }, response.Regions.Select(region => region.TranslatedText));
+        Assert.Equal("長いセリフ", response.Regions[1].SourceText);
+        Assert.Throws<MangaTranslationException>(() => MangaTranslationWorker.BuildResponse(page, "Vulkan0",
+            _ => throw new MangaTranslationException("GPU failure")));
+    }
+
+    [Fact]
     public async Task ProtocolAcceptsBlankPageAndRejectsInvalidJson()
     {
         const string response = """{"schemaVersion":1,"width":3,"height":4,"ocrProvider":"DmlExecutionProvider","translationBackend":null,"regions":[]}""";

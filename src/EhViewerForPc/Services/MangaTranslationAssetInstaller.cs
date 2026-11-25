@@ -19,7 +19,7 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
 
     private readonly TimeSpan _inactivityTimeout = inactivityTimeout ?? TimeSpan.FromSeconds(20);
 
-    private sealed record Asset(string Name, long Bytes, byte[] Hash, Uri[] Sources);
+    private sealed record Asset(string Group, string Name, long Bytes, byte[] Hash, Uri[] Sources);
 
     private readonly record struct Activity(MangaTranslationInstallStage Stage, long Bytes = 0, Uri? Source = null, string? Detail = null);
 
@@ -30,9 +30,9 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         ConnectTimeout = TimeSpan.FromSeconds(20),
     }) { Timeout = Timeout.InfiniteTimeSpan });
 
-    public async Task<string> InstallAsync(string models, CancellationToken token)
+    public async Task<string> InstallAsync(string models, CancellationToken token, MangaTranslationModelOption? model = null)
     {
-        Asset[] assets = Manifest.Value;
+        Asset[] assets = GetAssets(model).ToArray();
         long total = assets.Sum(static asset => asset.Bytes);
         long completed = 0;
         var signature = new StringBuilder();
@@ -69,11 +69,11 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         _ => $"{bytes / (1024d * 1024):0.#} MiB",
     };
 
-    public static string? GetModelSignature(string directory)
+    public static string? GetModelSignature(string directory, MangaTranslationModelOption? model = null)
     {
         if (!MangaTranslationBackendService.IsLocalDirectory(directory)) return null;
         var signature = new StringBuilder();
-        foreach (Asset asset in Manifest.Value)
+        foreach (Asset asset in GetAssets(model))
         {
             if (!TryAppendModelSignature(signature, Path.Combine(directory, asset.Name), asset))
                 return null;
@@ -342,6 +342,16 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         return actual.AsSpan().SequenceEqual(asset.Hash);
     }
 
+    private static IEnumerable<Asset> GetAssets(MangaTranslationModelOption? model)
+    {
+        model ??= MangaTranslationModelOption.Resolve(null);
+        foreach (Asset asset in Manifest.Value)
+        {
+            if (asset.Group == "model" || asset.Group == model.Id)
+                yield return asset;
+        }
+    }
+
     private static Asset[] ReadManifest()
     {
         var assets = new List<Asset>();
@@ -352,14 +362,20 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         {
             if (line.Length == 0 || line[0] == '#') continue;
             string[] fields = line.Split('\t');
-            if (fields.Length < 5 || fields[0] != "model" ||
+            if (fields.Length < 5 || (fields[0] != "model" && MangaTranslationModelOption.Find(fields[0]) is null) ||
                 fields[1] != Path.GetFileName(fields[1]) ||
                 !long.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out long bytes) || bytes <= 0)
                 throw new InvalidDataException("内置翻译资源清单无效。");
-            assets.Add(new Asset(fields[1], bytes, Convert.FromHexString(fields[3]),
+            assets.Add(new Asset(fields[0], fields[1], bytes, Convert.FromHexString(fields[3]),
                 fields.Skip(4).Select(static value => new Uri(value)).ToArray()));
         }
-        return assets.Count > 0 ? assets.ToArray() : throw new InvalidDataException("内置翻译模型清单为空。");
+        foreach (MangaTranslationModelOption model in MangaTranslationModelOption.Choices)
+        {
+            if (assets.Count(asset => asset.Group == model.Id && asset.Name == model.FileName && asset.Bytes == model.Bytes) != 1 ||
+                assets.Count(asset => asset.Group == model.Id) != 1)
+                throw new InvalidDataException("内置翻译模型清单与可选模型不一致。");
+        }
+        return assets.ToArray();
     }
 
     private static void TryDeleteTemporary(string file)

@@ -58,7 +58,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - The More menu lists both left-to-right and right-to-left options, controlling horizontal continuous layout only and disabled in other modes. Arrow keys, the wheel and single-page click zones keep fixed directions
   - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
   - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
-  - Choose a model folder and download the resources under Settings → Interface and Reading → Manga Translation. Select "翻译本页" (Translate this page) in the reader header to place Simplified Chinese over the detected regions of the loaded, static Japanese page. Switch between the original and translated art or open the copyable bilingual text. Changing pages, closing the in-progress panel, or leaving the reader cancels the current job
+  - Choose a target language, translation model, and model folder under Settings → Interface and Reading → Manga Translation and prepare the required resources. Select "翻译本页" (Translate this page) in the reader header to show translations in the speech bubbles of the loaded, static Japanese page. The target language defaults to Simplified Chinese, with horizontal text that wraps naturally. Switch between the original and translated art or open the copyable bilingual text. Changing pages, closing the in-progress panel, or leaving the reader cancels the current job
   - Local "Retry this page" downloads only the selected page to the original copy folder and refreshes its placeholder and dimensions. Failed transfers preserve the original file; active writers in the same folder finish first. Ordinary folders without an original gallery link/page number reload local files and show the reason; "Continue download" handles the other missing pages
   - The reader opens inside the main window only; immersive mode hides the sidebar and title, and Esc exits it
   - An image memory budget covers raw decode buffers, the current bitmap, prefetch and animation canvases; the online disk cache has configurable size and retention limits with LRU eviction
@@ -127,7 +127,7 @@ Online browsing is available on first launch. To use the local library, point "L
 | :--- | :--- | :--- |
 | Local Library | Read-only scanning, multi-source merge, version management, search and filters | Virtualized grid, per-source signature cache, cache-first startup |
 | Reader | Single / vertical / horizontal modes, animation, progress, online page source | On-demand pagination, placeholder backfill, shared progress key, image memory budget |
-| Manga Translation | Japanese to Simplified Chinese on the current static page, on-image text, original image toggle, and copyable bilingual text | On-demand setup, selectable local model folder, DirectML OCR and Vulkan translation |
+| Manga Translation | Translation of the current static Japanese page, speech-bubble overlays, original image toggle, and copyable bilingual text | Selectable target language, translation model, and local model folder, with DirectML OCR and Vulkan translation |
 | Downloads | Queue, resume, concurrency and throttling, directory relocation | Persisted state, atomic writes, migration journal and rollback |
 | Online Browsing | Search, subscriptions, rankings, bookmarks, details, rating and archives | In-house tolerant HTML parser, fixed-structure fixture tests, cookie session |
 | Image Search | Indexing, cropped queries, matched-page location | Managed C# backend, SkiaSharp / SQLite, separate windowless host |
@@ -225,7 +225,7 @@ All unattended modes run without dialogs; diagnostics can be written to the path
 | `--single-instance-probe <out.json>` | Unattended single-instance check: hide the window, signal from a second process, assert it is restored and the gallery id forwarded |
 | `--image-search-probe-root <dir> --out <json>` | Windowless check of the application image-search service chain (requires an empty directory) |
 | `--bookmark-probe-root <dir> --out <json>` | Windowless check of bookmark import/export compatibility (requires an empty directory) |
-| `--manga-translation-worker <PNG> <model-dir> <native-dir>` | Internal windowless reader worker. Returns one page of JSON on standard output and skips application data initialization |
+| `--manga-translation-worker <PNG> <model-dir> <native-dir> [<model-id> <target-language-id>]` | Internal windowless reader worker. Returns one page of JSON on standard output and skips application data initialization. Model IDs are `hy-mt2-1.8b` and `hy-mt2-7b`. Example language IDs are `zh-CN`, `zh-Hant`, and `en`. Omitting both uses 1.8B and Simplified Chinese |
 | `--verbose` | More detailed diagnostics |
 
 Examples:
@@ -286,7 +286,9 @@ Inside the image-index directory, `features.db` stores deduplicated features and
 
 ### Set Up the Local Manga Translation Backend
 
-Open Settings → Interface and Reading → Manga Translation → Open Translation Settings, choose a local model folder, and select Download and Prepare Models. A clean setup downloads four PaddleOCR and Hy-MT2-1.8B Q4_K_M resource files totaling about 1.15 GB. Reserve 1.2 GB on the model drive. The page shows the current file, bytes transferred, and total. It displays connection and verification status separately. You can cancel and retry, and verified files are retained. The app verifies and reuses matching files in the selected folder. Changing folders leaves existing models in place.
+Open Settings → Interface and Reading → Manga Translation → Open Translation Settings, choose the target language, model, and local model folder, then select Download and Prepare Models. Tencent’s official Hy-MT2 1.8B Q4_K_M is the default. The 7B Q4_K_M model from the same series is also available. The 7B weights are about 4.62 GB and require more VRAM. Including shared PaddleOCR resources, a clean setup downloads about 1.15 GB for 1.8B or 4.65 GB for 7B. Inference runs locally after setup. Target languages include Simplified Chinese, Traditional Chinese, English, Korean, French, German, Spanish, Portuguese, Italian, Russian, Thai, Vietnamese, Indonesian, Turkish, Arabic, Dutch, Polish, and Ukrainian.
+
+The settings page shows the active file, bytes transferred, and total. It displays connection and verification status separately. You can cancel and retry while retaining verified files. When switching models in the same folder, the app reuses verified resources and prepares the files required by the selected model. Changing folders leaves existing models in place. Existing configurations keep their model folder and default to 1.8B and Simplified Chinese.
 
 OCR and translation run in a C# worker process that calls the bundled DirectML and Vulkan libraries directly. Both work offline once the models are ready. The previous default model folder is still supported. With no custom folder saved in the app, `EHVIEWER_MANGA_TRANSLATION_BACKEND` can point to an absolute legacy backend path so the app can reuse its `models` subfolder.
 
@@ -332,7 +334,7 @@ The online parser is covered by fixtures captured from fixed page structures; `-
 - Image access is subject to account and IP quotas. View-page requests are serialized, but bulk downloads can still trigger rate limiting
 - Favourite category names are local display labels and are not written back to the account
 - Continuous and horizontal modes fit whole pages to the viewport and have no in-page zoom (single-page mode supports 1x–8x)
-- Local manga translation runs manually on the current static Japanese page and requires a GPU with DirectML and Vulkan support and matching drivers. Adjacent vertical columns are translated together when they meet the same-bubble grouping checks. Regions the model returns unchanged keep the original art. OCR, translations, and text placement can contain errors. The bilingual text shows full translations that may be shortened on the image
+- Local manga translation runs manually on the current static Japanese page and requires a GPU with DirectML and Vulkan support and matching drivers. Text that meets the same-bubble grouping checks is translated together and laid out horizontally in the target language’s reading direction. Regions the model returns unchanged keep the original art. OCR, translations, and text placement can contain errors. The bilingual text shows full translations that may be shortened on the image
 - Page and cover bitmaps are owned by their controls. Download events update the affected copy, and a manual refresh picks up external file changes
 - Recall on a real image library and full-library search performance for local image search are not verified
 

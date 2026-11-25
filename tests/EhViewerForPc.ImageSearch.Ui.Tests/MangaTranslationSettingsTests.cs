@@ -32,6 +32,27 @@ public sealed class MangaTranslationSettingsTests
     }
 
     [AvaloniaFact]
+    public void DefaultsAndSelectedPreferencesAreAvailableToOtherSettingsPages()
+    {
+        using var fixture = new SettingsFixture();
+        using var viewModel = new MangaTranslationSettingsViewModel(fixture.Services);
+        Assert.Equal("hy-mt2-1.8b", viewModel.SelectedModel.Id);
+        Assert.Equal("zh-CN", viewModel.SelectedTargetLanguage.Id);
+
+        int changes = 0;
+        fixture.Services.TranslationPreferencesChanged += (_, _) => changes++;
+        viewModel.SelectedTargetLanguage = viewModel.TargetLanguages.Single(language => language.Id == "en");
+        viewModel.SelectedModel = viewModel.Models.Single(model => model.Id == "hy-mt2-7b");
+        var snapshot = fixture.Services.GetMangaTranslationPreferences();
+        using var reopened = new MangaTranslationSettingsViewModel(fixture.Services);
+        Assert.Equal(snapshot.Model, reopened.SelectedModel);
+        Assert.Equal(snapshot.Language, reopened.SelectedTargetLanguage);
+        Assert.Equal(2, changes);
+        Assert.Equal("hy-mt2-7b", fixture.Services.Settings.MangaTranslationModelId);
+        Assert.Equal("en", fixture.Services.Settings.MangaTranslationTargetLanguage);
+    }
+
+    [AvaloniaFact]
     public async Task ReportsTheCurrentDownloadAndWaitsForAsyncCancellationBeforeEnablingRetry()
     {
         using var fixture = new SettingsFixture();

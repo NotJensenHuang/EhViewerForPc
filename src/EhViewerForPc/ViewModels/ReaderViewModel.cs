@@ -110,6 +110,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             online.DimensionResolved = OnOnlineDimensionResolved;
             online.QualityChanged = () => Dispatcher.UIThread.Post(() => { if (!_disposed) OnPropertyChanged(nameof(SourceText)); });
         }
+        _services.TranslationPreferencesChanged += OnTranslationPreferencesChanged;
     }
 
     public event EventHandler<double>? ScrollToRequested;
@@ -1123,6 +1124,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _services.TranslationPreferencesChanged -= OnTranslationPreferencesChanged;
         CloseTranslation();
         if (_source is OnlineReaderSource online) { online.DimensionResolved = null; online.QualityChanged = null; }
         _saveTimer.Stop();

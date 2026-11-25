@@ -33,7 +33,7 @@ public sealed partial class AppServices : IDisposable
         Decoder = new ImageDecoder(Log);
         MangaTranslationBackend = new MangaTranslationBackendService(Paths);
         MangaTranslation = new MangaTranslationService(Paths, Decoder, Log, MangaTranslationBackend,
-            () => Settings.MangaTranslationModelDirectory);
+            GetMangaTranslationPreferences);
         Images = new ImageLoader(Decoder, Log);
         Covers = new CoverService(Images, Log, Paths.CoverCacheDirectory);
         Dimensions = new PageDimensionService(paths, Decoder, Log);
@@ -129,11 +129,34 @@ public sealed partial class AppServices : IDisposable
         return true;
     }
 
+    internal event EventHandler? TranslationPreferencesChanged;
+
+    internal MangaTranslationPreferences GetMangaTranslationPreferences() => new(
+        Settings.MangaTranslationModelDirectory, MangaTranslationModelOption.Resolve(Settings.MangaTranslationModelId),
+        MangaTranslationLanguageOption.Resolve(Settings.MangaTranslationTargetLanguage));
+
+    internal void SaveTranslationModel(MangaTranslationModelOption model)
+    {
+        if (GetMangaTranslationPreferences().Model == model) return;
+        Settings.MangaTranslationModelId = model.Id;
+        TrySaveSettings(out _);
+        TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    internal void SaveTranslationLanguage(MangaTranslationLanguageOption language)
+    {
+        if (GetMangaTranslationPreferences().Language == language) return;
+        Settings.MangaTranslationTargetLanguage = language.Id;
+        TrySaveSettings(out _);
+        TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     internal void SaveMangaTranslationModelDirectory(string directory)
     {
         if (PathIdentity.Comparer.Equals(Settings.MangaTranslationModelDirectory, directory)) return;
         Settings.MangaTranslationModelDirectory = directory;
         TrySaveSettings(out _);
+        TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public Task<bool> RelocateDownloadsAsync(string target, IProgress<DownloadMoveProgress>? progress, CancellationToken token) =>
