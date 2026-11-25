@@ -174,7 +174,7 @@
 
     <Border Grid.Row="1" Grid.ColumnSpan="2" Background="{DynamicResource AppSurfaceBrush}" BorderBrush="{DynamicResource AppBorderBrush}"
             BorderThickness="0,1,0,0" Padding="16,8" MinHeight="40">
-      <Grid ColumnDefinitions="Auto,10,*,10,Auto,14,Auto,Auto" ColumnSpacing="0">
+      <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,10,*,10,Auto,14,Auto,Auto" RowSpacing="4">
         <Button Grid.Column="0" Content="上一页" Command="{Binding PrevPageCommand}" />
         <Slider Grid.Column="2" Minimum="1" Maximum="{Binding SliderMaximum}" Value="{Binding SliderValue}"
                 VerticalAlignment="Center" IsEnabled="{Binding HasPages}" AutomationProperties.Name="阅读进度" />
@@ -189,6 +189,19 @@
           <Button Content="双语文本" Command="{Binding OpenTranslationTextCommand}"
                   AutomationProperties.AutomationId="Reader.OpenTranslationText" />
         </StackPanel>
+        <DockPanel Grid.Row="1" Grid.ColumnSpan="8">
+          <ToggleButton x:Name="AutoTranslationToggle" DockPanel.Dock="Left" Content="自动翻译"
+                        IsChecked="{Binding AutoTranslateReaderPages, Mode=TwoWay}"
+                        AutomationProperties.AutomationId="Reader.AutoTranslate"
+                        AutomationProperties.Name="自动翻译"
+                        ToolTip.Tip="自动翻译当前可见的静态漫画页" />
+          <Button DockPanel.Dock="Right" Content="打开翻译设置" Click="OnMangaTranslationSettings"
+                  IsVisible="{Binding ShowAutomaticTranslationSettings}"
+                  AutomationProperties.AutomationId="Reader.OpenAutoTranslationSettings" />
+          <TextBlock Text="{Binding AutomaticTranslationStatus}" Classes="secondary" FontSize="12"
+                     VerticalAlignment="Center" Margin="10,0" TextWrapping="Wrap" MaxLines="2"
+                     AutomationProperties.AutomationId="Reader.AutoTranslationStatus" />
+        </DockPanel>
       </Grid>
     </Border>
   </Grid>

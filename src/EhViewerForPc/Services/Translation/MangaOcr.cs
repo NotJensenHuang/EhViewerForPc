@@ -19,47 +19,92 @@ internal static partial class MangaOcr
 
     internal static MangaOcrResult Read(string imagePath, string modelDirectory, string runtimeDirectory, CancellationToken token)
     {
-        token.ThrowIfCancellationRequested();
-        using SKBitmap bitmap = DecodeImage(imagePath);
-        int width = bitmap.Width;
-        int height = bitmap.Height;
-        var pixels = new ImagePixels(bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, 4);
-        string workingDirectory = Path.GetDirectoryName(imagePath)!;
-        using var ort = new MangaOcrOrt(runtimeDirectory);
-        List<Quad> boxes;
-        using (var detector = ort.Open(Path.Combine(modelDirectory, "det.onnx"), Path.Combine(workingDirectory, "det-profile")))
+        using var engine = new Engine(modelDirectory, runtimeDirectory);
+        return engine.Read(imagePath, token);
+    }
+
+    internal sealed class Engine(string modelDirectory, string runtimeDirectory) : IDisposable
+    {
+        private readonly MangaOcrOrt _ort = new(runtimeDirectory);
+        private MangaOcrOrt.Session? _detector;
+        private MangaOcrOrt.Session? _recognizer;
+        private string[]? _dictionary;
+
+        internal MangaOcrResult Read(string imagePath, CancellationToken token)
         {
+            token.ThrowIfCancellationRequested();
+            using SKBitmap bitmap = DecodeImage(imagePath);
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+            var pixels = new ImagePixels(bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, 4);
+            string workingDirectory = Path.GetDirectoryName(imagePath)!;
+            MangaOcrOrt.Session detector = _detector ??= _ort.Open(
+                Path.Combine(modelDirectory, "det.onnx"), Path.Combine(workingDirectory, "det-profile"));
             double scale = Math.Min(1.0, (double)MaxDetectionDimension / Math.Max(width, height));
             int inputWidth = Math.Max(32, (int)Math.Round(width * scale / 32) * 32);
             int inputHeight = Math.Max(32, (int)Math.Round(height * scale / 32) * 32);
             float[] data = PrepareDetection(pixels, inputWidth, inputHeight, token);
-            boxes = detector.Run(data, inputWidth, inputHeight,
+            List<Quad> boxes = detector.Run(data, inputWidth, inputHeight,
                 (probability, shape) => DetectBoxes(probability, shape, width, height, token));
-        }
-        token.ThrowIfCancellationRequested();
-        if (boxes.Count == 0) return new MangaOcrResult(width, height, [], MangaOcrOrt.Provider);
-
-        string[] dictionary = LoadDictionary(Path.Combine(modelDirectory, "rec-dict.txt"));
-        using var recognizer = ort.Open(Path.Combine(modelDirectory, "rec.onnx"), Path.Combine(workingDirectory, "rec-profile"));
-        var regions = new List<MangaOcrRegion>(boxes.Count);
-        foreach (Quad box in boxes)
-        {
             token.ThrowIfCancellationRequested();
-            Crop crop = CropRegion(pixels, box, token);
-            Recognition reading = RecognizeLine(crop, recognizer, dictionary, token);
-            if (reading.Confidence < MinimumRecognitionConfidence)
-                reading = RecoverVerticalColumns(crop, recognizer, dictionary, token);
-            if (reading.Confidence < MinimumRecognitionConfidence || reading.Text.Length == 0) continue;
-            Bounds bounds = box.GetBounds();
-            int left = Math.Max(0, bounds.X);
-            int top = Math.Max(0, bounds.Y);
-            int right = Math.Min(width, bounds.Right);
-            int bottom = Math.Min(height, bounds.Bottom);
-            if (right > left && bottom > top)
-                regions.Add(new MangaOcrRegion(left, top, right - left, bottom - top, reading.Text));
+            if (boxes.Count == 0) return new MangaOcrResult(width, height, [], MangaOcrOrt.Provider);
+
+            string[] dictionary = _dictionary ??= LoadDictionary(Path.Combine(modelDirectory, "rec-dict.txt"));
+            MangaOcrOrt.Session recognizer = _recognizer ??= _ort.Open(
+                Path.Combine(modelDirectory, "rec.onnx"), Path.Combine(workingDirectory, "rec-profile"));
+            var regions = new List<MangaOcrRegion>(boxes.Count);
+            foreach (Quad box in boxes)
+            {
+                token.ThrowIfCancellationRequested();
+                Crop crop = CropRegion(pixels, box, token);
+                Recognition reading = RecognizeLine(crop, recognizer, dictionary, token);
+                if (reading.Confidence < MinimumRecognitionConfidence)
+                    reading = RecoverVerticalColumns(crop, recognizer, dictionary, token);
+                if (reading.Confidence < MinimumRecognitionConfidence || reading.Text.Length == 0) continue;
+                Bounds bounds = box.GetBounds();
+                int left = Math.Max(0, bounds.X);
+                int top = Math.Max(0, bounds.Y);
+                int right = Math.Min(width, bounds.Right);
+                int bottom = Math.Min(height, bounds.Bottom);
+                if (right > left && bottom > top)
+                    regions.Add(new MangaOcrRegion(left, top, right - left, bottom - top, reading.Text));
+            }
+            token.ThrowIfCancellationRequested();
+            return new MangaOcrResult(width, height, ArrangeDialogue(regions, bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, token), MangaOcrOrt.Provider);
         }
-        token.ThrowIfCancellationRequested();
-        return new MangaOcrResult(width, height, ArrangeDialogue(regions, bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, token), MangaOcrOrt.Provider);
+
+        internal void DiscardUnverifiedSessions()
+        {
+            // 未结束首次 DirectML 核验的会话仍引用当前页的临时记录路径。
+            try
+            {
+                if (_recognizer is { IsGpuVerified: false })
+                {
+                    MangaOcrOrt.Session recognizer = _recognizer;
+                    _recognizer = null;
+                    recognizer.Dispose();
+                }
+            }
+            finally
+            {
+                if (_detector is { IsGpuVerified: false })
+                {
+                    MangaOcrOrt.Session detector = _detector;
+                    _detector = null;
+                    detector.Dispose();
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            try { _recognizer?.Dispose(); }
+            finally
+            {
+                try { _detector?.Dispose(); }
+                finally { _ort.Dispose(); }
+            }
+        }
     }
 
     private static SKBitmap DecodeImage(string path)
@@ -114,7 +159,17 @@ internal static partial class MangaOcr
         if (crop.Height <= crop.Width * 1.5) return RecognizeCrop(crop, recognizer, dictionary, token);
         Recognition best = RecognizeCrop(RotateVertical(crop, clockwise: false), recognizer, dictionary, token);
         bool strong = best.Confidence >= 0.85f && ContainsKana(best.Text);
-        if (strong && !cleaned) return best;
+        if (strong && !cleaned)
+        {
+            // 平均置信度只覆盖已解码字符。字形分段支持当前长度时，再检查有无漏字。
+            if (CleanBrightVerticalGlyphs(crop, Math.Max(2, best.Text.Length)) is { } upright)
+            {
+                Recognition reading = RecognizeCrop(upright, recognizer, dictionary, token);
+                if (RestoresOmittedGlyphs(best, reading))
+                    return reading;
+            }
+            return best;
+        }
         if (!strong)
         {
             Recognition reversed = RecognizeCrop(RotateVertical(crop, clockwise: true), recognizer, dictionary, token);
@@ -129,7 +184,7 @@ internal static partial class MangaOcr
         if (!cleaned && CleanBrightVerticalGlyphs(crop) is { } cleanedGlyphs)
         {
             Recognition reading = RecognizeCrop(cleanedGlyphs, recognizer, dictionary, token);
-            if (PreferCleanedVertical(best, reading)) best = reading;
+            if (PreferCleanedVertical(best, reading) || RestoresOmittedGlyphs(best, reading)) best = reading;
         }
         return best;
     }
@@ -194,6 +249,21 @@ internal static partial class MangaOcr
         foreach (char c in text)
             if (c is >= '\u3041' and <= '\u3096' or >= '\u30a1' and <= '\u30fa') return true;
         return false;
+    }
+
+    private static bool RestoresOmittedGlyphs(Recognition original, Recognition upright)
+    {
+        if (upright.Text.Length <= original.Text.Length || !ContainsKana(upright.Text) ||
+            upright.Confidence < Math.Max(0.85f, original.Confidence - 0.08f))
+            return false;
+
+        // 正置候选保留已有字符及其顺序时，允许轻微的置信度差换回漏字。
+        int matched = 0;
+        foreach (char c in upright.Text)
+        {
+            if (matched < original.Text.Length && c == original.Text[matched]) matched++;
+        }
+        return matched == original.Text.Length;
     }
 
     private static bool PreferCleanedVertical(Recognition original, Recognition cleaned)

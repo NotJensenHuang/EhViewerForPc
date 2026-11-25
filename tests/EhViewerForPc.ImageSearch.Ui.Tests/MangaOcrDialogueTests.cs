@@ -49,4 +49,39 @@ public sealed class MangaOcrDialogueTests
         Assert.Equal(vertical ? (46, 20, 42, 97) : (20, 46, 95, 42),
             (region.X, region.Y, region.Width, region.Height));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void VerticalDialogueDistinguishesRepeatedGlyphStrokesFromABubbleBorder(bool continuousBorder)
+    {
+        const int size = 180;
+        byte[] pixels = new byte[size * size * 4];
+        pixels.AsSpan().Fill(255);
+        for (int y = 20; y < 130; y++)
+        {
+            if (continuousBorder || (y - 20) % 33 < 19)
+                pixels.AsSpan((y * size + 138) * 4, 3).Clear();
+        }
+
+        var columns = new List<MangaOcrRegion>
+        {
+            new(28, 20, 40, 110, "ならない？"),
+            new(60, 20, 40, 130, "聞き入れねば"),
+            new(92, 20, 40, 130, "お前の懇願を"),
+            new(124, 20, 40, 110, "なぜ俺が")
+        };
+        var token = TestContext.Current.CancellationToken;
+        IReadOnlyList<MangaOcrRegion> grouped = MangaOcr.ArrangeDialogue(columns, pixels, size, size, size * 4, token);
+        if (continuousBorder)
+        {
+            Assert.Equal(new[] { "なぜ俺が", "お前の懇願を聞き入れねばならない？" },
+                grouped.Select(static region => region.Text));
+            return;
+        }
+
+        MangaOcrRegion bubble = Assert.Single(grouped);
+        Assert.Equal("なぜ俺がお前の懇願を聞き入れねばならない？", bubble.Text);
+        Assert.Equal((28, 20, 136, 130), (bubble.X, bubble.Y, bubble.Width, bubble.Height));
+    }
 }

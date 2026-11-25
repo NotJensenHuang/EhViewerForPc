@@ -71,30 +71,66 @@ public sealed class MangaTranslationWorkerTests
             _ => throw new MangaTranslationException("GPU failure")));
     }
 
+    private const string BlankResponse = """{"schemaVersion":1,"width":3,"height":4,"ocrProvider":"DmlExecutionProvider","translationBackend":null,"regions":[]}""";
+
     [Fact]
-    public async Task ProtocolAcceptsBlankPageAndRejectsInvalidJson()
+    public async Task ProtocolProcessesTwoPagesAndRejectsInvalidJson()
     {
-        const string response = """{"schemaVersion":1,"width":3,"height":4,"ocrProvider":"DmlExecutionProvider","translationBackend":null,"regions":[]}""";
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(10));
-        var accepted = await MangaTranslationService.RunWorkerAsync(WorkerProcess($"[Console]::WriteLine('{response}')"), 3, 4, timeout.Token);
-        Assert.Empty(accepted.Regions);
-        var failure = await Assert.ThrowsAsync<MangaTranslationException>(() => MangaTranslationService.RunWorkerAsync(
-            WorkerProcess("[Console]::WriteLine('invalid-json')"), 3, 4, timeout.Token));
+        // 让含 Windows 换行的一帧正好是 1024 字节，父进程仍应在进程存活时返回。
+        string frame = ("0 " + BlankResponse).PadRight(1022);
+        await using var connection = ConnectWorker(
+            $"while ($null -ne [Console]::ReadLine()) {{ [Console]::WriteLine('{frame}') }}");
+        for (int i = 0; i < 2; i++)
+        {
+            var accepted = await connection.TranslateAsync($"page-{i}.png", 3, 4, timeout.Token);
+            Assert.Empty(accepted.Regions);
+            Assert.True(connection.IsUsable);
+        }
+
+        await using var invalid = ConnectWorker("[void][Console]::ReadLine(); [Console]::WriteLine('0 invalid-json')");
+        var failure = await Assert.ThrowsAsync<MangaTranslationException>(() => invalid.TranslateAsync("page.png", 3, 4, timeout.Token));
         Assert.Contains("无法使用的结果", failure.Message);
     }
 
     [Fact]
-    public async Task TimeoutStopsTheWorkerAndCompletesPipeCleanup()
+    public async Task AcknowledgedCancellationKeepsTheWorkerForTheNextPage()
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        await using var connection = ConnectWorker(
+            "[void][Console]::ReadLine(); if ([Console]::ReadLine() -eq '') { [Console]::WriteLine('7') }; " +
+            $"[void][Console]::ReadLine(); [Console]::WriteLine('0 {BlankResponse}'); [void][Console]::ReadLine()");
+        using var page = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+        Task<MangaTranslationResponse> waiting = connection.TranslateAsync("old-page.png", 3, 4, page.Token);
+        page.CancelAfter(TimeSpan.FromMilliseconds(350));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        Assert.True(connection.IsUsable);
+        Assert.Empty((await connection.TranslateAsync("new-page.png", 3, 4, timeout.Token)).Regions);
+    }
+
+    [Fact]
+    public async Task UnacknowledgedCancellationStopsTheWorkerAndCompletesPipeCleanup()
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         var stopwatch = Stopwatch.StartNew();
-        Task<MangaTranslationResponse> waiting = MangaTranslationService.RunWorkerAsync(
-            WorkerProcess("Start-Sleep -Seconds 30"), 3, 4, timeout.Token);
+        await using var connection = ConnectWorker("[void][Console]::ReadLine(); Start-Sleep -Seconds 30");
+        Task<MangaTranslationResponse> waiting = connection.TranslateAsync("page.png", 3, 4, timeout.Token);
         timeout.CancelAfter(TimeSpan.FromMilliseconds(350));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken));
+        Assert.False(connection.IsUsable);
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(4));
+    }
+
+    private static MangaTranslationConnection ConnectWorker(string script)
+    {
+        var model = MangaTranslationModelOption.Choices[0];
+        var language = MangaTranslationLanguageOption.Choices[0];
+        return new MangaTranslationConnection(WorkerProcess(script),
+            new MangaTranslationBackendPaths("runtime", "models", model, "verified"), language);
     }
 
     private static ProcessStartInfo WorkerProcess(string script)
@@ -103,6 +139,8 @@ public sealed class MangaTranslationWorkerTests
         {
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardInput = true,
+            StandardInputEncoding = MangaTranslationWorker.PipeEncoding,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,

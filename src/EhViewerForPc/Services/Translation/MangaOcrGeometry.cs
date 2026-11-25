@@ -425,13 +425,22 @@ internal static partial class MangaOcr
         {
             bool inCenter = across >= start && across < end;
             int dark = 0;
+            int darkRun = 0;
+            int longestDarkRun = 0;
             for (int along = begin; along < finish; along++)
             {
                 int gray = vertical ? source.Get(across, along).Gray : source.Get(along, across).Gray;
                 if (inCenter && gray >= light) open++;
-                if (gray < 90) dark++;
+                if (gray < 90)
+                {
+                    dark++;
+                    longestDarkRun = Math.Max(longestDarkRun, ++darkRun);
+                }
+                else darkRun = 0;
             }
-            if (dark >= length * 0.45) return false;
+            // 竖排检测框外扩后会覆盖字边，断开的笔画也可能累计成较高的深色占比。
+            if (dark >= length * 0.45 && (!vertical || longestDarkRun >= Math.Min(thickness * 0.75, length * 0.40)))
+                return false;
         }
         return open >= (end - start) * length * (vertical ? 0.72 : 0.85);
     }

@@ -64,8 +64,15 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     public ReaderViewModel(AppServices services, IReaderSource source, int? initialPageNumber = null)
+        : this(services, source, initialPageNumber, services.MangaTranslation.TranslateAsync)
+    {
+    }
+
+    internal ReaderViewModel(AppServices services, IReaderSource source, int? initialPageNumber,
+        Func<ReaderTranslationImage, CancellationToken, Task<MangaTranslationResponse>> translatePage)
     {
         _services = services;
+        _translatePage = translatePage;
         _source = source;
         _pages = source.Pages.ToList();
         if (initialPageNumber is int requested)
@@ -111,6 +118,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
             online.QualityChanged = () => Dispatcher.UIThread.Post(() => { if (!_disposed) OnPropertyChanged(nameof(SourceText)); });
         }
         _services.TranslationPreferencesChanged += OnTranslationPreferencesChanged;
+        _services.ReaderAutoTranslationChanged += OnReaderAutoTranslationChanged;
     }
 
     public event EventHandler<double>? ScrollToRequested;
@@ -1125,7 +1133,9 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         if (_disposed) return;
         _disposed = true;
         _services.TranslationPreferencesChanged -= OnTranslationPreferencesChanged;
+        _services.ReaderAutoTranslationChanged -= OnReaderAutoTranslationChanged;
         CloseTranslation();
+        _services.MangaTranslation.RequestWorkerRelease();
         if (_source is OnlineReaderSource online) { online.DimensionResolved = null; online.QualityChanged = null; }
         _saveTimer.Stop();
         _hintTimer.Stop();

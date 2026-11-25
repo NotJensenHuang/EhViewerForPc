@@ -130,6 +130,19 @@ public sealed partial class AppServices : IDisposable
     }
 
     internal event EventHandler? TranslationPreferencesChanged;
+    internal event EventHandler? ReaderAutoTranslationChanged;
+
+    internal void SaveReaderAutoTranslation(bool enabled)
+    {
+        if (Settings.AutoTranslateReaderPages == enabled) return;
+        Settings.AutoTranslateReaderPages = enabled;
+        TrySaveSettings(out _);
+        ReaderAutoTranslationChanged?.Invoke(this, EventArgs.Empty);
+        if (!enabled) MangaTranslation.RequestWorkerRelease();
+    }
+
+    internal void NotifyTranslationResourcesReady() =>
+        TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
 
     internal MangaTranslationPreferences GetMangaTranslationPreferences() => new(
         Settings.MangaTranslationModelDirectory, MangaTranslationModelOption.Resolve(Settings.MangaTranslationModelId),
@@ -140,6 +153,7 @@ public sealed partial class AppServices : IDisposable
         if (GetMangaTranslationPreferences().Model == model) return;
         Settings.MangaTranslationModelId = model.Id;
         TrySaveSettings(out _);
+        MangaTranslation.RequestWorkerRelease();
         TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -148,6 +162,7 @@ public sealed partial class AppServices : IDisposable
         if (GetMangaTranslationPreferences().Language == language) return;
         Settings.MangaTranslationTargetLanguage = language.Id;
         TrySaveSettings(out _);
+        MangaTranslation.RequestWorkerRelease();
         TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
     }
 
@@ -156,6 +171,7 @@ public sealed partial class AppServices : IDisposable
         if (PathIdentity.Comparer.Equals(Settings.MangaTranslationModelDirectory, directory)) return;
         Settings.MangaTranslationModelDirectory = directory;
         TrySaveSettings(out _);
+        MangaTranslation.RequestWorkerRelease();
         TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
     }
 

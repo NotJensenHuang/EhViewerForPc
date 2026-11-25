@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-11-25 阅读器自动翻译与竖排漏字修复
+
+- `ReaderPage.axaml` 与 `ReaderViewModel.Translation.cs` 增加默认关闭的「自动翻译」，仅在当前静态页已显示且短暂停留后启动。自动结果直接绘制到图上，翻页取消在途任务。
+- `MangaTranslationService.cs` 与 `MangaTranslationWorker.cs` 在相邻翻译任务之间复用 GPU 模型，空闲 30 秒释放工作进程，最近 8 页结果可在原图和翻译设置匹配时从内存复用。
+- `MangaOcr.cs`、`MangaOcrPixels.cs` 与 `MangaOcrGeometry.cs` 为高置信但可能漏字的竖排候选复核正置字形，并按连续深色笔画识别列间气泡边界。见[自动翻译与竖排 OCR 验证](阅读器自动翻译与竖排OCR验证-2026-11-25.md)。
+
 ## 2026-11-25 漫画气泡翻译与目标语言
 
 - `MangaOcr.cs` 加强同气泡竖列合并，恢复部分检测到但整框识别置信不足的双列文本。

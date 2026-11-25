@@ -263,6 +263,7 @@ public sealed class ZoomPanView : Control
             _loading = false;
             _failed = false;
             StartAnimation(adopted, _generation, CancellationToken.None);
+            if (_translationImage is not null) ReaderTranslationImageReady.Raise(this);
             InvalidateVisual();
             TryPreload();
             return;
@@ -383,6 +384,7 @@ public sealed class ZoomPanView : Control
                     _bitmap = image.Bitmap;
                     _translationImage = image.TranslationImage;
                     StartAnimation(image, generation, token);
+                    if (_translationImage is not null) ReaderTranslationImageReady.Raise(this);
                 }
 
                 InvalidateVisual();
@@ -510,6 +512,7 @@ public sealed class ZoomPanView : Control
                     _failed = false;
                     _loading = false;
                     StartAnimation(adopted, _generation, token);
+                    if (_translationImage is not null) ReaderTranslationImageReady.Raise(this);
                     InvalidateVisual();
                 }
             });

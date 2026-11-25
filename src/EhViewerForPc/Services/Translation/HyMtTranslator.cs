@@ -6,7 +6,7 @@ using System.Text;
 
 namespace EhViewerForPc.Services;
 
-// 同一页复用模型及上下文，组间重置提示与 KV 状态。
+// 连续页复用模型及上下文，每个对白独立重置提示与 KV 状态。
 internal sealed unsafe class HyMtTranslator : IDisposable
 {
     private const string SmallChatTemplateHash = "B7491EC0E9C869DFCE20F2176758099BF248D979DD05530EDE99DEB21698ACEE";
@@ -196,8 +196,8 @@ internal sealed unsafe class HyMtTranslator : IDisposable
         token.ThrowIfCancellationRequested();
         int result;
         fixed (int* pointer = input) result = _native.Decode(_context, _native.BatchGetOne(pointer, input.Length));
-        token.ThrowIfCancellationRequested();
         if (result != 0) throw new MangaTranslationException("Vulkan 本地翻译推理失败。");
+        token.ThrowIfCancellationRequested();
     }
 
     private string Generate(CancellationToken token)

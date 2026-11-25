@@ -191,6 +191,8 @@ internal sealed unsafe partial class MangaOcrOrt : IDisposable
             finally { runtime.Release(Slot.ReleaseSessionOptions, options); }
         }
 
+        internal bool IsGpuVerified => _gpuVerified;
+
         internal T Run<T>(float[] input, int width, int height, MangaOcrTensorReader<T> readResult)
         {
             if (width <= 0 || height <= 0 || width * (long)height * 3 != input.Length)

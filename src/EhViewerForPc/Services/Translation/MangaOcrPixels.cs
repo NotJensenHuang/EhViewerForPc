@@ -260,7 +260,7 @@ internal static partial class MangaOcr
         return new Crop(rotated, width, height);
     }
 
-    private static Crop? LayOutVerticalGlyphs(Crop crop)
+    private static Crop? LayOutVerticalGlyphs(Crop crop, int minimumGlyphs = 2)
     {
         ImagePixels pixels = crop.Pixels;
         Span<int> histogram = stackalloc int[256];
@@ -300,7 +300,7 @@ internal static partial class MangaOcr
             else groups[groupCount - 1].End = y;
             previous = y;
         }
-        if (groupCount < 2 || groupCount > crop.Height * 2.0 / crop.Width) return null;
+        if (groupCount < minimumGlyphs || groupCount > crop.Height * 2.0 / crop.Width) return null;
 
         int cellHeight = crop.Width;
         foreach ((int start, int end) in groups[..groupCount])
@@ -362,7 +362,7 @@ internal static partial class MangaOcr
         return threshold;
     }
 
-    private static Crop? CleanBrightVerticalGlyphs(Crop crop)
+    private static Crop? CleanBrightVerticalGlyphs(Crop crop, int minimumGlyphs = 2)
     {
         int margin = (int)Math.Round(crop.Width * 0.11);
         int width = crop.Width - 2 * margin;
@@ -378,6 +378,6 @@ internal static partial class MangaOcr
                 clean.AsSpan((y * width + x) * 3, 3).Fill(gray > 110 ? (byte)255 : (byte)0);
             }
         }
-        return bright >= width * crop.Height * 0.60 ? LayOutVerticalGlyphs(new Crop(clean, width, crop.Height)) : null;
+        return bright >= width * crop.Height * 0.60 ? LayOutVerticalGlyphs(new Crop(clean, width, crop.Height), minimumGlyphs) : null;
     }
 }

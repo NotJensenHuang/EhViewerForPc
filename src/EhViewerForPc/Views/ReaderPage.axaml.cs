@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -15,6 +16,9 @@ public partial class ReaderPage : DocumentPage
 {
     private readonly ReaderViewModel _viewModel;
     private readonly DispatcherTimer _resizeTimer;
+    private readonly DispatcherTimer _autoTranslationTimer;
+    private readonly Func<ReaderTranslationImage?> _currentTranslationImage;
+    private bool _loaded;
     private int _scrollRequestSequence;
     private int _horizontalScrollSequence;
     private WindowState _stateBeforeFullscreen = WindowState.Normal;
@@ -32,9 +36,16 @@ public partial class ReaderPage : DocumentPage
         _resizeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _resizeTimer.Tick += OnResizeSettled;
 
+        _autoTranslationTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(400) };
+        _autoTranslationTimer.Tick += OnAutoTranslationTick;
+        _currentTranslationImage = GetCurrentTranslationImage;
+        AddHandler(ReaderTranslationImageReady.Event, OnTranslationImageReady);
+        viewModel.PropertyChanged += OnReaderPropertyChanged;
+        viewModel.AutoTranslationRequested += OnAutoTranslationRequested;
         viewModel.ScrollToRequested += OnScrollToRequested;
         viewModel.HorizontalScrollToRequested += OnHorizontalScrollToRequested;
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
 
         SizeChanged += OnWindowSizeChanged;
         AddHandler(KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
@@ -52,19 +63,76 @@ public partial class ReaderPage : DocumentPage
     private void OnMangaTranslationSettings(object? sender, RoutedEventArgs e) =>
         MangaTranslationSettingsRequested?.Invoke(this, EventArgs.Empty);
 
-    internal Task TranslateCurrentPageAsync()
+    internal Task TranslateCurrentPageAsync() =>
+        _viewModel.TranslateCurrentPageAsync(GetCurrentTranslationImage());
+
+    private ReaderTranslationImage? GetCurrentTranslationImage()
     {
-        ReaderTranslationImage? image = SingleView.TranslationImage;
-        if (!_viewModel.IsSingleMode)
+        if (!_loaded || _disposed) return null;
+        if (_viewModel.IsSingleMode) return SingleView.TranslationImage;
+
+        int pageNumber = _viewModel.CurrentPageNumber;
+        ScrollViewer pages = _viewModel.IsContinuousMode ? ContinuousScroll : HorizontalScroll;
+        foreach (Visual visual in pages.GetVisualDescendants())
         {
-            int pageNumber = _viewModel.CurrentPageNumber;
-            ScrollViewer pages = _viewModel.IsContinuousMode ? ContinuousScroll : HorizontalScroll;
-            image = pages.GetVisualDescendants().OfType<AsyncImage>()
-                .FirstOrDefault(control => control.DataContext is ContinuousPageItem item && item.Number == pageNumber)
-                ?.TranslationImage;
+            if (visual is not AsyncImage { DataContext: ContinuousPageItem item } image ||
+                item.Number != pageNumber || image.TranslationImage is not { } source)
+                continue;
+
+            // 虚拟化容器可以在视口之外提前解码，只为正在阅读的可见页翻译。
+            if (image.TranslatePoint(default, pages) is { } origin &&
+                new Rect(origin, image.Bounds.Size).Intersects(new Rect(pages.Viewport)))
+                return source;
         }
 
-        return _viewModel.TranslateCurrentPageAsync(image);
+        return null;
+    }
+
+    private void OnTranslationImageReady(object? sender, RoutedEventArgs e)
+    {
+        if (e.Source == SingleView && _viewModel.IsSingleMode ||
+            e.Source is AsyncImage { DataContext: ContinuousPageItem item } &&
+            item.Number == _viewModel.CurrentPageNumber)
+            ScheduleAutoTranslation();
+    }
+
+    private void OnReaderPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ReaderViewModel.CurrentPageNumber) or nameof(ReaderViewModel.Mode) or
+            nameof(ReaderViewModel.SingleRequest) or nameof(ReaderViewModel.CanTranslateCurrentPage))
+            ScheduleAutoTranslation();
+    }
+
+    private void OnAutoTranslationRequested(object? sender, EventArgs e) => ScheduleAutoTranslation();
+
+    private void ScheduleAutoTranslation()
+    {
+        _autoTranslationTimer.Stop();
+        if (_loaded && !_disposed && _viewModel.AutoTranslateReaderPages)
+            _autoTranslationTimer.Start();
+    }
+
+    private async void OnAutoTranslationTick(object? sender, EventArgs e)
+    {
+        _autoTranslationTimer.Stop();
+        try
+        {
+            if (GetCurrentTranslationImage() is { } image)
+                await _viewModel.TranslatePageAutomaticallyAsync(image, _currentTranslationImage);
+        }
+        catch (Exception ex)
+        {
+            _viewModel.Services.Log.Error("阅读器自动翻译失败", ex);
+        }
+    }
+
+    private void OnUnloaded(object? sender, RoutedEventArgs e)
+    {
+        _loaded = false;
+        _autoTranslationTimer.Stop();
+        if (_disposed) return;
+        _viewModel.CancelAutomaticTranslation();
+        _viewModel.Services.MangaTranslation.RequestWorkerRelease();
     }
 
     private void OnExitImmersive(object? sender, RoutedEventArgs e) => SetImmersive(false);
@@ -73,7 +141,7 @@ public partial class ReaderPage : DocumentPage
 
     private void SetImmersive(bool value)
     {
-        if (value) _viewModel.CloseTranslation();
+        if (value && _viewModel.IsTranslationOpen) _viewModel.CloseTranslationPanel();
         IsImmersive = value;
         ImmersiveExit.IsVisible = value;
         ImmersiveChanged?.Invoke(this, value);
@@ -85,6 +153,8 @@ public partial class ReaderPage : DocumentPage
 
     private async void OnLoaded(object? sender, RoutedEventArgs e)
     {
+        _loaded = true;
+        ScheduleAutoTranslation();
         try
         {
             UpdateContinuousWidth();
@@ -114,7 +184,10 @@ public partial class ReaderPage : DocumentPage
         _disposed = true;
         _viewModel.ScrollToRequested -= OnScrollToRequested;
         _viewModel.HorizontalScrollToRequested -= OnHorizontalScrollToRequested;
+        _viewModel.PropertyChanged -= OnReaderPropertyChanged;
+        _viewModel.AutoTranslationRequested -= OnAutoTranslationRequested;
         _resizeTimer.Stop();
+        _autoTranslationTimer.Stop();
         _viewModel.Dispose();
         AnimationFramePool.Clear();
     }
@@ -204,6 +277,8 @@ public partial class ReaderPage : DocumentPage
         {
             _viewModel.UpdateScrollOffset(ContinuousScroll.Offset.Y, ContinuousScroll.Viewport.Height);
         }
+
+        ScheduleAutoTranslation();
     }
 
     private void OnHorizontalWheel(object? sender, PointerWheelEventArgs e)
@@ -278,6 +353,7 @@ public partial class ReaderPage : DocumentPage
 
     private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Space && e.Source == AutoTranslationToggle) return;
         if (e.KeyModifiers.HasFlag(KeyModifiers.Alt) && e.Key is Key.Left or Key.Right) return;
         switch (e.Key)
         {

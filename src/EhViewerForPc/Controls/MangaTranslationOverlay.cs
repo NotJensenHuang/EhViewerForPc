@@ -1,9 +1,19 @@
 using System.Globalization;
 using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
 using Avalonia.Media;
 using EhViewerForPc.Services;
 
 namespace EhViewerForPc.Controls;
+
+internal static class ReaderTranslationImageReady
+{
+    public static readonly RoutedEvent<RoutedEventArgs> Event =
+        RoutedEvent.Register<Control, RoutedEventArgs>("ReaderTranslationImageReady", RoutingStrategies.Bubble);
+
+    public static void Raise(Control source) => source.RaiseEvent(new RoutedEventArgs(Event));
+}
 
 public readonly record struct MangaTranslationOverlayRegion(Rect Bounds, string Translation);
 

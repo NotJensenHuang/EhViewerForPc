@@ -9,7 +9,11 @@ namespace EhViewerForPc.ViewModels;
 
 public sealed partial class ReaderViewModel
 {
+    private readonly Func<ReaderTranslationImage, CancellationToken, Task<MangaTranslationResponse>> _translatePage;
     private CancellationTokenSource? _translationJob;
+    private ReaderTranslationImage? _attemptedTranslationImage;
+    private bool _automaticTranslationJob;
+    private bool _automaticTranslationStatus;
     private bool _isTranslationOpen;
     private bool _isTranslationRunning;
     private bool _showTranslationSettings;
@@ -17,6 +21,17 @@ public sealed partial class ReaderViewModel
     private MangaTranslationOverlay? _translationOverlay;
     private string _translationStatus = "";
     private string _translationText = "";
+
+    internal event EventHandler? AutoTranslationRequested;
+
+    public bool AutoTranslateReaderPages
+    {
+        get => _services.Settings.AutoTranslateReaderPages;
+        set => _services.SaveReaderAutoTranslation(value);
+    }
+
+    public string AutomaticTranslationStatus => _automaticTranslationStatus && !HasTranslationText ? TranslationStatus : "";
+    public bool ShowAutomaticTranslationSettings => _automaticTranslationStatus && ShowTranslationSettings;
 
     public bool CanTranslateCurrentPage => !_disposed && HasPages && !IsCurrentPageMissing && !IsTranslationRunning &&
         (!_isRetrying || _retryPageNumber != CurrentPageNumber);
@@ -39,7 +54,10 @@ public sealed partial class ReaderViewModel
     public string TranslationStatus
     {
         get => _translationStatus;
-        private set => SetProperty(ref _translationStatus, value);
+        private set
+        {
+            if (SetProperty(ref _translationStatus, value)) OnPropertyChanged(nameof(AutomaticTranslationStatus));
+        }
     }
 
     public string TranslationText
@@ -47,7 +65,9 @@ public sealed partial class ReaderViewModel
         get => _translationText;
         private set
         {
-            if (SetProperty(ref _translationText, value)) OnPropertyChanged(nameof(HasTranslationText));
+            if (!SetProperty(ref _translationText, value)) return;
+            OnPropertyChanged(nameof(HasTranslationText));
+            OnPropertyChanged(nameof(AutomaticTranslationStatus));
         }
     }
 
@@ -59,16 +79,40 @@ public sealed partial class ReaderViewModel
     public bool ShowTranslationSettings
     {
         get => _showTranslationSettings;
-        private set => SetProperty(ref _showTranslationSettings, value);
+        private set
+        {
+            if (SetProperty(ref _showTranslationSettings, value)) OnPropertyChanged(nameof(ShowAutomaticTranslationSettings));
+        }
     }
 
-    internal async Task TranslateCurrentPageAsync(ReaderTranslationImage? image)
+    internal Task TranslateCurrentPageAsync(ReaderTranslationImage? image)
+    {
+        if (image is { } current && _attemptedTranslationImage == current && HasTranslationText)
+        {
+            OpenTranslationText();
+            return Task.CompletedTask;
+        }
+
+        return TranslatePageAsync(image, currentImage: null);
+    }
+
+    internal Task TranslatePageAutomaticallyAsync(ReaderTranslationImage image, Func<ReaderTranslationImage?> currentImage)
+    {
+        if (!AutoTranslateReaderPages || image.IsAnimated || _attemptedTranslationImage == image)
+            return Task.CompletedTask;
+        if (_automaticTranslationJob) CancelAutomaticTranslation();
+        return TranslatePageAsync(image, currentImage);
+    }
+
+    private async Task TranslatePageAsync(ReaderTranslationImage? image, Func<ReaderTranslationImage?>? currentImage)
     {
         if (!CanTranslateCurrentPage) return;
 
         ResetTranslationOverlay();
         ShowTranslationSettings = false;
-        IsTranslationOpen = true;
+        bool automatic = currentImage is not null;
+        SetAutomaticTranslationStatus(automatic);
+        IsTranslationOpen = !automatic;
         TranslationText = "";
         if (image is null)
         {
@@ -83,16 +127,25 @@ public sealed partial class ReaderViewModel
         }
 
         using var job = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _attemptedTranslationImage = image;
+        _automaticTranslationJob = automatic;
         _translationJob = job;
         IsTranslationRunning = true;
         TranslationStatus = "正在本机识别并翻译…";
         try
         {
-            MangaTranslationResponse result = await _services.MangaTranslation.TranslateAsync(image.Value, job.Token);
+            MangaTranslationResponse result = await _translatePage(image.Value, job.Token);
             if (_translationJob != job) return;
             if (job.IsCancellationRequested)
             {
                 TranslationStatus = "已取消翻译。";
+                return;
+            }
+
+            if (currentImage is not null && currentImage() != image)
+            {
+                _attemptedTranslationImage = null;
+                TranslationStatus = "";
                 return;
             }
 
@@ -166,7 +219,9 @@ public sealed partial class ReaderViewModel
             if (_translationJob == job)
             {
                 _translationJob = null;
+                _automaticTranslationJob = false;
                 IsTranslationRunning = false;
+                AutoTranslationRequested?.Invoke(this, EventArgs.Empty);
             }
         }
     }
@@ -197,28 +252,70 @@ public sealed partial class ReaderViewModel
     internal void CloseTranslationPanel()
     {
         if (HasTranslationText) IsTranslationOpen = false;
-        else CloseTranslation();
+        else
+        {
+            var attemptedImage = _attemptedTranslationImage;
+            CloseTranslation();
+            _attemptedTranslationImage = attemptedImage;
+        }
     }
 
     private void OnTranslationPreferencesChanged(object? sender, EventArgs e)
     {
-        if (Dispatcher.UIThread.CheckAccess())
+        if (!Dispatcher.UIThread.CheckAccess())
         {
-            if (!_disposed) CloseTranslation();
+            Dispatcher.UIThread.Post(ResetTranslationPreferences);
             return;
         }
 
-        Dispatcher.UIThread.Post(() =>
+        ResetTranslationPreferences();
+    }
+
+    private void ResetTranslationPreferences()
+    {
+        if (_disposed) return;
+        CloseTranslation();
+        AutoTranslationRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnReaderAutoTranslationChanged(object? sender, EventArgs e)
+    {
+        OnPropertyChanged(nameof(AutoTranslateReaderPages));
+        if (!AutoTranslateReaderPages)
         {
-            if (!_disposed) CloseTranslation();
-        });
+            CancelAutomaticTranslation();
+            SetAutomaticTranslationStatus(false);
+        }
+        else if (!HasTranslationText)
+        {
+            _attemptedTranslationImage = null;
+        }
+
+        AutoTranslationRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SetAutomaticTranslationStatus(bool value)
+    {
+        if (_automaticTranslationStatus == value) return;
+        _automaticTranslationStatus = value;
+        OnPropertyChanged(nameof(AutomaticTranslationStatus));
+        OnPropertyChanged(nameof(ShowAutomaticTranslationSettings));
+    }
+
+    internal void CancelAutomaticTranslation()
+    {
+        if (_automaticTranslationJob) CloseTranslation();
     }
 
     internal void CloseTranslation()
     {
-        _translationJob?.Cancel();
+        var job = _translationJob;
         _translationJob = null;
+        _automaticTranslationJob = false;
+        _attemptedTranslationImage = null;
+        job?.Cancel();
         IsTranslationRunning = false;
+        SetAutomaticTranslationStatus(false);
         IsTranslationOpen = false;
         TranslationStatus = "";
         TranslationText = "";

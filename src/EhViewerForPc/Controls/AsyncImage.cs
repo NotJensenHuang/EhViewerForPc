@@ -253,6 +253,7 @@ public sealed class AsyncImage : Control
                     _bitmap = image.Bitmap;
                     _failed = false;
                     StartAnimation(image, generation, token);
+                    if (_translationImage is not null) ReaderTranslationImageReady.Raise(this);
                 }
 
                 AnimationFramePool.Release(_retiredBitmap);

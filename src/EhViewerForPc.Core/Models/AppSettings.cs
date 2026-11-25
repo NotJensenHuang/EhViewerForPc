@@ -88,6 +88,7 @@ public sealed class AppSettings
 
     /// <summary>Gets or sets optional on-device image retrieval preferences.</summary>
     public LocalImageSearchSettings ImageSearch { get; set; } = new();
+    public bool AutoTranslateReaderPages { get; set; }
     public string MangaTranslationModelDirectory { get; set; } = string.Empty;
     public string MangaTranslationModelId { get; set; } = string.Empty;
     public string MangaTranslationTargetLanguage { get; set; } = string.Empty;

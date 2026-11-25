@@ -259,6 +259,7 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
             if (!_disposed)
             {
                 IsReady = ready;
+                if (ready) _services.NotifyTranslationResourcesReady();
                 SetRetryLabel(!IsReady);
                 OperationStatus = IsReady ? "本地资源已就绪，可以在阅读器翻译本页。" : "资源仍未准备完整，请重新尝试。";
             }
