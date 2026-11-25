@@ -98,7 +98,7 @@ public sealed class ImageDecoder : IDisposable
         bool captureReaderSource = false) =>
         DecodeFrameAsync(path, 0, targetWidth, targetHeight, maxMegapixels, maxDimension, cancellationToken, captureReaderSource);
 
-    internal DecodedImage DecodeTranslationPage(string path, FileStream source, CancellationToken token) =>
+    internal DecodedImage DecodeReaderImage(string path, FileStream source, CancellationToken token) =>
         DecodeStream(source, path, null, null, ImageBudget.DefaultMaxMegapixels, ImageBudget.DefaultMaxDimension,
             token, frameIndex: 0, captureReaderSource: false);
 

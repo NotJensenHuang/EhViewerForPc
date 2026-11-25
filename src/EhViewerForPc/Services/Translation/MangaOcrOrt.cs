@@ -58,6 +58,7 @@ internal sealed unsafe partial class MangaOcrOrt : IDisposable
         ReleaseTensorTypeAndShapeInfo = 99,
         ReleaseSessionOptions = 100,
         SessionEndProfiling = 110,
+        AddFreeDimensionOverrideByName = 124,
     }
 
     internal MangaOcrOrt(string runtimeDirectory, bool useDirectMl = true)
@@ -97,11 +98,11 @@ internal sealed unsafe partial class MangaOcrOrt : IDisposable
         }
     }
 
-    internal Session Open(string modelPath, string profilePrefix)
+    internal Session Open(string modelPath, string profilePrefix, int recognitionWidth = 0)
     {
         if (!File.Exists(modelPath) || !MangaTranslationBackendService.IsLocalFile(modelPath))
             throw new MangaTranslationException("文字识别模型缺失或路径不可用。", requiresSetup: true);
-        return new Session(this, modelPath, profilePrefix);
+        return new Session(this, modelPath, profilePrefix, recognitionWidth);
     }
 
     private nint At(Slot slot) => _api[(int)slot];
@@ -155,7 +156,7 @@ internal sealed unsafe partial class MangaOcrOrt : IDisposable
         private nint _outputName;
         private bool _gpuVerified;
 
-        internal Session(MangaOcrOrt runtime, string modelPath, string profilePrefix)
+        internal Session(MangaOcrOrt runtime, string modelPath, string profilePrefix, int recognitionWidth)
         {
             _runtime = runtime;
             nint options = 0;
@@ -171,6 +172,12 @@ internal sealed unsafe partial class MangaOcrOrt : IDisposable
                     var appendDirectMl = (delegate* unmanaged<nint, int, nint>)NativeLibrary.GetExport(
                         runtime._library, "OrtSessionOptionsAppendExecutionProvider_DML");
                     runtime.Check(appendDirectMl(options, 0));
+                    if (recognitionWidth > 0)
+                    {
+                        // rec.onnx 的批次和宽度为命名自由维度，高度 48 已固定在模型内。
+                        SetDimension(options, "DynamicDimension.0\0"u8, 1);
+                        SetDimension(options, "DynamicDimension.1\0"u8, recognitionWidth);
+                    }
                     fixed (char* prefix = profilePrefix)
                         runtime.Check(((delegate* unmanaged<nint, char*, nint>)runtime.At(Slot.EnableProfiling))(options, prefix));
                 }
@@ -287,6 +294,13 @@ internal sealed unsafe partial class MangaOcrOrt : IDisposable
 
         private void SetOption(Slot slot, nint options, int value) =>
             _runtime.Check(((delegate* unmanaged<nint, int, nint>)_runtime.At(slot))(options, value));
+
+        private void SetDimension(nint options, ReadOnlySpan<byte> name, long size)
+        {
+            fixed (byte* nativeName = name)
+                _runtime.Check(((delegate* unmanaged<nint, byte*, long, nint>)_runtime.At(Slot.AddFreeDimensionOverrideByName))(
+                    options, nativeName, size));
+        }
 
         private void FreeAllocated(nint pointer)
         {

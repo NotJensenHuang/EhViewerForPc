@@ -27,7 +27,7 @@ internal static partial class MangaOcr
     {
         private readonly MangaOcrOrt _ort = new(runtimeDirectory);
         private MangaOcrOrt.Session? _detector;
-        private MangaOcrOrt.Session? _recognizer;
+        private RecognitionSessions? _recognizer;
         private string[]? _dictionary;
 
         internal MangaOcrResult Read(string imagePath, CancellationToken token)
@@ -50,16 +50,16 @@ internal static partial class MangaOcr
             if (boxes.Count == 0) return new MangaOcrResult(width, height, [], MangaOcrOrt.Provider);
 
             string[] dictionary = _dictionary ??= LoadDictionary(Path.Combine(modelDirectory, "rec-dict.txt"));
-            MangaOcrOrt.Session recognizer = _recognizer ??= _ort.Open(
-                Path.Combine(modelDirectory, "rec.onnx"), Path.Combine(workingDirectory, "rec-profile"));
+            RecognitionSessions recognizer = _recognizer ??= new(_ort, Path.Combine(modelDirectory, "rec.onnx"));
+            Func<Crop, Recognition> recognize = crop => RecognizeCrop(crop, recognizer, workingDirectory, dictionary, token);
             var regions = new List<MangaOcrRegion>(boxes.Count);
             foreach (Quad box in boxes)
             {
                 token.ThrowIfCancellationRequested();
                 Crop crop = CropRegion(pixels, box, token);
-                Recognition reading = RecognizeLine(crop, recognizer, dictionary, token);
+                Recognition reading = RecognizeLine(crop, recognize);
                 if (reading.Confidence < MinimumRecognitionConfidence)
-                    reading = RecoverVerticalColumns(crop, recognizer, dictionary, token);
+                    reading = RecoverVerticalColumns(crop, recognize, token);
                 if (reading.Confidence < MinimumRecognitionConfidence || reading.Text.Length == 0) continue;
                 Bounds bounds = box.GetBounds();
                 int left = Math.Max(0, bounds.X);
@@ -70,21 +70,15 @@ internal static partial class MangaOcr
                     regions.Add(new MangaOcrRegion(left, top, right - left, bottom - top, reading.Text));
             }
             token.ThrowIfCancellationRequested();
-            return new MangaOcrResult(width, height, ArrangeDialogue(regions, bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, token), MangaOcrOrt.Provider);
+            var dialogue = ArrangeDialogue(regions, bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, token);
+            recognizer.MarkPageComplete();
+            return new MangaOcrResult(width, height, dialogue, MangaOcrOrt.Provider);
         }
 
         internal void DiscardUnverifiedSessions()
         {
             // 未结束首次 DirectML 核验的会话仍引用当前页的临时记录路径。
-            try
-            {
-                if (_recognizer is { IsGpuVerified: false })
-                {
-                    MangaOcrOrt.Session recognizer = _recognizer;
-                    _recognizer = null;
-                    recognizer.Dispose();
-                }
-            }
+            try { _recognizer?.DiscardUnverifiedSessions(); }
             finally
             {
                 if (_detector is { IsGpuVerified: false })
@@ -104,6 +98,79 @@ internal static partial class MangaOcr
                 try { _detector?.Dispose(); }
                 finally { _ort.Dispose(); }
             }
+        }
+    }
+
+    private sealed class RecognitionSessions(MangaOcrOrt runtime, string modelPath) : IDisposable
+    {
+        private const int MaxFixedSessions = 8;
+        private readonly Dictionary<int, MangaOcrOrt.Session> _fixed = new(MaxFixedSessions);
+        private readonly HashSet<int> _seenWidths = [];
+        private MangaOcrOrt.Session? _dynamic;
+        private bool _fixedDisabled;
+        private bool _hasReadPage;
+
+        internal void MarkPageComplete() => _hasReadPage = true;
+
+        internal Recognition Run(float[] data, int width, string directory, MangaOcrTensorReader<Recognition> read,
+            CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!_fixedDisabled)
+            {
+                try
+                {
+                    // 首次识别沿用动态路径。从下一页开始，仅为重复宽度编译专用会话。
+                    if (!_fixed.TryGetValue(width, out var session) && _fixed.Count < MaxFixedSessions &&
+                        !_seenWidths.Add(width) && _hasReadPage)
+                    {
+                        session = runtime.Open(modelPath, Path.Combine(directory, $"rec-profile-{width}"), width);
+                        _fixed.Add(width, session);
+                    }
+                    if (session is not null)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        return session.Run(data, width, RecognitionHeight, read);
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    // 设备可能无法编译固定形状或分配额外显存，释放专用会话后沿用动态 GPU 路径。
+                    _fixedDisabled = true;
+                    DisposeFixed();
+                }
+            }
+
+            token.ThrowIfCancellationRequested();
+            _dynamic ??= runtime.Open(modelPath, Path.Combine(directory, "rec-profile"));
+            return _dynamic.Run(data, width, RecognitionHeight, read);
+        }
+
+        internal void DiscardUnverifiedSessions()
+        {
+            foreach ((int width, MangaOcrOrt.Session session) in _fixed)
+            {
+                if (session.IsGpuVerified) continue;
+                _fixed.Remove(width);
+                session.Dispose();
+            }
+            if (_dynamic is { IsGpuVerified: false } dynamic)
+            {
+                _dynamic = null;
+                dynamic.Dispose();
+            }
+        }
+
+        private void DisposeFixed()
+        {
+            foreach (MangaOcrOrt.Session session in _fixed.Values) session.Dispose();
+            _fixed.Clear();
+        }
+
+        public void Dispose()
+        {
+            try { DisposeFixed(); }
+            finally { _dynamic?.Dispose(); }
         }
     }
 
@@ -153,18 +220,17 @@ internal static partial class MangaOcr
         return dictionary;
     }
 
-    private static Recognition RecognizeLine(Crop crop, MangaOcrOrt.Session recognizer, string[] dictionary,
-        CancellationToken token, bool cleaned = false)
+    private static Recognition RecognizeLine(Crop crop, Func<Crop, Recognition> recognize, bool cleaned = false)
     {
-        if (crop.Height <= crop.Width * 1.5) return RecognizeCrop(crop, recognizer, dictionary, token);
-        Recognition best = RecognizeCrop(RotateVertical(crop, clockwise: false), recognizer, dictionary, token);
+        if (crop.Height <= crop.Width * 1.5) return recognize(crop);
+        Recognition best = recognize(RotateVertical(crop, clockwise: false));
         bool strong = best.Confidence >= 0.85f && ContainsKana(best.Text);
         if (strong && !cleaned)
         {
             // 平均置信度只覆盖已解码字符。字形分段支持当前长度时，再检查有无漏字。
             if (CleanBrightVerticalGlyphs(crop, Math.Max(2, best.Text.Length)) is { } upright)
             {
-                Recognition reading = RecognizeCrop(upright, recognizer, dictionary, token);
+                Recognition reading = recognize(upright);
                 if (RestoresOmittedGlyphs(best, reading))
                     return reading;
             }
@@ -172,42 +238,42 @@ internal static partial class MangaOcr
         }
         if (!strong)
         {
-            Recognition reversed = RecognizeCrop(RotateVertical(crop, clockwise: true), recognizer, dictionary, token);
+            Recognition reversed = recognize(RotateVertical(crop, clockwise: true));
             if (reversed.Score > best.Score) best = reversed;
         }
         if (LayOutVerticalGlyphs(crop) is { } horizontal)
         {
-            Recognition reading = RecognizeCrop(horizontal, recognizer, dictionary, token);
+            Recognition reading = recognize(horizontal);
             if (cleaned ? ContainsKana(reading.Text) && PreferCleanedVertical(best, reading) : reading.Score > best.Score)
                 best = reading;
         }
         if (!cleaned && CleanBrightVerticalGlyphs(crop) is { } cleanedGlyphs)
         {
-            Recognition reading = RecognizeCrop(cleanedGlyphs, recognizer, dictionary, token);
+            Recognition reading = recognize(cleanedGlyphs);
             if (PreferCleanedVertical(best, reading) || RestoresOmittedGlyphs(best, reading)) best = reading;
         }
         return best;
     }
 
-    private static Recognition RecoverVerticalColumns(Crop crop, MangaOcrOrt.Session recognizer,
-        string[] dictionary, CancellationToken token)
+    private static Recognition RecoverVerticalColumns(Crop crop, Func<Crop, Recognition> recognize, CancellationToken token)
     {
         if (SplitVerticalColumns(crop, token) is not { } columns) return new Recognition("", 0);
         // 一次检测把相邻竖列框到一起时，逐列识别，仍以原检测框提交一次翻译。
-        Recognition right = RecognizeLine(columns.Right, recognizer, dictionary, token, cleaned: true);
+        Recognition right = RecognizeLine(columns.Right, recognize, cleaned: true);
         if (right.Confidence < 0.65f || !ContainsKana(right.Text)) return new Recognition("", 0);
-        Recognition left = RecognizeLine(columns.Left, recognizer, dictionary, token, cleaned: true);
+        Recognition left = RecognizeLine(columns.Left, recognize, cleaned: true);
         if (left.Confidence < 0.65f || !ContainsKana(left.Text)) return new Recognition("", 0);
         return new Recognition(string.Concat(right.Text, left.Text), Math.Min(right.Confidence, left.Confidence));
     }
 
-    private static Recognition RecognizeCrop(Crop crop, MangaOcrOrt.Session recognizer, string[] dictionary, CancellationToken token)
+    private static Recognition RecognizeCrop(Crop crop, RecognitionSessions recognizer, string directory, string[] dictionary,
+        CancellationToken token)
     {
         int contentWidth = Math.Clamp((int)Math.Round((double)RecognitionHeight * crop.Width / crop.Height), 1, MaxDetectionDimension);
         int inputWidth = Math.Max(64, (contentWidth + 31) / 32 * 32);
         float[] data = PrepareRecognition(crop, contentWidth, inputWidth, token);
-        return recognizer.Run(data, inputWidth, RecognitionHeight,
-            (probability, shape) => DecodeCtc(probability, shape, dictionary, token));
+        return recognizer.Run(data, inputWidth, directory,
+            (probability, shape) => DecodeCtc(probability, shape, dictionary, token), token);
     }
 
     private static Recognition DecodeCtc(ReadOnlySpan<float> probability, ReadOnlySpan<long> shape, string[] dictionary, CancellationToken token)

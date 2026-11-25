@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-11-25 本地库语言筛选、阅读页图片菜单与 OCR 加速
+
+- `MainViewModel.cs`、`WorkCatalog.cs` 始终提供「日文」等常用语言。文件夹无语言标记时使用已缓存的作品语言，元数据到达后刷新当前筛选结果。
+- `ReaderPage.axaml`、`ReaderPage.ImageActions.cs` 在三种阅读模式的已显示图片上提供「复制图片」「另存为…」「打开图片位置」，在线页使用已加载的缓存文件。
+- `MangaOcr.cs`、`MangaOcrOrt.cs` 在处理完首张文字页后，为重复出现的识别宽度复用有限数量的 DirectML 固定形状会话。首图和其他宽度使用动态 GPU 会话。见[实测记录](漫画翻译DirectML会话复用验证-2026-11-25.md)。
+
 ## 2026-11-25 阅读器自动翻译与竖排漏字修复
 
 - `ReaderPage.axaml` 与 `ReaderViewModel.Translation.cs` 增加默认关闭的「自动翻译」，仅在当前静态页已显示且短暂停留后启动。自动结果直接绘制到图上，翻页取消在途任务。

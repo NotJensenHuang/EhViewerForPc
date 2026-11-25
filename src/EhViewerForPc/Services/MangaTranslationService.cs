@@ -23,6 +23,15 @@ internal readonly record struct ReaderTranslationImage(string Path, long Length,
 
     public bool Matches(FileStream stream) => TryCapture(Path, stream) is { } current &&
         Length == current.Length && ModifiedUtc == current.ModifiedUtc;
+
+    public FileStream? TryOpenCurrentSource()
+    {
+        // 用同一个句柄校验和读取，允许下载原子替换目录项，同时阻止原地写入此输入。
+        FileStream source = ImageDecoder.OpenRead(Path, FileShare.Read | FileShare.Delete);
+        if (Matches(source)) return source;
+        source.Dispose();
+        return null;
+    }
 }
 
 internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decoder, LogService log,
@@ -196,17 +205,11 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
     private DecodedImage DecodeSnapshot(ReaderTranslationImage image, CancellationToken token)
     {
         using FileStream source = OpenCurrentSource(image);
-        return decoder.DecodeTranslationPage(image.Path, source, token);
+        return decoder.DecodeReaderImage(image.Path, source, token);
     }
 
-    private static FileStream OpenCurrentSource(ReaderTranslationImage image)
-    {
-        // 校验和解码共用文件句柄，允许下载服务原子更换路径，同时阻止原地写入这份输入。
-        FileStream source = ImageDecoder.OpenRead(image.Path, FileShare.Read | FileShare.Delete);
-        if (image.Matches(source)) return source;
-        source.Dispose();
+    private static FileStream OpenCurrentSource(ReaderTranslationImage image) => image.TryOpenCurrentSource() ??
         throw new MangaTranslationException("本页图片已变更，请重新打开这一页。");
-    }
 
     internal static MangaTranslationException WorkerError(int code) => new(code switch
     {

@@ -23,6 +23,8 @@
                            RightToLeft="False"
                            MaxMegapixels="{Binding MaxMegapixels}"
                            MaxDimension="{Binding MaxDimension}"
+                           AutomationProperties.AutomationId="Reader.PageImage"
+                           ContextRequested="OnImageContextRequested"
                            PageTurnRequested="OnPageTurnRequested" />
       <StackPanel IsVisible="{Binding ShowSingleMissingPage}"
                   HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12" MaxWidth="420">
@@ -61,6 +63,7 @@
                       HorizontalAlignment="Center" Background="{DynamicResource AppBgAltBrush}">
                 <Grid>
                   <controls:AsyncImage Source="{Binding Request}" TranslationOverlay="{Binding TranslationOverlay}"
+                                       AutomationProperties.AutomationId="Reader.PageImage" ContextRequested="OnImageContextRequested"
                                        Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
                   <StackPanel IsVisible="{Binding IsMissing}" HorizontalAlignment="Center" VerticalAlignment="Center"
                               Spacing="10" MaxWidth="320">
@@ -101,6 +104,7 @@
                       Background="{DynamicResource AppBgAltBrush}">
                 <Grid>
                   <controls:AsyncImage Source="{Binding Request}" TranslationOverlay="{Binding TranslationOverlay}"
+                                       AutomationProperties.AutomationId="Reader.PageImage" ContextRequested="OnImageContextRequested"
                                        Stretch="Uniform" Animate="True" IsVisible="{Binding !IsMissing}" />
                   <StackPanel IsVisible="{Binding IsMissing}" HorizontalAlignment="Center" VerticalAlignment="Center"
                               Spacing="10" MaxWidth="320">

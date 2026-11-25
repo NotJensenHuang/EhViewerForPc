@@ -63,6 +63,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _services.LocalCopyDeleted += OnLocalCopyDeleted;
         _services.LocalCopyChecked += OnLocalCopyChecked;
         _services.LocalReaderPagesValidated += OnLocalReaderPagesValidated;
+        _services.Works.LanguageChanged += OnWorkLanguageChanged;
         _sortOptions =
         [
             new SortOption(LibrarySort.RecentlyRead, "最近阅读"),
@@ -85,6 +86,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _selectedFilter = _filterOptions.First(o => o.Value == services.Settings.Filter);
         UpdateFilterActiveStates();
         _selectedLanguage = new LanguageOption(null, "全部语言");
+        RebuildLanguageOptions();
 
         _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _searchTimer.Tick += (_, _) =>
@@ -254,7 +256,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         get => _selectedLanguage;
         set
         {
-            if (!SetProperty(ref _selectedLanguage, value) || value is null) return;
+            if (value is null || !SetProperty(ref _selectedLanguage, value)) return;
             ApplyFilter();
             RequestListReset();
         }
@@ -703,8 +705,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         string? previous = _selectedLanguage.Value;
         var options = new List<LanguageOption> { new(null, "全部语言") };
-        var languages = _all
-            .SelectMany(i => i.Info.Languages)
+        var languages = GalleryTags.KnownLanguages
+            .Concat(_all.SelectMany(i => i.Info.Languages))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(l => l, StringComparer.OrdinalIgnoreCase);
         foreach (string language in languages)
@@ -712,12 +714,21 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             options.Add(new LanguageOption(language, GalleryTags.GetLanguageDisplayName(language)));
         }
 
+        if (LanguageOptions.SequenceEqual(options)) return;
+
         LanguageOptions.Clear();
         foreach (LanguageOption option in options) LanguageOptions.Add(option);
 
-        _selectedLanguage = options.FirstOrDefault(o => o.Value == previous) ?? options[0];
+        _selectedLanguage = options.FirstOrDefault(o => StringComparer.OrdinalIgnoreCase.Equals(o.Value, previous)) ?? options[0];
         OnPropertyChanged(nameof(SelectedLanguage));
     }
+
+    private void OnWorkLanguageChanged(string workId) => Dispatcher.UIThread.Post(() =>
+    {
+        if (!_disposed && _selectedLanguage.Value is not null &&
+            long.TryParse(workId, out long gid) && _byGid.ContainsKey(gid))
+            ApplyFilter(updateInPlace: true);
+    });
 
     public void ApplyFilter()
         => ApplyFilter(updateInPlace: false);
@@ -750,7 +761,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
         if (_selectedLanguage.Value is { Length: > 0 } language)
         {
-            query = query.Where(i => i.Info.Languages.Contains(language, StringComparer.OrdinalIgnoreCase));
+            string label = _selectedLanguage.Label;
+            query = query.Where(i => i.Info.Languages.Length > 0
+                ? i.Info.Languages.Contains(language, StringComparer.OrdinalIgnoreCase)
+                : _services.Works.GetLanguage(i.WorkId) is { } known &&
+                  (known.Equals(language, StringComparison.OrdinalIgnoreCase) || known == label ||
+                   (language == "Japanese" && known is "日本語" or "日语")));
         }
 
         string search = _searchText.Trim();
@@ -1120,6 +1136,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         _services.LocalCopyChecked -= OnLocalCopyChecked;
         _services.LocalReaderPagesValidated -= OnLocalReaderPagesValidated;
+        _services.Works.LanguageChanged -= OnWorkLanguageChanged;
         _services.LocalDeletionPreparing -= PrepareLocalDeletionAsync;
         _services.LocalCopyDeleted -= OnLocalCopyDeleted;
         Deletion.Dispose();

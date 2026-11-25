@@ -9,6 +9,8 @@ public sealed class WorkCatalog
     private readonly DeferredSaveQueue _writes;
     private readonly Dictionary<string, WorkRecord> _works;
 
+    public event Action<string>? LanguageChanged;
+
     public WorkCatalog(AppPaths paths, DeferredSaveQueue writes)
     {
         _path = Path.Combine(paths.BaseDirectory, "works.json");
@@ -20,6 +22,11 @@ public sealed class WorkCatalog
     public WorkRecord? Get(string id)
     {
         lock (_gate) return _works.GetValueOrDefault(id)?.Clone();
+    }
+
+    public string? GetLanguage(string id)
+    {
+        lock (_gate) return _works.GetValueOrDefault(id)?.Metadata?.Language;
     }
 
     public void MoveIdentity(string previous, string current)
@@ -36,6 +43,7 @@ public sealed class WorkCatalog
 
     public void Upsert(WorkRecord work)
     {
+        bool languageChanged;
         lock (_gate)
         {
             if (_works.TryGetValue(work.WorkId, out var previous))
@@ -44,9 +52,12 @@ public sealed class WorkCatalog
                 if (string.IsNullOrEmpty(work.ThumbnailUrl)) work.ThumbnailUrl = previous.ThumbnailUrl;
                 work.Metadata ??= previous.Metadata?.Clone();
             }
+            languageChanged = !string.Equals(previous?.Metadata?.Language ?? string.Empty,
+                work.Metadata?.Language ?? string.Empty, StringComparison.OrdinalIgnoreCase);
             _works[work.WorkId] = work.Clone();
         }
         _writes.Schedule("works", Save);
+        if (languageChanged) LanguageChanged?.Invoke(work.WorkId);
     }
 
     private void Save()

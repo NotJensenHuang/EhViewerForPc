@@ -18,6 +18,35 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 public sealed class ReaderRetryIntegrationTests
 {
     [AvaloniaFact]
+    public async Task LibraryJapaneseFilterUsesKnownMetadataForUntaggedCopies()
+    {
+        using var fixture = new Fixture();
+        var services = fixture.Services;
+        string root = services.Settings.Sources.Single().RootPath;
+        foreach (string name in new[] { "43-[Japanese] tagged", "44-metadata", "45-[Chinese] translated", "46-unknown" })
+        {
+            string folder = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
+            string gid = name[..2];
+            File.WriteAllText(Path.Combine(folder, ".ehviewer"), $"VERSION2\n0\n{gid}\n0123456789\n0\n0\n0\n1\n");
+            File.WriteAllBytes(Path.Combine(folder, "00000001.png"), fixture.Handler.Image);
+        }
+
+        using var library = new MainViewModel(services);
+        var japanese = Assert.Single(library.LanguageOptions, option => option.Value == "Japanese");
+        Assert.Equal("日文", japanese.Label);
+        library.SelectedLanguage = japanese;
+        await library.RescanAllAsync();
+        Assert.Equal(43, Assert.Single(library.Galleries).Gid);
+
+        services.Works.Upsert(WorkRecord.FromDetails(new() { Gid = 44, Language = "Japanese" }));
+        services.Works.Upsert(WorkRecord.FromDetails(new() { Gid = 45, Language = "Japanese" }));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(japanese, library.SelectedLanguage);
+        Assert.Equal(new long?[] { 43, 44 }, library.Galleries.Select(item => item.Gid).Order().ToArray());
+        Assert.Empty(fixture.Handler.Requests);
+    }
+
+    [AvaloniaFact]
     public async Task CompleteWebpCopyOpensLocallyWithItsTranslationSource()
     {
         using var fixture = new Fixture();
