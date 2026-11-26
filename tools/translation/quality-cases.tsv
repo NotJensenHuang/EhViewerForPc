@@ -1,0 +1,26 @@
+case_id	source_lang	target_lang	context_mode	context	source	reference	category
+j01	ja	zh-CN	single		ここで待ってて。すぐ戻る。	在这儿等我。我马上回来。	ordinary
+j02	ja	zh-CN	single		まさか、鍵まで忘れたの？	你该不会连钥匙都忘了吧？	ordinary
+j03	ja	zh-CN	single		既読だけつけて、返事はなし？	你只已读，连条回复也没有？	colloquial
+j04	ja	zh-CN	single		ガタンッ！	哐当！	sfx
+j05	ja	zh-CN	single		ドキッ	咯噔	sfx
+j06	ja	zh-CN	single		お酒は二十歳になってから。	满二十岁才能喝酒。	adult-context
+j07	ja	zh-CN	single		避妊は相手任せにしない。	避孕不能全指望对方。	adult-context
+j08	ja	zh-CN	page	美月：修理屋がシャッターを開けるまで待とう。	開いたら、教えて。	卷帘门开了就告诉我。	ellipsis
+j09	ja	zh-CN	cross-page	前一页：葵称美月为「队长」。本页：队长独自留在仓库，葵在找她。	隊長、返事して！	队长，回话啊！	address
+j10	ja	zh-CN	page	兄：先に電車に乗って。妹：でも、お兄ちゃんは？	お兄ちゃんを置いていけないよ。	我不能丢下哥哥。	address
+j11	ja	zh-CN	page	医師：同意はいつでも取り消せます。	途中で「やめて」って言ってもいい？	中途也可以说「停下」吗？	adult-context
+j12	ja	zh-CN	cross-page	前一页：老人讲起一扇只能从内部打开的门。现在少女找到了这扇门。	やっぱり、中からじゃないと。	果然，得从里面才能打开。	ellipsis
+m01	zh-CN	ja	single		怎么突然没电了？	どうして急に停電したの？	ordinary
+m02	ja	zh-TW	single		駅の向こうに小さな本屋がある。	車站對面有一家小書店。	ordinary
+m03	zh-TW	ko	single		等雨停了再走。	비가 그치면 가자.	ordinary
+m04	ko	zh-CN	single		아까 그 말, 진심이었어?	你刚才那句话是认真的吗？	colloquial
+m05	en	zh-CN	single		I owe you one, captain.	队长，我欠你个人情。	address
+m06	fr	de	single		Garde la porte ouverte, s’il te plaît.	Lass bitte die Tür offen.	ordinary
+m07	de	es	single		Mach dir keinen Kopf. Ich komme zurecht.	No te preocupes. Me las arreglaré.	colloquial
+m08	es	fr	single		Se nos hizo tarde. Vámonos.	Il se fait tard. Allons-y.	colloquial
+m09	en	ko	single		Could you keep this between us?	이건 우리끼리만 알고 있을 수 있어?	colloquial
+m10	fr	zh-CN	single		Tu parles ! Il n’est même pas venu.	得了吧！他压根没来。	colloquial
+m11	de	zh-TW	single		Ich hab den letzten Zug verpasst.	我沒趕上末班車。	ordinary
+m12	es	ja	single		El puente no aguanta mucho más.	橋はもう長く持たない。	ordinary
+m13	ja	en	single		また同じ夢を見た。	I had the same dream again.	ordinary

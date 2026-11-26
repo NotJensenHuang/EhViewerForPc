@@ -6,7 +6,7 @@ using System.Text;
 namespace EhViewerForPc.Services;
 
 // 绑定打包的 llama.cpp b12650 Windows x64 C ABI。其他构建可能改变按值传递的结构体。
-internal sealed unsafe partial class HyMtLlamaNative
+internal sealed unsafe partial class LlamaNative
 {
     private const uint SearchDllLoadDirectory = 0x00000100;
     private const uint SearchSystem32 = 0x00000800;
@@ -14,28 +14,28 @@ internal sealed unsafe partial class HyMtLlamaNative
     private const string CpuBackend = "ggml-cpu-x64.dll";
     private const string VulkanBackend = "ggml-vulkan.dll";
     private static readonly object InitializationGate = new();
-    private static Lazy<HyMtLlamaNative>? _instance;
+    private static Lazy<LlamaNative>? _instance;
     private static string? _directory;
 
     private readonly nint _llama;
     private readonly nint _ggml;
     private readonly nint _ggmlBase;
 
-    internal static HyMtLlamaNative Get(string runtimeDirectory)
+    internal static LlamaNative Get(string runtimeDirectory)
     {
         string directory = Path.GetFullPath(Path.Combine(runtimeDirectory, "gguf"));
-        Lazy<HyMtLlamaNative> instance;
+        Lazy<LlamaNative> instance;
         lock (InitializationGate)
         {
             if (_directory is not null && !string.Equals(directory, _directory, StringComparison.OrdinalIgnoreCase))
                 throw new MangaTranslationException("本地翻译原生运行时目录已变化，请重启应用。", requiresSetup: true);
             _directory ??= directory;
-            instance = _instance ??= new Lazy<HyMtLlamaNative>(() => new HyMtLlamaNative(directory));
+            instance = _instance ??= new Lazy<LlamaNative>(() => new LlamaNative(directory));
         }
         return instance.Value;
     }
 
-    private HyMtLlamaNative(string directory)
+    private LlamaNative(string directory)
     {
         if (!OperatingSystem.IsWindows() || RuntimeInformation.ProcessArchitecture != Architecture.X64)
             throw new MangaTranslationException("本地漫画翻译需要 Windows x64。", requiresSetup: true);

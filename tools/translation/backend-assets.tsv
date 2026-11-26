@@ -1,7 +1,9 @@
-# PaddleOCR 和 Hy-MT2 (Apache-2.0)
+# PaddleOCR、Hy-MT2 漫画微调、Qwen2.5 日中微调 (Apache-2.0)
 # 类型、文件名、固定字节数、SHA-256、HTTPS 下载地址
 model	det.onnx	4819576	4d97c44a20d30a81aad087d6a396b08f786c4635742afc391f6621f5c6ae78ae	https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/det/ch_PP-OCRv5_det_mobile.onnx
 model	rec.onnx	16631306	5825fc7ebf84ae7a412be049820b4d86d77620f204a041697b0494669b1742c5	https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile.onnx
 model	rec-dict.txt	74012	d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b	https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/paddle/PP-OCRv5/rec/ch_PP-OCRv5_rec_mobile/ppocrv5_dict.txt
-hy-mt2-1.8b	Hy-MT2-1.8B-Q4_K_M.gguf	1133080448	dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699	https://www.modelscope.cn/models/Tencent-Hunyuan/Hy-MT2-1.8B-GGUF/resolve/master/Hy-MT2-1.8B-Q4_K_M.gguf	https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/b27182d810fa3ceb6ed04e7c324c54e35c0d209c/Hy-MT2-1.8B-Q4_K_M.gguf
-hy-mt2-7b	Hy-MT2-7B-Q4_K_M.gguf	4624648896	9f96256500f3fc1ab4d64336b58f52a949a95ad7516b0c229476eef782f9f77b	https://www.modelscope.cn/models/Tencent-Hunyuan/Hy-MT2-7B-GGUF/resolve/0ea6c87047cb05b5bc10cd51ee484e2ed0f6cb5f/Hy-MT2-7B-Q4_K_M.gguf	https://huggingface.co/tencent/Hy-MT2-7B-GGUF/resolve/707464294cf5b2a5a69982855020858ed58cf1d1/Hy-MT2-7B-Q4_K_M.gguf
+hy-mt2-manga-zh-hans	manga-zh-Hans-v1-Q4_K_M.gguf	1133080416	7ffb275d839a8463f4a4ab4cc1fe22107d9d83ec85464f11ed8ef648f71ef21f	https://huggingface.co/fumetodev/Hy-MT2-1.8B-JP-Manga-Finetune-chinese-zh-Hans-v1-GGUF/resolve/e5c4591e678ad7a0e46a305a02468d6da4e90fb9/manga-zh-Hans-v1-Q4_K_M.gguf
+qwen2.5-7b-ja2zh	qwen2.5-7b-ja2zh-q4_k_m.gguf	4683073440	92d57bc047b0ad3a28f3ed398aa69723a80cbe14be62793a20fb8fc7847394fe	https://huggingface.co/enet45/qwen2.5-7b-ja2zh-gguf-v1.1/resolve/8d8bd267d5c260af36d8c757a92566eb319a1705/qwen2.5-7b-ja2zh-q4_k_m.gguf
+qwen3-4b-ja2zh-eval	qwen3-4b-ja2zh-q4_k_m.gguf	2497278784	28c39acdfa2c1846c9ecf1faf9a1d9ef5a76c5674e6439aa1a932f288c6b1004	https://huggingface.co/enet45/qwen3-4b-ja2zh-gguf-v1.1/resolve/48a25d6ac650ef1a81937f33afac8ce0c7021573/qwen3-4b-ja2zh-q4_k_m.gguf
+qwen3-8b-ja2zh-eval	qwen3-8b-ja2zh-q4_k_m.gguf	5027783392	06b9f17c19657bde30e8a1598cf707f722864cc244ca09e6b0f93ef82edd0223	https://huggingface.co/enet45/qwen3-8b-ja2zh-gguf-v1.1/resolve/b46f43f522d343e1d2a6e0c4dc5a75100b99c5cd/qwen3-8b-ja2zh-q4_k_m.gguf

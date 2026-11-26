@@ -16,6 +16,8 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
     private readonly Task _stderr;
     private readonly byte[] _buffer = new byte[4096];
     private bool _usable = true;
+    private MangaTranslationPageContext _lastDeliveredPage;
+    private CancellationToken _lastDeliveredToken;
 
     internal MangaTranslationConnection(ProcessStartInfo start, MangaTranslationBackendPaths resources,
         MangaTranslationLanguageOption language)
@@ -32,12 +34,15 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
     internal bool Matches(MangaTranslationBackendPaths resources, MangaTranslationLanguageOption language) =>
         IsUsable && _resources == resources && _language == language;
 
-    internal async Task<MangaTranslationResponse> TranslateAsync(string snapshot, int width, int height, CancellationToken token)
+    internal async Task<MangaTranslationResponse> TranslateAsync(string snapshot, int width, int height, CancellationToken token,
+        MangaTranslationPageContext context = default)
     {
         token.ThrowIfCancellationRequested();
         try
         {
-            await _process.StandardInput.WriteLineAsync(snapshot.AsMemory(), token).ConfigureAwait(false);
+            string request = context.Reader == Guid.Empty ? snapshot :
+                FormattableString.Invariant($"{snapshot}\t{context.Reader:N}\t{context.Page}\t{(CanUsePriorPage(context) ? 1 : 0)}");
+            await _process.StandardInput.WriteLineAsync(request.AsMemory(), token).ConfigureAwait(false);
             await _process.StandardInput.FlushAsync(token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -77,7 +82,11 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
         if (frame.StartsWith("0 ", StringComparison.Ordinal))
         {
             token.ThrowIfCancellationRequested();
-            return MangaTranslationService.ParseResponse(frame[2..], width, height);
+            MangaTranslationResponse response = MangaTranslationService.ParseResponse(frame[2..], width, height);
+            token.ThrowIfCancellationRequested();
+            _lastDeliveredPage = context;
+            _lastDeliveredToken = token;
+            return response;
         }
         if (int.TryParse(frame, NumberStyles.None, CultureInfo.InvariantCulture, out int error))
             throw MangaTranslationService.WorkerError(error);
@@ -90,6 +99,10 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
         }
         throw MangaTranslationService.InvalidResponse();
     }
+
+    private bool CanUsePriorPage(MangaTranslationPageContext context) =>
+        context.Reader == _lastDeliveredPage.Reader && context.Page > 1 && _lastDeliveredPage.Page == context.Page - 1 &&
+        !_lastDeliveredToken.IsCancellationRequested;
 
     private async Task CancelPageAsync(Task<string> read)
     {

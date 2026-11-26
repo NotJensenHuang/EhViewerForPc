@@ -59,7 +59,7 @@ Online browsing is available on first launch. To use the local library, point "L
   - The online page source resolves only the preview pagination block containing the current page; images are downloaded on demand and cached under `online-cache`. Unresolved pages show placeholders that are filled with real dimensions after decoding
   - Load states are visible; a failure affects only that page and offers "Retry this page". Animated GIF / WebP playback, fullscreen and background colour options are available
   - Right-click a loaded page image to copy its original bitmap, save its original file, or reveal the file in Explorer. Online pages reveal their cached files. Copying an animation uses its first frame. Saving preserves the animation and requires a new filename
-  - Choose a target language, translation model, and model folder under Settings → Interface and Reading → Manga Translation and prepare the required resources. Select "翻译本页" (Translate this page) in the reader header to show translations in the speech bubbles of the loaded, static Japanese page. The “自动翻译” (Auto Translate) toggle next to the page number is off by default. When enabled, the reader translates the current static page after it stays visible briefly. The app saves the toggle state. Turning auto translation off cancels its current job and releases the worker. A completed translation remains available on the current page. The target language defaults to Simplified Chinese, with horizontal text that wraps naturally. Switch between the original and translated art or open the copyable bilingual text. Changing pages, closing the in-progress panel, or leaving the reader cancels the current job
+  - Choose and prepare a Japanese-to-Simplified-Chinese candidate in Settings → Interface and Reading → Manga Translation. The reader supports manual and automatic translation, copyable results, and review of low-confidence OCR
   - Local "Retry this page" downloads only the selected page to the original copy folder and refreshes its placeholder and dimensions. Failed transfers preserve the original file; active writers in the same folder finish first. Ordinary folders without an original gallery link/page number reload local files and show the reason; "Continue download" handles the other missing pages
   - The reader opens inside the main window only; immersive mode hides the sidebar and title, and Esc exits it
   - An image memory budget covers raw decode buffers, the current bitmap, prefetch and animation canvases; the online disk cache has configurable size and retention limits with LRU eviction
@@ -128,7 +128,7 @@ Online browsing is available on first launch. To use the local library, point "L
 | :--- | :--- | :--- |
 | Local Library | Read-only scanning, multi-source merge, version management, search and filters | Virtualized grid, per-source signature cache, cache-first startup |
 | Reader | Single / vertical / horizontal modes, animation, progress, online page source | On-demand pagination, placeholder backfill, shared progress key, image memory budget |
-| Manga Translation | Manual or automatic translation of the current static Japanese page, speech-bubble overlays, original image toggle, and copyable bilingual text | Selectable target language, translation model, and local model folder, with DirectML OCR and Vulkan translation |
+| Manga Translation | Japanese-to-Simplified-Chinese trial models, manual and automatic translation, and region review | DirectML OCR and Vulkan GGUF |
 | Downloads | Queue, resume, concurrency and throttling, directory relocation | Persisted state, atomic writes, migration journal and rollback |
 | Online Browsing | Search, subscriptions, rankings, bookmarks, details, rating and archives | In-house tolerant HTML parser, fixed-structure fixture tests, cookie session |
 | Image Search | Indexing, cropped queries, matched-page location | Managed C# backend, SkiaSharp / SQLite, separate windowless host |
@@ -196,8 +196,8 @@ The Release configuration enables `PublishAot` by default, so framework-dependen
 
 - Requires the MSVC linker and Windows SDK import libraries. If only headers are installed, a NuGet package supplies them at build time (and is excluded from the output)
 - HTML parsing, JSON persistence and bindings are AOT-compatible. Since Avalonia 12, Dev Tools is a separate product, so no debugger package is referenced; text shaping is provided by `Avalonia.HarfBuzz`
-- Before publishing, prepare the native translation dependencies with `tools/translation/Prepare-NativeAssets.ps1` in PowerShell 7 or point `-p:MangaTranslationNativeDirectory=<prepared-directory>` at existing assets. See the [native translation notes](docs/本地漫画翻译原生后端验证-2026-11-24.md) for archive sources and build steps
-- The output includes the native exe, Avalonia libraries, and DirectML, ONNX Runtime, llama.cpp and required C++ runtime libraries in `manga-native/`. The ZIP preserves the directory layout. The app prepares models on demand
+- Before publishing, prepare the native OCR and translation dependencies with `tools/translation/Prepare-NativeAssets.ps1` in PowerShell 7 or point `-p:MangaTranslationNativeDirectory=<prepared-directory>` at existing assets. See the [native translation notes](docs/本地漫画翻译原生后端验证-2026-11-24.md) for archive sources and build steps
+- The output includes the native exe, Avalonia libraries, and DirectML, ONNX Runtime, llama.cpp and required C++ runtime libraries in `manga-native/`. The ZIP preserves the directory layout. Model weights are prepared separately on demand
 - MSIX packaging: `packaging/EhViewerForPc.Msix` is a Visual Studio Windows application packaging project. It runs an AOT publish into `artifacts/msix/aot` before injecting the payload (`-p:SkipAotPublish=true` reuses the previous output)
 - AOT code generation happens only in the publish pipeline, so the packaging project uses the `PublishAotForMsix` / `InjectAotPayload` targets to replace the payload; check these first if packaging breaks after a Visual Studio upgrade
 - After the package identity was renamed, existing installations cannot be upgraded in place; uninstall the old package first
@@ -226,7 +226,7 @@ All unattended modes run without dialogs; diagnostics can be written to the path
 | `--single-instance-probe <out.json>` | Unattended single-instance check: hide the window, signal from a second process, assert it is restored and the gallery id forwarded |
 | `--image-search-probe-root <dir> --out <json>` | Windowless check of the application image-search service chain (requires an empty directory) |
 | `--bookmark-probe-root <dir> --out <json>` | Windowless check of bookmark import/export compatibility (requires an empty directory) |
-| `--manga-translation-worker <PNG> <model-dir> <native-dir> [<model-id> <target-language-id>]` | Internal windowless reader worker. Returns one page of JSON on standard output and skips application data initialization. Model IDs are `hy-mt2-1.8b` and `hy-mt2-7b`. Example language IDs are `zh-CN`, `zh-Hant`, and `en`. Omitting both uses 1.8B and Simplified Chinese. The app can replace the first argument with `--session` to submit pages sequentially over a pipe |
+| `--manga-translation-worker <PNG> <model-dir> <native-dir> <model-id> <target-language-id>` | Internal windowless reader worker. It supports Japanese-to-Simplified-Chinese candidates. Requests for retired general-purpose models exit with code 3 |
 | `--verbose` | More detailed diagnostics |
 
 Examples:
@@ -285,15 +285,9 @@ The **download root** defaults to `Documents\EhViewerDownloads` (configurable) a
 
 Inside the image-index directory, `features.db` stores deduplicated features and `build-job.json` stores a pending job and its phase. The job directory’s `build-plan.db` stores candidates, signatures and pending/completed page states, and is reclaimed after publication. `generations/` contains published snapshots and work in progress; `current.json` and `current.previous.json` are primary / backup pointers to the same current snapshot after publication cleanup. Once publication completes and old queries finish, only the current snapshot remains; builds and merges still require temporary space. Recovery, updates or cleanup migrate legacy features before reclaiming unused directories. Do not manually delete an unfinished job directory. A legacy unfinished job requires one enumeration to prepare its page plan on the first resume; extracted features remain reusable, and subsequent resumes read the persisted queue.
 
-### Set Up the Local Manga Translation Backend
+### Local Manga Translation Backend
 
-Open Settings → Interface and Reading → Manga Translation → Open Translation Settings, choose the target language, model, and local model folder, then select Download and Prepare Models. Tencent’s official Hy-MT2 1.8B Q4_K_M is the default. The 7B Q4_K_M model from the same series is also available. The 7B weights are about 4.62 GB and require more VRAM. Including shared PaddleOCR resources, a clean setup downloads about 1.15 GB for 1.8B or 4.65 GB for 7B. Inference runs locally after setup. Target languages include Simplified Chinese, Traditional Chinese, English, Korean, French, German, Spanish, Portuguese, Italian, Russian, Thai, Vietnamese, Indonesian, Turkish, Arabic, Dutch, Polish, and Ukrainian.
-
-The settings page shows the active file, bytes transferred, and total. It displays connection and verification status separately. You can cancel and retry while retaining verified files. When switching models in the same folder, the app reuses verified resources and prepares the files required by the selected model. Changing folders leaves existing models in place. Existing configurations keep their model folder and default to 1.8B and Simplified Chinese.
-
-OCR and translation run in a C# worker process that calls the bundled DirectML and Vulkan libraries directly. Both work offline once the models are ready. The worker reuses loaded models across nearby pages, and DirectML reuses fixed-shape sessions for recognition widths that recur on later pages. The worker exits after 30 seconds of inactivity. The app keeps the eight latest page results in memory and can reuse them when the source image and translation settings match. The previous default model folder is still supported. With no custom folder saved in the app, `EHVIEWER_MANGA_TRANSLATION_BACKEND` can point to an absolute legacy backend path so the app can reuse its `models` subfolder.
-
-The app opens source images read-only and removes the temporary PNG from the application data directory when the job ends. Translations appear on the image and in the copyable bilingual panel for the current reading session.
+The general-purpose Hy-MT2 1.8B and 7B models are retired. Settings offers two trial options, the Hy-MT2 manga fine-tune and the Qwen2.5 7B subtitle fine-tune. Select a candidate and Simplified Chinese, then prepare its weights. Existing preferences and model files stay in place. After obtaining access from the publisher, download the Qwen3 4B or 8B weights manually and run `--manga-translation-worker --evaluate <TSV> <model-dir> <native-dir> <model-id>`. See [deployment and commands](docs/MODEL_DEPLOYMENT.md) and the [benchmark report](docs/BENCHMARK_REPORT.md).
 
 ## 🧪 Tests and Verification
 
@@ -335,7 +329,6 @@ The online parser is covered by fixtures captured from fixed page structures; `-
 - Image access is subject to account and IP quotas. View-page requests are serialized, but bulk downloads can still trigger rate limiting
 - Favourite category names are local display labels and are not written back to the account
 - Continuous and horizontal modes fit whole pages to the viewport and have no in-page zoom (single-page mode supports 1x–8x)
-- Local manga translation runs manually or automatically on the current static Japanese page and requires a GPU with DirectML and Vulkan support and matching drivers. Text that meets the same-bubble grouping checks is translated together and laid out horizontally in the target language’s reading direction. Regions the model returns unchanged keep the original art. OCR, translations, and text placement can contain errors. The bilingual text shows full translations that may be shortened on the image
 - Page and cover bitmaps are owned by their controls. Download events update the affected copy, and a manual refresh picks up external file changes
 - Recall on a real image library and full-library search performance for local image search are not verified
 

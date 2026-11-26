@@ -8,21 +8,37 @@ internal static partial class MangaOcr
 {
     private readonly record struct Quad(Vector2 A, Vector2 B, Vector2 C, Vector2 D)
     {
+        public float Confidence { get; init; }
+        public int DetectionId { get; init; }
+        public int[]? ComponentIds { get; init; }
+
+        internal MangaOcrPoint[] GetPolygon() => [new(A.X, A.Y), new(B.X, B.Y), new(C.X, C.Y), new(D.X, D.Y)];
         internal Quad FromTopLeft()
         {
             Span<Vector2> points = stackalloc Vector2[] { A, B, C, D };
             int first = 0;
             for (int i = 1; i < points.Length; i++)
                 if (points[i].X + points[i].Y < points[first].X + points[first].Y) first = i;
-            return new(points[first], points[(first + 1) % 4], points[(first + 2) % 4], points[(first + 3) % 4]);
+            return this with
+            {
+                A = points[first],
+                B = points[(first + 1) % 4],
+                C = points[(first + 2) % 4],
+                D = points[(first + 3) % 4],
+            };
         }
 
         internal Quad ScaleAndClamp(int width, int height, int mapWidth, int mapHeight)
         {
             Vector2 scale = new((float)width / mapWidth, (float)height / mapHeight);
             Vector2 upper = new(width - 1, height - 1);
-            return new(Vector2.Clamp(A * scale, Vector2.Zero, upper), Vector2.Clamp(B * scale, Vector2.Zero, upper),
-                Vector2.Clamp(C * scale, Vector2.Zero, upper), Vector2.Clamp(D * scale, Vector2.Zero, upper));
+            return this with
+            {
+                A = Vector2.Clamp(A * scale, Vector2.Zero, upper),
+                B = Vector2.Clamp(B * scale, Vector2.Zero, upper),
+                C = Vector2.Clamp(C * scale, Vector2.Zero, upper),
+                D = Vector2.Clamp(D * scale, Vector2.Zero, upper),
+            };
         }
 
         internal Bounds GetBounds()
@@ -52,7 +68,7 @@ internal static partial class MangaOcr
         }
     }
 
-    private static List<Quad> DetectBoxes(ReadOnlySpan<float> probability, ReadOnlySpan<long> shape,
+    private static (List<Quad> Boxes, MangaOcrDetection[] RawDetections) DetectBoxes(ReadOnlySpan<float> probability, ReadOnlySpan<long> shape,
         int width, int height, CancellationToken token)
     {
         if (shape.Length != 4 || shape[0] != 1 || shape[1] != 1 || shape[2] < 1 || shape[3] < 1 ||
@@ -127,12 +143,20 @@ internal static partial class MangaOcr
                 RotatedRectangle rectangle = MinimumRectangle(hullPoints);
                 if (Math.Min(rectangle.Width, rectangle.Height) < 3) continue;
                 Bounds limits = new(minX, minY, maxX - minX + 1, maxY - minY + 1);
-                if (FilledComponentScore(probability, mapWidth, queue, tail, limits, token) < 0.50) continue;
+                float confidence = (float)FilledComponentScore(probability, mapWidth, queue, tail, limits, token);
+                if (!float.IsFinite(confidence) || confidence < 0.50f) continue;
                 float padding = 1.4f * rectangle.Width * rectangle.Height / (rectangle.Width + rectangle.Height);
-                boxes.Add(rectangle.Expand(padding).ScaleAndClamp(width, height, mapWidth, mapHeight));
+                boxes.Add((rectangle.Expand(padding) with { Confidence = confidence, DetectionId = boxes.Count + 1 })
+                    .ScaleAndClamp(width, height, mapWidth, mapHeight));
                 if (boxes.Count > 120) throw new MangaTranslationException("页面文字区域过多。");
             }
-            return MergeVerticalPunctuation(boxes);
+            var rawDetections = new MangaOcrDetection[boxes.Count];
+            for (int i = 0; i < boxes.Count; i++)
+            {
+                Quad box = boxes[i].FromTopLeft();
+                rawDetections[i] = new MangaOcrDetection(box.DetectionId, box.GetPolygon(), box.Confidence);
+            }
+            return (MergeVerticalPunctuation(boxes, width, height), rawDetections);
         }
         finally
         {
@@ -254,7 +278,7 @@ internal static partial class MangaOcr
         hull[count++] = point;
     }
 
-    private static List<Quad> MergeVerticalPunctuation(List<Quad> boxes)
+    private static List<Quad> MergeVerticalPunctuation(List<Quad> boxes, int width, int height)
     {
         Bounds[] bounds = boxes.Select(static box => box.GetBounds()).ToArray();
         bool[] consumed = new bool[boxes.Count];
@@ -287,7 +311,12 @@ internal static partial class MangaOcr
             corners.Add(fragmentBox.B);
             corners.Add(fragmentBox.C);
             corners.Add(fragmentBox.D);
-            boxes[best] = MinimumRectangle(corners).Expand(0);
+            boxes[best] = (MinimumRectangle(corners).Expand(0) with
+            {
+                Confidence = Math.Min(columnBox.Confidence, fragmentBox.Confidence),
+                ComponentIds = [.. columnBox.ComponentIds ?? [columnBox.DetectionId],
+                                .. fragmentBox.ComponentIds ?? [fragmentBox.DetectionId]],
+            }).ScaleAndClamp(width, height, width, height);
             consumed[i] = true;
         }
         var merged = new List<Quad>(boxes.Count);
@@ -451,6 +480,7 @@ internal static partial class MangaOcr
         int y = int.MaxValue;
         int right = 0;
         int bottom = 0;
+        var ids = new List<int>();
         var text = new StringBuilder();
         for (int i = start; i >= 0; i = next[i])
         {
@@ -461,7 +491,8 @@ internal static partial class MangaOcr
             bottom = Math.Max(bottom, region.Y + region.Height);
             if (!vertical && i != start) text.Append('\n');
             text.Append(region.Text);
+            ids.AddRange(region.SourceRegionIds);
         }
-        return new MangaOcrRegion(x, y, right - x, bottom - y, text.ToString());
+        return new MangaOcrRegion(x, y, right - x, bottom - y, text.ToString()) { SourceRegionIds = ids.ToArray() };
     }
 }

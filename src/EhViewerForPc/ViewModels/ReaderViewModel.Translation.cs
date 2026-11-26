@@ -10,6 +10,8 @@ namespace EhViewerForPc.ViewModels;
 public sealed partial class ReaderViewModel
 {
     private readonly Func<ReaderTranslationImage, CancellationToken, Task<MangaTranslationResponse>> _translatePage;
+    private readonly Func<bool> _hasTranslationModel;
+    private readonly Guid _translationReader = Guid.NewGuid();
     private CancellationTokenSource? _translationJob;
     private ReaderTranslationImage? _attemptedTranslationImage;
     private bool _automaticTranslationJob;
@@ -29,6 +31,8 @@ public sealed partial class ReaderViewModel
         get => _services.Settings.AutoTranslateReaderPages;
         set => _services.SaveReaderAutoTranslation(value);
     }
+
+    internal bool CanScheduleAutoTranslation => AutoTranslateReaderPages && _hasTranslationModel();
 
     public string AutomaticTranslationStatus => _automaticTranslationStatus && !HasTranslationText ? TranslationStatus : "";
     public bool ShowAutomaticTranslationSettings => _automaticTranslationStatus && ShowTranslationSettings;
@@ -85,6 +89,9 @@ public sealed partial class ReaderViewModel
         }
     }
 
+    private Task<MangaTranslationResponse> TranslateWithReaderContextAsync(ReaderTranslationImage image, CancellationToken token) =>
+        _services.MangaTranslation.TranslateAsync(image, token, new MangaTranslationPageContext(_translationReader, CurrentPageNumber));
+
     internal Task TranslateCurrentPageAsync(ReaderTranslationImage? image)
     {
         if (image is { } current && _attemptedTranslationImage == current && HasTranslationText)
@@ -98,7 +105,7 @@ public sealed partial class ReaderViewModel
 
     internal Task TranslatePageAutomaticallyAsync(ReaderTranslationImage image, Func<ReaderTranslationImage?> currentImage)
     {
-        if (!AutoTranslateReaderPages || image.IsAnimated || _attemptedTranslationImage == image)
+        if (!CanScheduleAutoTranslation || image.IsAnimated || _attemptedTranslationImage == image)
             return Task.CompletedTask;
         if (_automaticTranslationJob) CancelAutomaticTranslation();
         return TranslatePageAsync(image, currentImage);
@@ -149,9 +156,10 @@ public sealed partial class ReaderViewModel
                 return;
             }
 
-            if (result.Regions.Length == 0)
+            int reviewCount = result.OcrObservations.Count(static observation => observation.RequiresReview);
+            if (result.Regions.Length == 0 && reviewCount == 0)
             {
-                TranslationStatus = "本页未识别到日文文字。";
+                TranslationStatus = "本页未识别到文字。";
                 return;
             }
 
@@ -165,11 +173,24 @@ public sealed partial class ReaderViewModel
                 text.Append(i + 1).Append("  ").AppendLine(region.SourceText);
                 if (string.IsNullOrWhiteSpace(region.TranslatedText))
                 {
-                    text.Append("未生成译文");
+                    text.Append(region.Review switch
+                    {
+                        MangaTranslationRegionReview.Unchanged => "译文与原文相同",
+                        MangaTranslationRegionReview.SourceLanguageResidue => "输出疑似仍为日语，待复核",
+                        MangaTranslationRegionReview.SymbolOnly => "输出只有标点或符号，待复核",
+                        _ => "未生成译文，待复核",
+                    });
+                    if (region.RejectedOutput is { Length: > 0 } draft && region.Review != MangaTranslationRegionReview.Unchanged)
+                        text.AppendLine().Append("模型草稿 ").Append(draft);
                     continue;
                 }
 
                 text.Append(region.TranslatedText);
+                if (region.Review == MangaTranslationRegionReview.Duplicate)
+                {
+                    text.AppendLine().Append("疑似重复译文，待复核");
+                    continue;
+                }
                 translatedCount++;
                 if (region.Width > 0 && region.Height > 0)
                 {
@@ -178,21 +199,38 @@ public sealed partial class ReaderViewModel
                 }
             }
 
+            foreach (MangaOcrObservation observation in result.OcrObservations)
+            {
+                if (!observation.RequiresReview) continue;
+                if (text.Length > 0) text.AppendLine().AppendLine();
+                MangaOcrPoint point = observation.Polygon[0];
+                text.Append("待核对 #").Append(observation.Id)
+                    .Append(" · 位置 ").Append((int)point.X).Append(", ").Append((int)point.Y)
+                    .Append(" · 置信度 ").AppendLine(observation.RecognitionConfidence.ToString("P0"));
+                text.Append(string.IsNullOrWhiteSpace(observation.FinalText) ? "未识别出文字" : observation.FinalText);
+                if (observation.CorrectedText is not null)
+                    text.AppendLine().Append("首次识别 ").Append(observation.OriginalText);
+            }
+
             TranslationText = text.ToString();
             if (overlays.Count > 0)
             {
-                TranslationStatus = $"图上显示 {overlays.Count} 个区块的译文 · GPU 已启用";
+                TranslationStatus = reviewCount > 0
+                    ? $"图上显示 {overlays.Count} 个区块的译文 · {reviewCount} 个识别区块待核对"
+                    : $"图上显示 {overlays.Count} 个区块的译文 · GPU 已启用";
                 _translationOverlay = new MangaTranslationOverlay(result.Width, result.Height, overlays, result.TargetLanguage)
                 {
                     ImageSource = image.Value,
                 };
                 _showTranslatedImage = true;
-                IsTranslationOpen = false;
+                IsTranslationOpen = reviewCount > 0 && !automatic;
                 PublishTranslationOverlay();
             }
             else
             {
-                TranslationStatus = translatedCount > 0
+                TranslationStatus = reviewCount > 0
+                    ? $"有 {reviewCount} 个识别区块待核对。"
+                    : translatedCount > 0
                     ? $"已翻译 {translatedCount} 个区块 · GPU 已启用"
                     : "本页未生成可显示的译文，可核对下方的识别结果。";
             }

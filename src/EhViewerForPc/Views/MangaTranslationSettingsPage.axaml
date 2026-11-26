@@ -20,9 +20,9 @@
             <Button Content="恢复默认位置" Command="{Binding RestoreDefaultDirectoryCommand}" IsEnabled="{Binding CanEditDirectory}"
                     AutomationProperties.AutomationId="MangaTranslation.RestoreDirectory" />
           </WrapPanel>
-          <SelectableTextBlock Text="模型下载到已保存的位置，可复用该目录中的权重。切换位置会保留原目录的模型文件。"
+          <SelectableTextBlock Text="切换位置会保留原目录的模型文件。"
                                Classes="caption" TextWrapping="Wrap" />
-          <SelectableTextBlock Text="请保存新位置，资源检查与下载随后使用该目录。"
+          <SelectableTextBlock Text="保存新位置后，资源检查将使用该目录。"
                                Classes="caption" TextWrapping="Wrap" IsVisible="{Binding HasUnsavedDirectory}" />
           <SelectableTextBlock Text="{Binding DirectoryError}" IsVisible="{Binding HasDirectoryError}"
                                Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap"
@@ -34,7 +34,7 @@
         <StackPanel Spacing="10">
           <SelectableTextBlock Text="本地模型" FontWeight="SemiBold" />
           <ComboBox ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel, Mode=TwoWay}"
-                    IsEnabled="{Binding CanEditDirectory}" HorizontalAlignment="Stretch"
+                    IsEnabled="{Binding CanSelectModel}" HorizontalAlignment="Stretch"
                     AutomationProperties.Name="漫画翻译模型" AutomationProperties.AutomationId="MangaTranslation.Model">
             <ComboBox.ItemTemplate>
               <DataTemplate x:DataType="services:MangaTranslationModelOption">
@@ -42,7 +42,7 @@
               </DataTemplate>
             </ComboBox.ItemTemplate>
           </ComboBox>
-          <SelectableTextBlock Text="两种翻译模型共用文字识别资源。7B 需要更多磁盘空间和显存。图片在本机处理。"
+          <SelectableTextBlock Text="候选模型用于日语到简体中文。漫画图片与译文在本机处理。"
                                Classes="caption" TextWrapping="Wrap" />
           <SelectableTextBlock Text="目标语言" FontWeight="SemiBold" />
           <ComboBox ItemsSource="{Binding TargetLanguages}" SelectedItem="{Binding SelectedTargetLanguage, Mode=TwoWay}"

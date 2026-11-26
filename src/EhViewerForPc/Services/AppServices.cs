@@ -145,7 +145,7 @@ public sealed partial class AppServices : IDisposable
         TranslationPreferencesChanged?.Invoke(this, EventArgs.Empty);
 
     internal MangaTranslationPreferences GetMangaTranslationPreferences() => new(
-        Settings.MangaTranslationModelDirectory, MangaTranslationModelOption.Resolve(Settings.MangaTranslationModelId),
+        Settings.MangaTranslationModelDirectory, MangaTranslationModelOption.Find(Settings.MangaTranslationModelId),
         MangaTranslationLanguageOption.Resolve(Settings.MangaTranslationTargetLanguage));
 
     internal void SaveTranslationModel(MangaTranslationModelOption model)

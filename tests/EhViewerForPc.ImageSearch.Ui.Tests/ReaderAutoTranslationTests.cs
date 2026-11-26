@@ -141,6 +141,42 @@ public sealed class ReaderAutoTranslationTests
         await WaitForAsync(() => !fixture.Services.SettingsStore.Load(out _).AutoTranslateReaderPages, deadline.Token);
     }
 
+    [AvaloniaFact]
+    public async Task OcrReviewOnlyPageHasSelectableResultAndNoImageOverlay()
+    {
+        using var fixture = new Fixture();
+        fixture.Services.Settings.DefaultReadingMode = ReadingMode.Single;
+        fixture.Services.SaveReaderAutoTranslation(true);
+        using var page = fixture.CreateReader();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(8));
+        var window = new Window { Width = 740, Height = 600, Content = page };
+        try
+        {
+            window.Show();
+            var request = await fixture.Requests.Reader.ReadAsync(deadline.Token);
+            request.Completion.SetResult(new MangaTranslationResponse(1, 160, 240, MangaOcrOrt.Provider, null, [])
+            {
+                OcrObservations =
+                [
+                    new MangaOcrObservation(1, [new(5, 6), new(25, 6), new(25, 40), new(5, 40)],
+                        0.90f, "サ", 0.21f, "ザ", "ザ", 0.33f,
+                        MangaOcrDirection.Vertical, MangaOcrRegionType.Unclassified, true),
+                ],
+            });
+
+            await WaitForAsync(() => page.ViewModel.HasTranslationText, deadline.Token);
+            Assert.Null(page.ViewModel.ActiveTranslationOverlay);
+            Assert.False(page.ViewModel.IsTranslationOpen);
+            page.ViewModel.OpenTranslationTextCommand.Execute(null);
+            Assert.True(page.ViewModel.IsTranslationOpen);
+            Assert.Contains("待核对 #1", page.ViewModel.TranslationText);
+            Assert.Contains("首次识别 サ", page.ViewModel.TranslationText);
+            Assert.Contains("ザ", page.ViewModel.TranslationText);
+        }
+        finally { window.Close(); }
+    }
+
     private static async Task WaitForAsync(Func<bool> predicate, CancellationToken token)
     {
         while (!predicate()) await Task.Delay(10, token);
@@ -185,7 +221,7 @@ public sealed class ReaderAutoTranslationTests
                 FolderName = "gallery", FolderPath = _gallery, PageCount = 3, MaxPageNumber = 3,
             };
             var source = new LocalReaderSource(Services, gallery);
-            return new ReaderPage(new ReaderViewModel(Services, source, 1, TranslateAsync));
+            return new ReaderPage(new ReaderViewModel(Services, source, 1, TranslateAsync, static () => true));
         }
 
         public ReaderPage CreateOnlineReader()
@@ -193,7 +229,7 @@ public sealed class ReaderAutoTranslationTests
             var details = new EhGalleryDetails { Gid = 42, Token = "0123456789", Title = "在线样本", Pages = 1 };
             var index = OnlinePageIndex.ForClient(Services.Online, details.Gid, details.Token, details.Pages);
             var source = new OnlineReaderSource(Services, details, index);
-            return new ReaderPage(new ReaderViewModel(Services, source, 1, TranslateAsync));
+            return new ReaderPage(new ReaderViewModel(Services, source, 1, TranslateAsync, static () => true));
         }
 
         private Task<MangaTranslationResponse> TranslateAsync(ReaderTranslationImage image, CancellationToken token)

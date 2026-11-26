@@ -4,12 +4,23 @@ public sealed record MangaTranslationModelOption(string Id, string Name, string 
 {
     public static IReadOnlyList<MangaTranslationModelOption> Choices { get; } = Array.AsReadOnly<MangaTranslationModelOption>(
     [
-        new("hy-mt2-1.8b", "Hy-MT2 1.8B Q4_K_M · 约 1.13 GB", "Hy-MT2-1.8B-Q4_K_M.gguf", 1_133_080_448),
-        new("hy-mt2-7b", "Hy-MT2 7B Q4_K_M · 约 4.62 GB", "Hy-MT2-7B-Q4_K_M.gguf", 4_624_648_896),
+        new("hy-mt2-manga-zh-hans", "Hy-MT2 漫画日中微调（试用）· 约 1.13 GB", "manga-zh-Hans-v1-Q4_K_M.gguf", 1_133_080_416),
+        new("qwen2.5-7b-ja2zh", "Qwen2.5 7B 日中字幕微调（试用）· 约 4.68 GB", "qwen2.5-7b-ja2zh-q4_k_m.gguf", 4_683_073_440),
     ]);
 
+    // Hugging Face requires user approval. These models consume only manually downloaded weights in evaluation mode.
+    internal static IReadOnlyList<MangaTranslationModelOption> EvaluationOnly { get; } = Array.AsReadOnly<MangaTranslationModelOption>(
+    [
+        new("qwen3-4b-ja2zh-eval", "Qwen3 4B 日中字幕微调", "qwen3-4b-ja2zh-q4_k_m.gguf", 2_497_278_784),
+        new("qwen3-8b-ja2zh-eval", "Qwen3 8B 日中字幕微调", "qwen3-8b-ja2zh-q4_k_m.gguf", 5_027_783_392),
+    ]);
+
+    internal static MangaTranslationModelOption? FindForEvaluation(string? id) =>
+        Find(id) ?? EvaluationOnly.FirstOrDefault(model => model.Id == id);
+
+    internal bool Supports(MangaTranslationLanguageOption language) => language.Id == "zh-CN";
+
     internal static MangaTranslationModelOption? Find(string? id) => Choices.FirstOrDefault(model => model.Id == id);
-    internal static MangaTranslationModelOption Resolve(string? id) => Find(id) ?? Choices[0];
 }
 
 public sealed record MangaTranslationLanguageOption(string Id, string Name, string EnglishName)
@@ -45,4 +56,4 @@ public sealed record MangaTranslationLanguageOption(string Id, string Name, stri
         : $"Translate the following text into {EnglishName}. Note that you should only output the translated result without any additional explanation:\n{text}";
 }
 
-internal sealed record MangaTranslationPreferences(string? ModelDirectory, MangaTranslationModelOption Model, MangaTranslationLanguageOption Language);
+internal sealed record MangaTranslationPreferences(string? ModelDirectory, MangaTranslationModelOption? Model, MangaTranslationLanguageOption Language);

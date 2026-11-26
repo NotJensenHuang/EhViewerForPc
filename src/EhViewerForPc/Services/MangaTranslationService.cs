@@ -34,6 +34,8 @@ internal readonly record struct ReaderTranslationImage(string Path, long Length,
     }
 }
 
+internal readonly record struct MangaTranslationPageContext(Guid Reader, int Page);
+
 internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decoder, LogService log,
     MangaTranslationBackendService backend, Func<MangaTranslationPreferences> getPreferences) : IDisposable
 {
@@ -52,12 +54,19 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
     private sealed record CachedPage(ReaderTranslationImage Image, MangaTranslationBackendPaths Resources,
         MangaTranslationLanguageOption Language, MangaTranslationResponse Result);
 
-    public Task<MangaTranslationResponse> TranslateAsync(ReaderTranslationImage image, CancellationToken token)
+    public Task<MangaTranslationResponse> TranslateAsync(ReaderTranslationImage image, CancellationToken token,
+        MangaTranslationPageContext context = default)
     {
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             MangaTranslationPreferences preferences = getPreferences();
+            if (preferences.Model is null)
+                return Task.FromException<MangaTranslationResponse>(
+                    new MangaTranslationException(MangaTranslationBackendService.NoTranslationModelMessage, requiresSetup: true));
+            if (!preferences.Model.Supports(preferences.Language))
+                return Task.FromException<MangaTranslationResponse>(
+                    new MangaTranslationException("所选模型只支持日语译为简体中文，请修改目标语言。", requiresSetup: true));
             Task previous = _lastJob;
             var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _lastJob = completed.Task;
@@ -72,7 +81,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
                     timeout.CancelAfter(TimeSpan.FromMinutes(5));
                     try
                     {
-                        return await TranslateCoreAsync(image, preferences, timeout.Token).ConfigureAwait(false);
+                        return await TranslateCoreAsync(image, preferences, context, timeout.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (!token.IsCancellationRequested && !_lifetime.IsCancellationRequested)
                     {
@@ -98,7 +107,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
     }
 
     private async Task<MangaTranslationResponse> TranslateCoreAsync(ReaderTranslationImage image, MangaTranslationPreferences preferences,
-        CancellationToken token)
+        MangaTranslationPageContext context, CancellationToken token)
     {
         MangaTranslationBackendPaths resources;
         try
@@ -128,7 +137,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         bool createdJobDirectory = false;
         try
         {
-            for (LinkedListNode<CachedPage>? item = _cachedPages.First; item is not null; item = item.Next)
+            for (LinkedListNode<CachedPage>? item = context.Reader == Guid.Empty ? _cachedPages.First : null; item is not null; item = item.Next)
             {
                 CachedPage cached = item.Value;
                 if (cached.Image != image || cached.Resources != resources || cached.Language != preferences.Language) continue;
@@ -159,8 +168,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
             MangaTranslationResponse result;
             try
             {
-                result = await _worker.TranslateAsync(snapshot, width, height, token).ConfigureAwait(false);
-                if (result.ModelId != preferences.Model.Id || result.TargetLanguage != preferences.Language.Id)
+                result = await _worker.TranslateAsync(snapshot, width, height, token, context).ConfigureAwait(false);
+                if (result.ModelId != resources.Model.Id || result.TargetLanguage != preferences.Language.Id)
                     throw InvalidResponse();
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested && _worker.IsUsable) { throw; }
@@ -170,8 +179,11 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
                 throw;
             }
 
-            _cachedPages.AddFirst(new CachedPage(image, resources, preferences.Language, result));
-            if (_cachedPages.Count > CachedPages) _cachedPages.RemoveLast();
+            if (context.Reader == Guid.Empty)
+            {
+                _cachedPages.AddFirst(new CachedPage(image, resources, preferences.Language, result));
+                if (_cachedPages.Count > CachedPages) _cachedPages.RemoveLast();
+            }
             return result;
         }
         catch (FileNotFoundException)
@@ -232,9 +244,63 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         bool valid = result.Regions.Length == 0 ? result.TranslationBackend is null :
             result.TranslationBackend?.StartsWith("Vulkan", StringComparison.Ordinal) == true &&
             Array.TrueForAll(result.Regions, region => region?.SourceText is not null && region.TranslatedText is not null &&
-                region.HasValidBounds(width, height));
-        if (!valid) throw InvalidResponse();
+                region.HasValidBounds(width, height) && Enum.IsDefined(region.Review) &&
+                region.RejectedOutput is null or { Length: <= 512 });
+        if (!valid || result.OcrObservations is not { Length: <= 120 } || result.RawDetections is not { Length: <= 120 })
+            throw InvalidResponse();
+        for (int i = 0; i < result.RawDetections.Length; i++)
+        {
+            MangaOcrDetection detection = result.RawDetections[i];
+            if (detection is null || detection.Id != i + 1 || !HasValidPolygon(detection.Polygon, width, height) ||
+                !(detection.Confidence is >= 0 and <= 1))
+                throw InvalidResponse();
+        }
+        for (int i = 0; i < result.Regions.Length; i++)
+        {
+            if (result.Regions[i].Id != i + 1) throw InvalidResponse();
+        }
+        for (int i = 0; i < result.OcrObservations.Length; i++)
+        {
+            MangaOcrObservation observation = result.OcrObservations[i];
+            if (observation is null || observation.Id != i + 1 ||
+                !HasValidPolygon(observation.Polygon, width, height) ||
+                observation.OriginalDetectionIds is null ||
+                observation.OriginalDetectionIds.Length > result.RawDetections.Length ||
+                (result.RawDetections.Length > 0 && observation.OriginalDetectionIds.Length == 0) ||
+                observation.OriginalText is null || observation.FinalText is null ||
+                !(observation.DetectionConfidence is >= 0 and <= 1 &&
+                  observation.OriginalConfidence is >= 0 and <= 1 &&
+                  observation.RecognitionConfidence is >= 0 and <= 1))
+                throw InvalidResponse();
+            foreach (int id in observation.OriginalDetectionIds)
+                if (id < 1 || id > result.RawDetections.Length) throw InvalidResponse();
+        }
+        Span<bool> usedRegionIds = stackalloc bool[result.OcrObservations.Length];
+        usedRegionIds.Clear();
+        foreach (MangaTranslationRegion region in result.Regions)
+        {
+            if (region.SourceRegionIds is null ||
+                (result.OcrObservations.Length > 0 && region.SourceRegionIds.Length == 0))
+                throw InvalidResponse();
+            foreach (int id in region.SourceRegionIds)
+            {
+                if (id < 1 || id > result.OcrObservations.Length || usedRegionIds[id - 1] ||
+                    result.OcrObservations[id - 1].RequiresReview)
+                    throw InvalidResponse();
+                usedRegionIds[id - 1] = true;
+            }
+        }
         return result;
+    }
+
+    private static bool HasValidPolygon(MangaOcrPoint[]? polygon, int width, int height)
+    {
+        if (polygon is not { Length: 4 }) return false;
+        foreach (MangaOcrPoint point in polygon)
+        {
+            if (!(point.X >= 0 && point.X < width && point.Y >= 0 && point.Y < height)) return false;
+        }
+        return true;
     }
 
     internal static MangaTranslationException InvalidResponse() => new("本地漫画翻译后端返回了无法使用的结果。");
@@ -312,9 +378,25 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
     }
 }
 
+internal enum MangaTranslationRegionReview
+{
+    None,
+    EmptyOrOverLimit,
+    Unchanged,
+    Duplicate,
+    SourceLanguageResidue,
+    SymbolOnly,
+}
+
 internal sealed record MangaTranslationRegion(string SourceText, string TranslatedText,
     int X, int Y, int Width, int Height)
 {
+    public int Id { get; init; }
+    public MangaTranslationRegionReview Review { get; init; }
+    public string? RejectedOutput { get; init; }
+
+    public int[] SourceRegionIds { get; init; } = [];
+
     public bool HasValidBounds(int imageWidth, int imageHeight) =>
         X >= 0 && Y >= 0 && Width > 0 && Height > 0 && X <= imageWidth && Y <= imageHeight &&
         Width <= imageWidth - X && Height <= imageHeight - Y;
@@ -323,6 +405,8 @@ internal sealed record MangaTranslationRegion(string SourceText, string Translat
 internal sealed record MangaTranslationResponse(int SchemaVersion, int Width, int Height, string OcrProvider,
     string? TranslationBackend, MangaTranslationRegion[] Regions)
 {
+    public MangaOcrDetection[] RawDetections { get; init; } = [];
+    public MangaOcrObservation[] OcrObservations { get; init; } = [];
     public string ModelId { get; init; } = "";
     public string TargetLanguage { get; init; } = "zh-CN";
 }

@@ -32,22 +32,34 @@ public sealed class MangaTranslationSettingsTests
     }
 
     [AvaloniaFact]
-    public void DefaultsAndSelectedPreferencesAreAvailableToOtherSettingsPages()
+    public async Task RetiredModelStaysInSettingsButCannotBeSelectedOrInstalled()
     {
         using var fixture = new SettingsFixture();
+        fixture.Services.Settings.MangaTranslationModelId = "hy-mt2-7b";
         using var viewModel = new MangaTranslationSettingsViewModel(fixture.Services);
-        Assert.Equal("hy-mt2-1.8b", viewModel.SelectedModel.Id);
+        Assert.Null(viewModel.SelectedModel);
+        Assert.Contains(viewModel.Models, model => model.Id == "hy-mt2-manga-zh-hans");
+        Assert.DoesNotContain(viewModel.Models, model => model.Id is "hy-mt2-1.8b" or "hy-mt2-7b");
+        Assert.False(viewModel.CanInstall);
+        await viewModel.CheckResourcesAsync();
+        Assert.Contains("选择", viewModel.OperationStatus);
+        Assert.False(Directory.Exists(viewModel.ModelDirectory));
+        await viewModel.InstallCommand.ExecuteAsync(null);
+        Assert.False(Directory.Exists(viewModel.ModelDirectory));
+        var unavailable = await Assert.ThrowsAsync<MangaTranslationException>(() =>
+            fixture.Services.MangaTranslation.TranslateAsync(default, TestContext.Current.CancellationToken));
+        Assert.True(unavailable.RequiresSetup);
+        Assert.Equal(MangaTranslationBackendService.NoTranslationModelMessage, unavailable.Message);
         Assert.Equal("zh-CN", viewModel.SelectedTargetLanguage.Id);
 
         int changes = 0;
         fixture.Services.TranslationPreferencesChanged += (_, _) => changes++;
         viewModel.SelectedTargetLanguage = viewModel.TargetLanguages.Single(language => language.Id == "en");
-        viewModel.SelectedModel = viewModel.Models.Single(model => model.Id == "hy-mt2-7b");
         var snapshot = fixture.Services.GetMangaTranslationPreferences();
         using var reopened = new MangaTranslationSettingsViewModel(fixture.Services);
         Assert.Equal(snapshot.Model, reopened.SelectedModel);
         Assert.Equal(snapshot.Language, reopened.SelectedTargetLanguage);
-        Assert.Equal(2, changes);
+        Assert.Equal(1, changes);
         Assert.Equal("hy-mt2-7b", fixture.Services.Settings.MangaTranslationModelId);
         Assert.Equal("en", fixture.Services.Settings.MangaTranslationTargetLanguage);
     }
@@ -69,7 +81,7 @@ public sealed class MangaTranslationSettingsTests
             reporter.Report(new MangaTranslationInstallProgress("正在下载 rec.onnx（1 MB / 16 MB）", .25,
                 MangaTranslationInstallStage.Downloading, "rec.onnx", 1_000_000, 16_000_000));
             await Task.Delay(Timeout.Infinite, token).ConfigureAwait(false);
-        });
+        }, TestModel);
         viewModel.PropertyChanged += (_, change) =>
         {
             if (change.PropertyName == nameof(viewModel.OperationStatus) && viewModel.OperationStatus.Contains("rec.onnx"))
@@ -104,7 +116,7 @@ public sealed class MangaTranslationSettingsTests
     {
         using var fixture = new SettingsFixture();
         using var viewModel = new MangaTranslationSettingsViewModel(fixture.Services, static (_, _, _) =>
-            Task.FromException(new MangaTranslationException("下载 det.onnx 时连接超时，请重试。")));
+            Task.FromException(new MangaTranslationException("下载 det.onnx 时连接超时，请重试。")), TestModel);
 
         await viewModel.InstallCommand.ExecuteAsync(null);
 
@@ -113,6 +125,8 @@ public sealed class MangaTranslationSettingsTests
         Assert.Equal("重试准备模型", viewModel.InstallLabel);
         Assert.Contains("det.onnx", viewModel.OperationStatus);
     }
+
+    private static MangaTranslationModelOption TestModel { get; } = new("test-model", "Test model", "test.gguf", 1);
 
     private sealed class SettingsFixture : IDisposable
     {

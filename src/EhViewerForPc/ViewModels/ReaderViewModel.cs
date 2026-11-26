@@ -64,15 +64,21 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     public ReaderViewModel(AppServices services, IReaderSource source, int? initialPageNumber = null)
-        : this(services, source, initialPageNumber, services.MangaTranslation.TranslateAsync)
+        : this(services, source, initialPageNumber, translatePage: null,
+            () =>
+            {
+                MangaTranslationPreferences preferences = services.GetMangaTranslationPreferences();
+                return preferences.Model?.Supports(preferences.Language) == true;
+            })
     {
     }
 
     internal ReaderViewModel(AppServices services, IReaderSource source, int? initialPageNumber,
-        Func<ReaderTranslationImage, CancellationToken, Task<MangaTranslationResponse>> translatePage)
+        Func<ReaderTranslationImage, CancellationToken, Task<MangaTranslationResponse>>? translatePage, Func<bool> hasTranslationModel)
     {
         _services = services;
-        _translatePage = translatePage;
+        _translatePage = translatePage ?? TranslateWithReaderContextAsync;
+        _hasTranslationModel = hasTranslationModel;
         _source = source;
         _pages = source.Pages.ToList();
         if (initialPageNumber is int requested)

@@ -10,7 +10,7 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
     private readonly AppServices _services;
     private readonly MangaTranslationBackendService _backend;
     private readonly Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, MangaTranslationModelOption, Task> _installResources;
-    private MangaTranslationModelOption _selectedModel;
+    private MangaTranslationModelOption? _selectedModel;
     private MangaTranslationLanguageOption _selectedTargetLanguage;
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _installation;
@@ -29,38 +29,45 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
     private double _progress = -1;
 
     internal MangaTranslationSettingsViewModel(AppServices services)
-        : this(services, services.MangaTranslationBackend.InstallAsync)
+        : this(services, services.MangaTranslationBackend.InstallAsync, initialModel: null)
     {
     }
 
     internal MangaTranslationSettingsViewModel(AppServices services,
-        Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, Task> installResources)
-        : this(services, (directory, progress, token, _) => installResources(directory, progress, token))
+        Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, Task> installResources,
+        MangaTranslationModelOption initialModel)
+        : this(services, (directory, progress, token, _) => installResources(directory, progress, token), initialModel)
     {
     }
 
     private MangaTranslationSettingsViewModel(AppServices services,
-        Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, MangaTranslationModelOption, Task> installResources)
+        Func<string, IProgress<MangaTranslationInstallProgress>, CancellationToken, MangaTranslationModelOption, Task> installResources,
+        MangaTranslationModelOption? initialModel)
     {
         _services = services;
         _backend = services.MangaTranslationBackend;
         _installResources = installResources;
         MangaTranslationPreferences preferences = services.GetMangaTranslationPreferences();
-        _selectedModel = preferences.Model;
+        _selectedModel = initialModel ?? preferences.Model;
+        if (_selectedModel is null) _operationStatus = "请先选择一个本地翻译候选模型。";
         _selectedTargetLanguage = preferences.Language;
         string configured = preferences.ModelDirectory ?? "";
         _savedDirectory = _modelDirectory = configured.Length == 0 ? _backend.DefaultModelDirectory : configured;
     }
 
     public IReadOnlyList<MangaTranslationModelOption> Models => MangaTranslationModelOption.Choices;
-    public IReadOnlyList<MangaTranslationLanguageOption> TargetLanguages => MangaTranslationLanguageOption.Choices;
+    public IReadOnlyList<MangaTranslationLanguageOption> TargetLanguages => _selectedModel is { } model
+        ? MangaTranslationLanguageOption.Choices.Where(model.Supports).ToArray()
+        : MangaTranslationLanguageOption.Choices;
 
-    public MangaTranslationModelOption SelectedModel
+    public MangaTranslationModelOption? SelectedModel
     {
         get => _selectedModel;
         set
         {
-            if (!CanEditDirectory || value is null || !SetProperty(ref _selectedModel, value)) return;
+            if (!CanSelectModel || value is null || MangaTranslationModelOption.Find(value.Id) != value || !SetProperty(ref _selectedModel, value)) return;
+            OnPropertyChanged(nameof(CanInstall));
+            OnPropertyChanged(nameof(TargetLanguages));
             _services.SaveTranslationModel(value);
             IsReady = false;
             OperationStatus = "正在检查所选模型…";
@@ -73,8 +80,11 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
         get => _selectedTargetLanguage;
         set
         {
-            if (_disposed || value is null || !SetProperty(ref _selectedTargetLanguage, value)) return;
+            if (_disposed || value is null || _selectedModel?.Supports(value) == false ||
+                !SetProperty(ref _selectedTargetLanguage, value)) return;
             _services.SaveTranslationLanguage(value);
+            if (!IsBusy && _selectedModel is not null)
+                _ = CheckDirectoryAsync(_services.Settings.MangaTranslationModelDirectory, save: false, preserveInput: true);
         }
     }
 
@@ -102,7 +112,8 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
     public bool HasUnsavedDirectory => !PathIdentity.Comparer.Equals(ModelDirectory.Trim(), _savedDirectory);
     public bool CanEditDirectory => !_disposed && !IsBusy;
     public bool CanSaveDirectory => CanEditDirectory && HasUnsavedDirectory;
-    public bool CanInstall => CanEditDirectory && _nativeLibrariesAvailable && !HasUnsavedDirectory && !HasDirectoryError;
+    public bool CanSelectModel => CanEditDirectory && Models.Count > 0;
+    public bool CanInstall => SelectedModel is not null && CanEditDirectory && _nativeLibrariesAvailable && !HasUnsavedDirectory && !HasDirectoryError;
     public bool CanCheckResources => CanEditDirectory && !HasUnsavedDirectory;
     public bool CanCancel => IsInstalling && !_isCancelling;
     public string InstallLabel => _offerRetry ? "重试准备模型" : IsReady ? "校验并补齐资源" : "下载并准备模型";
@@ -205,9 +216,10 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
             _savedDirectory = result.Directory;
             if (restoreSavedDirectory) ModelDirectory = result.Directory;
             _nativeLibrariesAvailable = result.Native;
-            IsReady = result.Ready;
+            IsReady = result.Ready && model?.Supports(SelectedTargetLanguage) == true;
             SetRetryLabel(false);
-            OperationStatus = result.Ready ? "本地资源已就绪，可以在阅读器翻译本页。" : result.Native
+            OperationStatus = model is null ? "请先选择一个本地翻译候选模型。" :
+                !model.Supports(SelectedTargetLanguage) ? "当前模型只支持简体中文，请选择该目标语言。" : result.Ready ? "本地资源已就绪，可以在阅读器翻译本页。" : result.Native
                 ? "本地模型尚未准备完整。" : MangaTranslationBackendService.MissingNativeLibrariesMessage;
         }
         catch (OperationCanceledException) when (_disposed) { }
@@ -228,9 +240,8 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallAsync()
     {
-        if (!CanInstall) return;
+        if (!CanInstall || SelectedModel is not { } model) return;
         string configured = _services.Settings.MangaTranslationModelDirectory;
-        var model = SelectedModel;
         string[] protectedRoots = SnapshotProtectedRoots();
         using var job = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _installation = job;
@@ -258,10 +269,13 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
             job.Token.ThrowIfCancellationRequested();
             if (!_disposed)
             {
-                IsReady = ready;
-                if (ready) _services.NotifyTranslationResourcesReady();
-                SetRetryLabel(!IsReady);
-                OperationStatus = IsReady ? "本地资源已就绪，可以在阅读器翻译本页。" : "资源仍未准备完整，请重新尝试。";
+                bool supportsLanguage = model.Supports(SelectedTargetLanguage);
+                IsReady = ready && supportsLanguage;
+                if (IsReady) _services.NotifyTranslationResourcesReady();
+                SetRetryLabel(!ready);
+                OperationStatus = ready
+                    ? supportsLanguage ? "本地资源已就绪，可以在阅读器翻译本页。" : "当前模型只支持简体中文，请选择该目标语言。"
+                    : "资源仍未准备完整，请重新尝试。";
             }
         }
         catch (OperationCanceledException) when (job.IsCancellationRequested)
@@ -350,6 +364,7 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(HasUnsavedDirectory));
         OnPropertyChanged(nameof(CanEditDirectory));
         OnPropertyChanged(nameof(CanSaveDirectory));
+        OnPropertyChanged(nameof(CanSelectModel));
         OnPropertyChanged(nameof(CanInstall));
         OnPropertyChanged(nameof(CanCheckResources));
     }

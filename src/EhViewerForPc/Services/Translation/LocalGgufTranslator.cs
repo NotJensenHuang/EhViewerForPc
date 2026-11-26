@@ -7,17 +7,15 @@ using System.Text;
 namespace EhViewerForPc.Services;
 
 // 连续页复用模型及上下文，每个对白独立重置提示与 KV 状态。
-internal sealed unsafe class HyMtTranslator : IDisposable
+internal sealed unsafe class LocalGgufTranslator : IDisposable
 {
-    private const string SmallChatTemplateHash = "B7491EC0E9C869DFCE20F2176758099BF248D979DD05530EDE99DEB21698ACEE";
-    private const string LargeChatTemplateHash = "788AC16C5D7BFEFC28655928AD524C8F378A44CB24D24FB125D6A5859B167677";
     private const int ContextTokens = 2048;
     private const int BatchTokens = 128;
     private const int OutputTokens = 256;
     private const int OutputBytes = 16 * 1024;
     private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
-    private readonly HyMtLlamaNative _native;
+    private readonly LlamaNative _native;
     private nint _model;
     private nint _context;
     private nint _vocabulary;
@@ -25,19 +23,20 @@ internal sealed unsafe class HyMtTranslator : IDisposable
     private nint* _devices;
     private FileStream? _modelFile;
     private GCHandle _loadStateHandle;
-    private int _bos;
-    private int _user = -1;
-    private int _assistant;
+    private int[] _prefix = [];
+    private int[] _suffix = [];
+    private bool _mangaModel;
+    private int _turnStart = -1;
     private int _batchSize;
     private int _promptCapacity;
     private bool _disposed;
 
-    private HyMtTranslator(HyMtLlamaNative native) => _native = native;
+    private LocalGgufTranslator(LlamaNative native) => _native = native;
 
     internal string Device => _native.DeviceName;
     internal int OffloadedLayers { get; private set; }
 
-    internal static HyMtTranslator Load(string runtimeDirectory, string modelDirectory, MangaTranslationModelOption model,
+    internal static LocalGgufTranslator Load(string runtimeDirectory, string modelDirectory, MangaTranslationModelOption model,
         CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
@@ -45,7 +44,7 @@ internal sealed unsafe class HyMtTranslator : IDisposable
         if (!MangaTranslationBackendService.IsLocalFile(modelPath, model.Bytes))
             throw new MangaTranslationException("本地翻译模型未准备完整。", requiresSetup: true);
 
-        var translator = new HyMtTranslator(HyMtLlamaNative.Get(runtimeDirectory));
+        var translator = new LocalGgufTranslator(LlamaNative.Get(runtimeDirectory));
         try
         {
             translator.LoadModel(modelPath, model, token);
@@ -73,7 +72,7 @@ internal sealed unsafe class HyMtTranslator : IDisposable
         _loadStateHandle = GCHandle.Alloc(state);
         _devices = (nint*)NativeMemory.AllocZeroed(2, (nuint)sizeof(nint));
         _devices[0] = _native.Device;
-        HyMtLlamaNative.ModelParameters modelParameters = _native.DefaultModelParameters();
+        LlamaNative.ModelParameters modelParameters = _native.DefaultModelParameters();
         modelParameters.Devices = (nint)_devices;
         modelParameters.GpuLayers = -1; // 卸载所选 Vulkan 设备支持的全部层。
         modelParameters.ProgressCallback = (nint)(delegate* unmanaged[Cdecl]<float, nint, byte>)&CheckModelProgress;
@@ -99,24 +98,33 @@ internal sealed unsafe class HyMtTranslator : IDisposable
         OffloadedLayers = state.OffloadedLayers;
 
         _vocabulary = _native.GetVocabulary(_model);
-        bool smallModel = model == MangaTranslationModelOption.Choices[0];
-        if (_vocabulary == 0 || !HasExpectedChatTemplate(smallModel ? SmallChatTemplateHash : LargeChatTemplateHash))
-            throw new MangaTranslationException("本地翻译模型的词表或对话模板不兼容。", requiresSetup: true);
-        if (smallModel)
+        if (_vocabulary == 0)
+            throw new MangaTranslationException("本地翻译模型的词表不可用。", requiresSetup: true);
+        _mangaModel = model.Id switch
         {
-            _bos = ReadSpecialToken("<｜hy_begin▁of▁sentence｜>"u8);
-            _user = ReadSpecialToken("<｜hy_User｜>"u8);
-            _assistant = ReadSpecialToken("<｜hy_Assistant｜>"u8);
+            "hy-mt2-manga-zh-hans" => true,
+            "qwen2.5-7b-ja2zh" or "qwen3-4b-ja2zh-eval" or "qwen3-8b-ja2zh-eval" => false,
+            _ => throw new MangaTranslationException("未知的本地翻译模型。", requiresSetup: true),
+        };
+        if (_mangaModel)
+        {
+            int bos = ReadSpecialToken("<｜hy_begin▁of▁sentence｜>"u8);
+            if (bos != _native.GetBos(_vocabulary))
+                throw new MangaTranslationException("漫画翻译模型的起始标记不兼容。", requiresSetup: true);
+            _prefix = [bos, ReadSpecialToken("<｜hy_User｜>"u8)];
+            _suffix = [ReadSpecialToken("<｜hy_Assistant｜>"u8)];
         }
         else
         {
-            _bos = ReadSpecialToken("<|startoftext|>"u8);
-            _assistant = ReadSpecialToken("<|extra_0|>"u8);
+            int start = _turnStart = ReadSpecialToken("<|im_start|>"u8);
+            int end = ReadSpecialToken("<|im_end|>"u8);
+            int[] newline = TokenizeLiteral("\n");
+            _prefix = [start, .. TokenizeLiteral("system\n将以下日语字幕翻译成中文，文本可能存在识别错误，请根据语境修正后翻译。只输出中文。"),
+                end, .. newline, start, .. TokenizeLiteral("user\n")];
+            _suffix = [end, .. newline, start, .. TokenizeLiteral("assistant\n")];
         }
-        if (_bos != _native.GetBos(_vocabulary))
-            throw new MangaTranslationException("本地翻译模型的起始标记不兼容。", requiresSetup: true);
 
-        HyMtLlamaNative.ContextParameters parameters = _native.DefaultContextParameters();
+        LlamaNative.ContextParameters parameters = _native.DefaultContextParameters();
         parameters.ContextSize = ContextTokens;
         parameters.BatchSize = BatchTokens;
         parameters.MicroBatchSize = BatchTokens;
@@ -135,10 +143,24 @@ internal sealed unsafe class HyMtTranslator : IDisposable
             throw new MangaTranslationException("本地翻译模型的上下文不可用。");
     }
 
-    private bool HasExpectedChatTemplate(string expectedHash)
+    private int[] TokenizeLiteral(string text)
     {
-        string? template = Marshal.PtrToStringUTF8(_native.ChatTemplate(_model, 0));
-        return template is not null && Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(template))) == expectedHash;
+        byte[] input = Encoding.UTF8.GetBytes(text);
+        Span<int> tokens = stackalloc int[256];
+        int count = TokenizeText(input, tokens);
+        return tokens[..count].ToArray();
+    }
+
+    private int TokenizeText(ReadOnlySpan<byte> input, Span<int> tokens)
+    {
+        // 区域原文和参考文本始终按普通文字处理，防止被解释成模板控制标记。
+        fixed (byte* source = input)
+        fixed (int* target = tokens)
+        {
+            int count = _native.Tokenize(_vocabulary, source, input.Length, target, tokens.Length, 0, 0);
+            if (count < 0 || count > tokens.Length) throw new MangaTranslationRegionLimitException();
+            return count;
+        }
     }
 
     private int ReadSpecialToken(ReadOnlySpan<byte> marker)
@@ -149,7 +171,7 @@ internal sealed unsafe class HyMtTranslator : IDisposable
         throw new MangaTranslationException("本地翻译模型的对话标记不兼容。", requiresSetup: true);
     }
 
-    internal string Translate(string text, MangaTranslationLanguageOption language, CancellationToken token)
+    internal string Translate(string text, string context, CancellationToken token)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         token.ThrowIfCancellationRequested();
@@ -160,24 +182,20 @@ internal sealed unsafe class HyMtTranslator : IDisposable
         int[] prompt = ArrayPool<int>.Shared.Rent(_promptCapacity);
         try
         {
-            byte[] input = Encoding.UTF8.GetBytes(language.CreatePrompt(text));
             Span<int> tokens = prompt.AsSpan(0, _promptCapacity);
-            tokens[0] = _bos;
-            int prefixLength = 1;
-            if (_user >= 0) tokens[prefixLength++] = _user;
-            int capacity = tokens.Length - prefixLength - 1;
+            _prefix.CopyTo(tokens);
+            Span<int> content = tokens.Slice(_prefix.Length, tokens.Length - _prefix.Length - _suffix.Length);
             int count;
-            // 两份 GGUF 的无系统提示单轮模板均以助手标记结尾，1.8B 另有用户标记。
-            // 保持 OCR 文字正文的特殊标记外观，不把它们解析为控制令牌。
-            fixed (byte* data = input)
-            fixed (int* target = tokens)
-                count = _native.Tokenize(_vocabulary, data, input.Length, target + prefixLength, capacity, 0, 0);
-            if (count < 0 || count > capacity) throw new MangaTranslationRegionLimitException();
-            if (count == 0) throw new MangaTranslationException("无法将当前对白转换为翻译模型输入。");
-            tokens[prefixLength + count] = _assistant;
+            try { count = TokenizeText(Encoding.UTF8.GetBytes(CreateInput(text, context)), content); }
+            catch (MangaTranslationRegionLimitException) when (context.Length > 0)
+            {
+                count = TokenizeText(Encoding.UTF8.GetBytes(CreateInput(text, "")), content);
+            }
+            if (count == 0) throw new MangaTranslationRegionLimitException();
+            _suffix.CopyTo(tokens[(_prefix.Length + count)..]);
 
             _native.ClearMemory(_memory, 0);
-            ReadOnlySpan<int> pending = tokens[..(prefixLength + count + 1)];
+            ReadOnlySpan<int> pending = tokens[..(_prefix.Length + count + _suffix.Length)];
             while (!pending.IsEmpty)
             {
                 int length = Math.Min(pending.Length, _batchSize);
@@ -188,6 +206,15 @@ internal sealed unsafe class HyMtTranslator : IDisposable
             return Generate(token);
         }
         finally { ArrayPool<int>.Shared.Return(prompt, clearArray: true); }
+    }
+
+    private string CreateInput(string text, string context)
+    {
+        string instruction = _mangaModel
+            ? "Translate this Japanese manga line into natural Simplified Chinese. Preserve meaning, tone, names and sound effects. Output only the translation.\n\n"
+            : "";
+        return context.Length == 0 ? instruction + text : instruction +
+            $"Reference only. Do not translate or repeat the reference.\n{context}\n\nCurrent Japanese line:\n{text}";
     }
 
     private void Decode(ReadOnlySpan<int> input, CancellationToken token)
@@ -202,14 +229,14 @@ internal sealed unsafe class HyMtTranslator : IDisposable
 
     private string Generate(CancellationToken token)
     {
-        nint sampler = _native.SamplerChainCreate(new HyMtLlamaNative.SamplerParameters { NoPerf = 1 });
+        nint sampler = _native.SamplerChainCreate(new LlamaNative.SamplerParameters { NoPerf = 1 });
         if (sampler == 0) throw new MangaTranslationException("无法创建本地翻译采样器。");
         try
         {
-            AddSampler(sampler, _native.SamplerPenalties(_native.GetVocabularySize(_vocabulary), 64, 1.05f, 0, 0));
+            AddSampler(sampler, _native.SamplerPenalties(_native.GetVocabularySize(_vocabulary), 64, _mangaModel ? 1.05f : 1.25f, 0, 0));
             AddSampler(sampler, _native.SamplerTopK(20));
-            AddSampler(sampler, _native.SamplerTopP(0.6f, 1));
-            AddSampler(sampler, _native.SamplerTemperature(0.7f));
+            AddSampler(sampler, _native.SamplerTopP(_mangaModel ? 0.6f : 0.9f, 1));
+            AddSampler(sampler, _native.SamplerTemperature(_mangaModel ? 0.15f : 0.7f));
             AddSampler(sampler, _native.SamplerDistribution((uint)RandomNumberGenerator.GetInt32(int.MaxValue)));
 
             Span<int> output = stackalloc int[OutputTokens];
@@ -217,11 +244,16 @@ internal sealed unsafe class HyMtTranslator : IDisposable
             {
                 token.ThrowIfCancellationRequested();
                 int id = _native.SamplerSample(sampler, _context, -1);
-                if (_native.IsEndOfGeneration(_vocabulary, id) != 0) return DecodeOutput(output[..count]);
+                if (_native.IsEndOfGeneration(_vocabulary, id) != 0 || id == _turnStart)
+                {
+                    string result = DecodeOutput(output[..count]);
+                    if (!_mangaModel && result.Trim().Contains('\n')) throw new MangaTranslationRegionLimitException(result);
+                    return result;
+                }
                 output[count] = id;
                 if (count + 1 < output.Length) Decode(output.Slice(count, 1), token);
             }
-            throw new MangaTranslationException("本地翻译结果超过长度上限。");
+            throw new MangaTranslationRegionLimitException(DecodeOutput(output));
         }
         finally { _native.SamplerFree(sampler); }
     }
@@ -234,7 +266,7 @@ internal sealed unsafe class HyMtTranslator : IDisposable
 
     private string DecodeOutput(ReadOnlySpan<int> output)
     {
-        if (output.IsEmpty) throw new MangaTranslationException("本地翻译结果为空。");
+        if (output.IsEmpty) throw new MangaTranslationRegionLimitException();
         byte[] bytes = ArrayPool<byte>.Shared.Rent(OutputBytes);
         try
         {

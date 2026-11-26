@@ -69,6 +69,12 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         _ => $"{bytes / (1024d * 1024):0.#} MiB",
     };
 
+    internal static Task<bool> VerifyTranslationWeightAsync(string directory, MangaTranslationModelOption model, CancellationToken token)
+    {
+        Asset weight = Manifest.Value.Single(asset => asset.Group == model.Id);
+        return MatchesAsync(Path.Combine(directory, weight.Name), weight, token);
+    }
+
     public static string? GetModelSignature(string directory, MangaTranslationModelOption? model = null)
     {
         if (!MangaTranslationBackendService.IsLocalDirectory(directory)) return null;
@@ -344,10 +350,9 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
 
     private static IEnumerable<Asset> GetAssets(MangaTranslationModelOption? model)
     {
-        model ??= MangaTranslationModelOption.Resolve(null);
         foreach (Asset asset in Manifest.Value)
         {
-            if (asset.Group == "model" || asset.Group == model.Id)
+            if (asset.Group == "model" || asset.Group == model?.Id)
                 yield return asset;
         }
     }
@@ -362,14 +367,14 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         {
             if (line.Length == 0 || line[0] == '#') continue;
             string[] fields = line.Split('\t');
-            if (fields.Length < 5 || (fields[0] != "model" && MangaTranslationModelOption.Find(fields[0]) is null) ||
+            if (fields.Length < 5 || (fields[0] != "model" && MangaTranslationModelOption.FindForEvaluation(fields[0]) is null) ||
                 fields[1] != Path.GetFileName(fields[1]) ||
                 !long.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out long bytes) || bytes <= 0)
                 throw new InvalidDataException("内置翻译资源清单无效。");
             assets.Add(new Asset(fields[0], fields[1], bytes, Convert.FromHexString(fields[3]),
                 fields.Skip(4).Select(static value => new Uri(value)).ToArray()));
         }
-        foreach (MangaTranslationModelOption model in MangaTranslationModelOption.Choices)
+        foreach (MangaTranslationModelOption model in MangaTranslationModelOption.Choices.Concat(MangaTranslationModelOption.EvaluationOnly))
         {
             if (assets.Count(asset => asset.Group == model.Id && asset.Name == model.FileName && asset.Bytes == model.Bytes) != 1 ||
                 assets.Count(asset => asset.Group == model.Id) != 1)

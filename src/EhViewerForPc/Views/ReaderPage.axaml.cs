@@ -108,7 +108,7 @@ public partial class ReaderPage : DocumentPage
     private void ScheduleAutoTranslation()
     {
         _autoTranslationTimer.Stop();
-        if (_loaded && !_disposed && _viewModel.AutoTranslateReaderPages)
+        if (_loaded && !_disposed && _viewModel.CanScheduleAutoTranslation)
             _autoTranslationTimer.Start();
     }
 

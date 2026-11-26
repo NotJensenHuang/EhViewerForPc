@@ -30,8 +30,7 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
 {
     internal const string MissingNativeLibrariesMessage = "此发行包缺少本地 GPU 翻译库。请重新安装或解压完整的 Windows x64 发行包。";
 
-    // 沿用旧版已校验模型记录的键，模型本身的字节和签名格式没有变化。
-    private const string ModelReceiptVersion = "runtime-v1-";
+    internal const string NoTranslationModelMessage = "当前版本没有可用的本地翻译模型。";
     private const string OverrideVariable = "EHVIEWER_MANGA_TRANSLATION_BACKEND";
     private const string CacheVariable = "EHVIEWER_MANGA_TRANSLATION_ASSET_CACHE";
     private static readonly string[] NativeLibraries =
@@ -39,8 +38,8 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
         "ort/onnxruntime.dll", "ort/DirectML.dll", "ort/onnxruntime_providers_shared.dll",
         "gguf/llama.dll", "gguf/ggml.dll", "gguf/ggml-base.dll", "gguf/ggml-vulkan.dll",
         "gguf/ggml-cpu-x64.dll", "gguf/libomp.dll",
-        "ort/msvcp140.dll", "ort/msvcp140_1.dll", "ort/vcruntime140.dll", "ort/vcruntime140_1.dll",
         "gguf/msvcp140.dll", "gguf/msvcp140_1.dll", "gguf/vcruntime140.dll", "gguf/vcruntime140_1.dll",
+        "ort/msvcp140.dll", "ort/msvcp140_1.dll", "ort/vcruntime140.dll", "ort/vcruntime140_1.dll",
     ];
 
     private readonly object _gate = new();
@@ -73,11 +72,13 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            if (model is null || MangaTranslationModelOption.Find(model.Id) != model)
+                throw new MangaTranslationException(NoTranslationModelMessage, requiresSetup: true);
             if (!_install.IsCompleted) throw new MangaTranslationException("本地翻译资源正在下载。");
             _install = Task.Run(async () =>
             {
                 using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
-                await InstallCoreAsync(configured, progress, cancellation.Token, model ?? MangaTranslationModelOption.Resolve(null)).ConfigureAwait(false);
+                await InstallCoreAsync(configured, progress, cancellation.Token, model).ConfigureAwait(false);
             });
             return _install;
         }
@@ -85,7 +86,7 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
 
     internal MangaTranslationBackendPaths? Resolve(string? configured, MangaTranslationModelOption? model = null)
     {
-        model ??= MangaTranslationModelOption.Resolve(null);
+        if (model is null || MangaTranslationModelOption.Find(model.Id) != model) return null;
         string models = GetModelDirectory(configured);
         string? signature = MangaTranslationAssetInstaller.GetModelSignature(models, model);
         return signature is not null && HasModelReceipt(models, signature, model) && HasNativeLibraries()
@@ -141,9 +142,7 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
     private string ModelReceiptPath(string modelDirectory, MangaTranslationModelOption model)
     {
         string pathKey = OperatingSystem.IsWindows() ? modelDirectory.ToUpperInvariant() : modelDirectory;
-        string version = model == MangaTranslationModelOption.Choices[0]
-            ? ModelReceiptVersion : ModelReceiptVersion + model.Id + "|";
-        byte[] key = SHA256.HashData(Encoding.UTF8.GetBytes(version + pathKey));
+        byte[] key = SHA256.HashData(Encoding.UTF8.GetBytes("runtime-v1-" + model.Id + "|" + pathKey));
         return Path.Combine(paths.MangaTranslationDirectory, "verified-models", Convert.ToHexString(key) + ".txt");
     }
 
