@@ -1,5 +1,10 @@
 # 变更记录
 
+## 2026-11-26 阅读器接入 JMangaTranslator-Fast 单气泡 CPU 翻译
+
+- `MangaTranslationWorker.cs` 和漫画翻译设置接入 JMangaTranslator-Fast v1。CPU 运行 OCR 与 ONNX 翻译，用户同意非商用权重许可后按需准备。
+- `MangaTranslationAssetInstaller.cs` 支持分目录校验多文件模型，保留完整资源、取消及重试行为。
+
 ## 2026-11-26 漫画翻译日中候选与 OCR 复核
 
 - `MangaTranslationOptions.cs` 和 `backend-assets.tsv` 移除旧通用 Hy-MT2 1.8B/7B，增加 Hy-MT2 日中漫画微调和 Qwen2.5 7B 日中字幕微调试用。受授权限制的 Qwen3 4B/8B 使用独立本地评测入口。

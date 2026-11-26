@@ -2,7 +2,7 @@
 
 | 候选与核验版本 | 权重、架构与许可 | 推理路径和限制 |
 | --- | --- | --- |
-| JMangaTranslator-Fast v1，文件集 `151ceba` | 368M 单气泡编码解码，根目录 1.47 GB Safetensors，ONNX 发布版 1.54 GB，包含 encoder、decoder 和 72 MB host 数组。权重 CC BY-NC-SA 4.0，代码 MIT。训练含 OpenSakura 与作者私有漫画文本 | C# 可使用 ONNX Runtime 加载两个计算图，还需实现 SentencePiece、host 数组处理和自回归解码。单气泡接口没有页或跨页上下文。作者测 Manga109-s 的参考译文为模型生成，作者速度测试的 RTX 3060 为 12 GB。[模型卡](https://huggingface.co/muscgab/JMangaTranslator-Fast) · [ONNX 文件](https://huggingface.co/muscgab/JMangaTranslator-Fast/tree/main/onnx) · [权重许可](https://huggingface.co/muscgab/JMangaTranslator-Fast/blob/main/LICENSE-weights.md) |
+| JMangaTranslator-Fast v1，文件集 `151ceba` | 368M 单气泡编码解码，根目录 1.47 GB Safetensors，ONNX 发布版 1.54 GB，包含 encoder、decoder 和 72 MB host 数组。权重 CC BY-NC-SA 4.0，代码 MIT。训练含 OpenSakura 与作者私有漫画文本 | 阅读器已通过 C# ONNX Runtime 加载两张计算图，实现 SentencePiece、host 数组处理和自回归解码。单气泡接口没有页或跨页上下文。作者测 Manga109-s 的参考译文为模型生成，作者速度测试的 RTX 3060 为 12 GB。[模型卡](https://huggingface.co/muscgab/JMangaTranslator-Fast) · [ONNX 文件](https://huggingface.co/muscgab/JMangaTranslator-Fast/tree/main/onnx) · [权重许可](https://huggingface.co/muscgab/JMangaTranslator-Fast/blob/main/LICENSE-weights.md) |
 | NanoSakura-2.2-0.2B，`5f09a52` | 752 MB Safetensors，MIT，Transformer 编码器和 Mamba2 解码器，包含 tokenizer.json 和 tokenizer_config.json。配置 auto_map 指向发布者的 modeling_mamba2_s2s.py。训练资料含 ACG 蒸馏与维基平行文本 | 需要审计和固定自定义代码并验证本地推理或 ONNX 导出。未找到发布者提供的可直接装载 ONNX。当前 runner 不执行此代码。[权重目录](https://huggingface.co/telecomadm1145/NanoSakura-2.2-0.2B/tree/5f09a52217890f8ceff884e69e4deec24e91e2fb) · [模型卡](https://huggingface.co/telecomadm1145/NanoSakura-2.2-0.2B) |
 | enet45 Qwen3-8B Ja2Zh 1.1 merged | 发布仓库显示 Safetensors、Apache 2.0 与 Ja2Zh 字幕训练数据引用。仓库网页的敏感内容访问提示使本轮未独立核验索引和各分片大小 | 同作者另有固定量化版，候选尚无推理证据。不从上游 Qwen 通用模型的效果外推该微调版。[权重目录](https://huggingface.co/enet45/qwen3-8b-ja2zh-merged-v1.1/tree/main) |
 | Qwen3-4B 通用 | 官方提供 Apache 2.0 的 Safetensors 及 GGUF 量化发布 | llama.cpp 具备独立运行路径，翻译需要明确语言和聊天模板模式。保真、上下文和峰值显存需要真实推理。[原始权重](https://huggingface.co/Qwen/Qwen3-4B) · [GGUF 文件](https://huggingface.co/Qwen/Qwen3-4B-GGUF/tree/main) |
@@ -71,7 +71,7 @@ python tools/translation/Measure-JManga.py --checkpoint $qa --output "$qa/run.js
 
 | 模型 | 状态与使用边界 |
 | --- | --- |
-| JMangaTranslator-Fast v1 | 已在同一语料日中子集实际运行。只支持单气泡，权重为非商用许可，属于独立评测。 |
+| JMangaTranslator-Fast v1 | 已在同一语料日中子集实际运行。阅读器已接入 CPU 单气泡模式。仅限非商用，需主动同意许可后按需安装。 |
 | NanoSakura-2.2-0.2B | 固定版本为 5f09a52217890f8ceff884e69e4deec24e91e2fb，单个 752,415,808 字节 FP32 Safetensors，公开 SHA-256 为 0e6324344ad76994b607f45b2dc2d352bf0cb8d1f268b0fb6faed8b127d1764a。MIT。已下载配置及作者的自定义 Python 推理类进行源审查，分词器已完成续传，真实权重下载后未达完整校验，部分文件已留存。已用随机微型同结构在 CPU 执行生成路径验证，模型真实质量仍未验证。作者使用 Mamba2 递归缓存与交叉注意力，输入句尾须手动加 <eos>。标准 Transformers 自动识别、现有 llama.cpp 与 C# ONNX 路径均无法直接读取此格式。可用固定源码类手动装载 Safetensors 或显式导出编码器、单步解码图和缓存状态，需独立验证。 |
 | Qwen3 通用与 enet45 Qwen3 8B 微调 | 官方通用 4B 有 llama.cpp 路径，未执行该通用模型对照。同作者提供 Apache 2.0 的 8B Q4 K M GGUF，固定版本 b46f43f522d343e1d2a6e0c4dc5a75100b99c5cd。该仓库访问需授权，8B 仍是待评测。[部署说明](MODEL_DEPLOYMENT.md) |
 | M2M100 418M | 已用实际权重在同一语料完成 17 项。与 JMangaTranslator-Fast 在 7 个日中单气泡交集上可比较。 |
@@ -148,3 +148,12 @@ $qa = '.qa/translation-nanosakura'
 hf download telecomadm1145/NanoSakura-2.2-0.2B --revision 5f09a52217890f8ceff884e69e4deec24e91e2fb --local-dir $qa config.json tokenizer.json modeling_mamba2_s2s.py model.safetensors
 python tools/translation/Measure-Seq2Seq.py --family nano-sakura --model-id telecomadm1145/NanoSakura-2.2-0.2B --revision 5f09a52217890f8ceff884e69e4deec24e91e2fb --checkpoint $qa --num-beams 1 --output "$qa/run.jsonl"
 ~~~
+
+
+### 阅读器的 C# JManga 后端
+
+`JMangaTranslator.cs` 使用项目随附 ONNX Runtime 1.23.0 的 CPU 执行提供程序，分别复用编码器和单步解码器。词片来自上游 Japanese Unigram 和 Chinese SentencePiece 文件。C# 端实现相同的 Metaspace、Viterbi 分词、UTF-8 回退、目标词表映射及作者的假名字节限制。解码在区域之间复用内存并在每次新区域前清理缓存。每区单独推理，超过源 128 token 或生成达到作者的步数上限时，返回区域需复核状态。
+
+独立 .NET 11 Release 探针使用项目源码与两组官方 ONNX 图及配套权重。本文 j01–j07 七条日中单气泡的 C# 结果与作者 Python 后端逐条完全一致。Windows 11、i5-13600KF、CPU 单模型两会话，线程各最多 6。最终探针的加载后 P50 48.18 ms，最近秩 P95 63.81 ms，n=7。该记录用于验证兼容和输出一致性。首轮耗时受工作集、版本和系统负载影响，不能据两组小样本推断通用速度优势。
+
+日文分词另与作者 Rust Tokenizers 0.20.1 对照 230 个文本，覆盖空白、Emoji、CJK 补充平面、组合字符、其它文字及作者特殊标记，230 组 token ID 序列全部一致。中文解码另在 228 组词片序列上与作者 SentencePiece 0.2.0 逐字一致，含开头空格、有效字节回退和残缺 UTF-8。xUnit 回归覆盖最优 Unigram 路径、附加标记、UTF-8 回退、边界长度、目标解码及假名字节限制。原始译文和计时在 `.qa/translation-candidates-20261126/jmanga-csharp-evidence-r3.tsv`。阅读器设置、发布流程及整页验证以[部署说明](MODEL_DEPLOYMENT.md)和最终验收记录为准。

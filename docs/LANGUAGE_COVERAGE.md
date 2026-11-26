@@ -15,6 +15,6 @@
 
 语言列表与使用接口可查阅 [Meta NLLB 模型卡](https://huggingface.co/facebook/nllb-200-distilled-600M)、[Meta M2M100 模型卡](https://huggingface.co/facebook/m2m100_418M)、[Google MADLAD 模型卡](https://huggingface.co/google/madlad400-3b-mt)和 [Helsinki-NLP OPUS 模型卡](https://huggingface.co/Helsinki-NLP/opus-mt-en-zh)。
 
-阅读器的两项试验模型是 Hy-MT2 漫画微调和 Qwen2.5 7B 字幕微调，方向均为日语 → 简体中文。具备读取所选模型资产与提示词的能力仍需和质量验收分别判断。独立基准的其他语言方向暂不进入阅读器。
+阅读器的日语 → 简体中文模型包括 JMangaTranslator-Fast CPU 单气泡模式，以及 Hy-MT2 漫画微调和 Qwen2.5 7B 字幕微调两个 GPU 试用选项。具备读取所选模型资产与提示词的能力仍需和质量验收分别判断。独立基准的其他语言方向暂不进入阅读器。
 
 本机单句实测覆盖 NLLB 的全部 13 个多语样本方向，M2M100 和 MADLAD 各 10 个方向，OPUS-MT 的英中 1 个方向。上述模型成功产出字符串只证明语言令牌和模型接口可以工作。所得结果包括字形符合却丢失信息、称谓改变和拟声词完全失真。[翻译候选评估](TRANSLATION_MODEL_EVALUATION.md)

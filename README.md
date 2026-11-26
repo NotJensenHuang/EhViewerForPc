@@ -128,7 +128,7 @@ dotnet run --project src/EhViewerForPc -c Release
 | :--- | :--- | :--- |
 | 本地资料库 | 只读扫描、多源合并、版本管理、搜索筛选 | 虚拟化网格、按源隔离的签名缓存、缓存优先启动 |
 | 阅读器 | 单页 / 纵向 / 横向、动图、进度、在线页面源 | 按需解析分页、占位回填、共享进度键、图像内存预算 |
-| 漫画翻译 | 日语 → 简体中文试用模型、手动与自动翻译、待复核区块 | DirectML OCR 与 Vulkan GGUF |
+| 漫画翻译 | 日语 → 简体中文、手动与自动翻译、待复核区块 | JMangaTranslator-Fast CPU ONNX，另有 DirectML OCR 与 Vulkan GGUF 试用 |
 | 下载 | 队列、断点续传、并发与限速、目录搬迁 | 持久化状态、原子写入、迁移日志与回滚 |
 | 在线浏览 | 搜索、订阅、排行榜、书签、详情、评分与归档 | 自研容错 HTML 解析、固定结构夹具回归、Cookie 会话 |
 | 以图搜图 | 索引、裁剪检索、命中页定位 | 托管 C# 后端、SkiaSharp / SQLite、独立无窗口 Host |
@@ -287,7 +287,7 @@ logs/                    运行日志（不含 token 与页面内容）
 
 ### 本地漫画翻译后端
 
-旧通用 Hy-MT2 1.8B/7B 已退役。模型设置提供 Hy-MT2 漫画日中微调和 Qwen2.5 7B 日中字幕微调两个试用选项。选择候选和简体中文，再准备权重。应用保留旧首选项及磁盘文件。Qwen3 4B/8B 需取得作者许可后手动取得权重，使用 `--manga-translation-worker --evaluate <TSV> <模型目录> <原生库目录> <模型 ID>` 评测。见[部署与命令](docs/MODEL_DEPLOYMENT.md)和[基准报告](docs/BENCHMARK_REPORT.md)。
+旧通用 Hy-MT2 1.8B/7B 已退役。模型设置提供 JMangaTranslator-Fast v1 CPU ONNX，以及 Hy-MT2 漫画日中微调和 Qwen2.5 7B 日中字幕微调两个 GPU 试用选项。JMangaTranslator-Fast 仅限非商用，明确同意权重许可后按需下载。选择候选和简体中文，再准备权重。应用保留旧首选项及磁盘文件。Qwen3 4B/8B 需取得作者许可后手动取得权重，使用 `--manga-translation-worker --evaluate <TSV> <模型目录> <原生库目录> <模型 ID>` 评测。见[部署与命令](docs/MODEL_DEPLOYMENT.md)和[基准报告](docs/BENCHMARK_REPORT.md)。
 
 ## 🧪 测试与验证
 

@@ -2,8 +2,13 @@ namespace EhViewerForPc.Services;
 
 public sealed record MangaTranslationModelOption(string Id, string Name, string FileName, long Bytes)
 {
+    internal const string JMangaId = "jmanga-fast-v1";
+    internal const string JMangaDirectory = "jmanga-v1";
+    internal bool UsesCpu => Id == JMangaId;
+
     public static IReadOnlyList<MangaTranslationModelOption> Choices { get; } = Array.AsReadOnly<MangaTranslationModelOption>(
     [
+        new(JMangaId, "JMangaTranslator-Fast v1 · CPU · 约 1.55 GB", JMangaDirectory + "/onnx/encoder_fp32.onnx", 1_294_638_243),
         new("hy-mt2-manga-zh-hans", "Hy-MT2 漫画日中微调（试用）· 约 1.13 GB", "manga-zh-Hans-v1-Q4_K_M.gguf", 1_133_080_416),
         new("qwen2.5-7b-ja2zh", "Qwen2.5 7B 日中字幕微调（试用）· 约 4.68 GB", "qwen2.5-7b-ja2zh-q4_k_m.gguf", 4_683_073_440),
     ]);

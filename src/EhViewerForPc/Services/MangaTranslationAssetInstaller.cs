@@ -69,10 +69,14 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         _ => $"{bytes / (1024d * 1024):0.#} MiB",
     };
 
-    internal static Task<bool> VerifyTranslationWeightAsync(string directory, MangaTranslationModelOption model, CancellationToken token)
+    internal static async Task<bool> VerifyTranslationWeightAsync(string directory, MangaTranslationModelOption model, CancellationToken token)
     {
-        Asset weight = Manifest.Value.Single(asset => asset.Group == model.Id);
-        return MatchesAsync(Path.Combine(directory, weight.Name), weight, token);
+        foreach (Asset weight in Manifest.Value.Where(asset => asset.Group == model.Id))
+        {
+            if (!await MatchesAsync(Path.Combine(directory, weight.Name), weight, token).ConfigureAwait(false))
+                return false;
+        }
+        return true;
     }
 
     public static string? GetModelSignature(string directory, MangaTranslationModelOption? model = null)
@@ -92,7 +96,7 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         try
         {
             var file = new FileInfo(path);
-            if (!file.Exists || (file.Attributes & FileAttributes.ReparsePoint) != 0 || file.Length != asset.Bytes)
+            if (!MangaTranslationBackendService.IsLocalFile(path, asset.Bytes))
                 return false;
             signature.Append(CultureInfo.InvariantCulture,
                 $"{asset.Name}\t{file.Length}\t{file.CreationTimeUtc.Ticks}\t{file.LastWriteTimeUtc.Ticks}\n");
@@ -103,6 +107,12 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
 
     private async Task PrepareAssetAsync(Asset asset, string destination, Action<Activity> report, CancellationToken token)
     {
+        string directory = Path.GetDirectoryName(destination)!;
+        if (!MangaTranslationBackendService.IsLocalDirectory(directory))
+            throw new IOException("资源子目录不得经过链接或联接。");
+        Directory.CreateDirectory(directory);
+        if (!MangaTranslationBackendService.IsLocalDirectory(directory))
+            throw new IOException("资源子目录已变更。");
         if (File.Exists(destination))
         {
             report(new Activity(MangaTranslationInstallStage.Verifying));
@@ -111,7 +121,6 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
             return;
         }
 
-        string directory = Path.GetDirectoryName(destination)!;
         string temporary = Path.Combine(directory, ".translation-" + Guid.NewGuid().ToString("N") + ".part");
         try
         {
@@ -229,6 +238,7 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
             long first = (long)index * RangeSize;
             long last = Math.Min(first + RangeSize, asset.Bytes) - 1;
             long mostReceived = 0;
+            long written = 0;
             void ReportRange(long bytes)
             {
                 if (bytes <= mostReceived) return;
@@ -252,13 +262,17 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
                 {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop);
                     timeout.CancelAfter(_inactivityTimeout);
-                    using HttpResponseMessage response = await SendAsync(source, first, last, timeout.Token).ConfigureAwait(false);
-                    RequireRange(response, first, last, asset.Bytes);
+                    // 仍需验证分段末尾时，重取最后一个字节以确认响应边界。
+                    long start = first + Math.Min(written, last - first);
+                    using HttpResponseMessage response = await SendAsync(source, start, last, timeout.Token).ConfigureAwait(false);
+                    RequireRange(response, start, last, asset.Bytes);
                     await using Stream body = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
-                    await CopyRangeAsync(body, file, first, last - first + 1, ReportRange, stop, timeout).ConfigureAwait(false);
+                    await CopyRangeAsync(body, file, start, last - start + 1,
+                        bytes => ReportRange(start - first + bytes), stop, timeout,
+                        bytes => written = start - first + bytes).ConfigureAwait(false);
                     break;
                 }
-                catch (Exception ex) when (attempt == 0 && mostReceived > 0 && !stop.IsCancellationRequested &&
+                catch (Exception ex) when (attempt == 0 && !stop.IsCancellationRequested &&
                     ex is HttpRequestException { StatusCode: null } or OperationCanceledException or EndOfStreamException)
                 {
                     lock (reporting)
@@ -304,12 +318,12 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
     }
 
     private async Task CopyRangeAsync(Stream input, SafeFileHandle output, long start, long length, Action<long> report,
-        CancellationToken token, CancellationTokenSource? networkTimeout)
+        CancellationToken token, CancellationTokenSource? networkTimeout, Action<long>? recordBytesWritten = null)
     {
         byte[] buffer = ArrayPool<byte>.Shared.Rent(CopyBufferSize);
+        long copied = 0;
         try
         {
-            long copied = 0;
             long lastReport = Stopwatch.GetTimestamp();
             while (copied < length)
             {
@@ -327,7 +341,11 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
             if (await ReadChunkAsync(input, buffer.AsMemory(0, 1), token, networkTimeout).ConfigureAwait(false) != 0)
                 throw new InvalidDataException("下载资源超过了预期大小");
         }
-        finally { ArrayPool<byte>.Shared.Return(buffer); }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+            recordBytesWritten?.Invoke(copied);
+        }
     }
 
     private async ValueTask<int> ReadChunkAsync(Stream stream, Memory<byte> buffer, CancellationToken token,
@@ -368,7 +386,7 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
             if (line.Length == 0 || line[0] == '#') continue;
             string[] fields = line.Split('\t');
             if (fields.Length < 5 || (fields[0] != "model" && MangaTranslationModelOption.FindForEvaluation(fields[0]) is null) ||
-                fields[1] != Path.GetFileName(fields[1]) ||
+                !IsAssetPath(fields[0], fields[1]) ||
                 !long.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out long bytes) || bytes <= 0)
                 throw new InvalidDataException("内置翻译资源清单无效。");
             assets.Add(new Asset(fields[0], fields[1], bytes, Convert.FromHexString(fields[3]),
@@ -377,10 +395,27 @@ internal sealed class MangaTranslationAssetInstaller(string? cache, IProgress<Ma
         foreach (MangaTranslationModelOption model in MangaTranslationModelOption.Choices.Concat(MangaTranslationModelOption.EvaluationOnly))
         {
             if (assets.Count(asset => asset.Group == model.Id && asset.Name == model.FileName && asset.Bytes == model.Bytes) != 1 ||
-                assets.Count(asset => asset.Group == model.Id) != 1)
+                assets.Count(asset => asset.Group == model.Id) != (model.UsesCpu ? 9 : 1))
                 throw new InvalidDataException("内置翻译模型清单与可选模型不一致。");
         }
+        if (assets.Select(asset => asset.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count() != assets.Count)
+            throw new InvalidDataException("内置翻译资源路径重复。");
         return assets.ToArray();
+    }
+
+    private static bool IsAssetPath(string group, string name)
+    {
+        if (group == MangaTranslationModelOption.JMangaId)
+        {
+            const string prefix = MangaTranslationModelOption.JMangaDirectory + "/";
+            if (!name.StartsWith(prefix, StringComparison.Ordinal)) return false;
+            name = name[prefix.Length..];
+            if (name.StartsWith("onnx/", StringComparison.Ordinal)) name = name["onnx/".Length..];
+            else if (name.StartsWith("tokenizer/", StringComparison.Ordinal)) name = name["tokenizer/".Length..];
+        }
+
+        return name.Length > 0 && char.IsAsciiLetterOrDigit(name[0]) && !name.EndsWith('.') &&
+            name.All(static c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-' or '_');
     }
 
     private static void TryDeleteTemporary(string file)

@@ -68,6 +68,8 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
             if (!CanSelectModel || value is null || MangaTranslationModelOption.Find(value.Id) != value || !SetProperty(ref _selectedModel, value)) return;
             OnPropertyChanged(nameof(CanInstall));
             OnPropertyChanged(nameof(TargetLanguages));
+            OnPropertyChanged(nameof(RequiresNonCommercialLicense));
+            OnPropertyChanged(nameof(InstallLabel));
             _services.SaveTranslationModel(value);
             IsReady = false;
             OperationStatus = "正在检查所选模型…";
@@ -115,8 +117,11 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
     public bool CanSelectModel => CanEditDirectory && Models.Count > 0;
     public bool CanInstall => SelectedModel is not null && CanEditDirectory && _nativeLibrariesAvailable && !HasUnsavedDirectory && !HasDirectoryError;
     public bool CanCheckResources => CanEditDirectory && !HasUnsavedDirectory;
+    public bool RequiresNonCommercialLicense => SelectedModel?.UsesCpu == true;
     public bool CanCancel => IsInstalling && !_isCancelling;
-    public string InstallLabel => _offerRetry ? "重试准备模型" : IsReady ? "校验并补齐资源" : "下载并准备模型";
+    public string InstallLabel => RequiresNonCommercialLicense && !IsReady
+        ? "同意许可并准备模型"
+        : _offerRetry ? "重试准备模型" : IsReady ? "校验并补齐资源" : "下载并准备模型";
 
     public bool IsBusy
     {
@@ -201,7 +206,7 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
             {
                 string directory = _backend.GetModelDirectory(configured);
                 EnsureOutsideLibrary(directory, protectedRoots);
-                bool native = MangaTranslationBackendService.HasNativeLibraries();
+                bool native = MangaTranslationBackendService.HasNativeLibraries(model);
                 return (Directory: directory, Native: native, Ready: native && _backend.IsReady(configured, model));
             }, _lifetime.Token);
             if (_disposed) return;

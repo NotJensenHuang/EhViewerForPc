@@ -217,7 +217,7 @@ public sealed partial class ReaderViewModel
             {
                 TranslationStatus = reviewCount > 0
                     ? $"图上显示 {overlays.Count} 个区块的译文 · {reviewCount} 个识别区块待核对"
-                    : $"图上显示 {overlays.Count} 个区块的译文 · GPU 已启用";
+                    : $"图上显示 {overlays.Count} 个区块的译文";
                 _translationOverlay = new MangaTranslationOverlay(result.Width, result.Height, overlays, result.TargetLanguage)
                 {
                     ImageSource = image.Value,
@@ -231,7 +231,7 @@ public sealed partial class ReaderViewModel
                 TranslationStatus = reviewCount > 0
                     ? $"有 {reviewCount} 个识别区块待核对。"
                     : translatedCount > 0
-                    ? $"已翻译 {translatedCount} 个区块 · GPU 已启用"
+                    ? $"已翻译 {translatedCount} 个区块"
                     : "本页未生成可显示的译文，可核对下方的识别结果。";
             }
         }

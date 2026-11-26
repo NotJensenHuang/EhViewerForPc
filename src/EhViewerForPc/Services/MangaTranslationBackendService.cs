@@ -28,12 +28,17 @@ internal sealed class MangaTranslationException(string message, bool requiresSet
 
 internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposable
 {
-    internal const string MissingNativeLibrariesMessage = "此发行包缺少本地 GPU 翻译库。请重新安装或解压完整的 Windows x64 发行包。";
+    internal const string MissingNativeLibrariesMessage = "此发行包缺少所选模式使用的本地推理库。请重新安装或解压完整的 Windows x64 发行包。";
 
-    internal const string NoTranslationModelMessage = "当前版本没有可用的本地翻译模型。";
+    internal const string NoTranslationModelMessage = "尚未选择本地翻译模型，请打开漫画翻译设置。";
     private const string OverrideVariable = "EHVIEWER_MANGA_TRANSLATION_BACKEND";
     private const string CacheVariable = "EHVIEWER_MANGA_TRANSLATION_ASSET_CACHE";
-    private static readonly string[] NativeLibraries =
+    private static readonly string[] CpuNativeLibraries =
+    [
+        "ort/onnxruntime.dll", "ort/onnxruntime_providers_shared.dll",
+        "ort/msvcp140.dll", "ort/msvcp140_1.dll", "ort/vcruntime140.dll", "ort/vcruntime140_1.dll",
+    ];
+    private static readonly string[] GpuNativeLibraries =
     [
         "ort/onnxruntime.dll", "ort/DirectML.dll", "ort/onnxruntime_providers_shared.dll",
         "gguf/llama.dll", "gguf/ggml.dll", "gguf/ggml-base.dll", "gguf/ggml-vulkan.dll",
@@ -89,7 +94,7 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
         if (model is null || MangaTranslationModelOption.Find(model.Id) != model) return null;
         string models = GetModelDirectory(configured);
         string? signature = MangaTranslationAssetInstaller.GetModelSignature(models, model);
-        return signature is not null && HasModelReceipt(models, signature, model) && HasNativeLibraries()
+        return signature is not null && HasModelReceipt(models, signature, model) && HasNativeLibraries(model)
             ? new MangaTranslationBackendPaths(NativeDirectory, models, model, signature) : null;
     }
 
@@ -97,7 +102,7 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
         CancellationToken token, MangaTranslationModelOption model)
     {
         token.ThrowIfCancellationRequested();
-        if (!HasNativeLibraries())
+        if (!HasNativeLibraries(model))
             throw new MangaTranslationException(MissingNativeLibrariesMessage);
 
         string models = GetModelDirectory(configured);
@@ -169,7 +174,9 @@ internal sealed class MangaTranslationBackendService(AppPaths paths) : IDisposab
         File.Move(temporary, receipt, overwrite: true);
     }
 
-    internal static bool HasNativeLibraries() => NativeLibraries.All(name => File.Exists(Path.Combine(NativeDirectory, name)));
+    internal static bool HasNativeLibraries(MangaTranslationModelOption? model = null) =>
+        (model?.UsesCpu == true ? CpuNativeLibraries : GpuNativeLibraries)
+            .All(name => File.Exists(Path.Combine(NativeDirectory, name)));
 
     private static string? GetLegacyOverride(string? configured)
     {

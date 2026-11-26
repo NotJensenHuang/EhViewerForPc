@@ -65,6 +65,20 @@ public sealed class MangaTranslationSettingsTests
     }
 
     [AvaloniaFact]
+    public async Task SelectingCpuModelExposesItsLicenseAndDoesNotPrepareAutomatically()
+    {
+        using var fixture = new SettingsFixture();
+        using var viewModel = new MangaTranslationSettingsViewModel(fixture.Services);
+        viewModel.SelectedModel = viewModel.Models.Single(model => model.Id == MangaTranslationModelOption.JMangaId);
+        Assert.True(viewModel.RequiresNonCommercialLicense);
+        Assert.Contains("同意许可", viewModel.InstallLabel);
+        Assert.Equal("zh-CN", Assert.Single(viewModel.TargetLanguages).Id);
+        Assert.Equal(MangaTranslationModelOption.JMangaId, fixture.Services.Settings.MangaTranslationModelId);
+        await viewModel.CheckResourcesAsync();
+        Assert.False(Directory.Exists(viewModel.ModelDirectory));
+    }
+
+    [AvaloniaFact]
     public async Task ReportsTheCurrentDownloadAndWaitsForAsyncCancellationBeforeEnablingRetry()
     {
         using var fixture = new SettingsFixture();

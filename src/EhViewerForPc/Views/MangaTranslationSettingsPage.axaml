@@ -44,6 +44,9 @@
           </ComboBox>
           <SelectableTextBlock Text="候选模型用于日语到简体中文。漫画图片与译文在本机处理。"
                                Classes="caption" TextWrapping="Wrap" />
+          <SelectableTextBlock Text="JMangaTranslator-Fast 权重采用 CC BY-NC-SA 4.0，仅限非商用。选择「同意许可并准备模型」后才下载或校验权重。"
+                               Classes="caption" TextWrapping="Wrap" IsVisible="{Binding RequiresNonCommercialLicense}"
+                               AutomationProperties.AutomationId="MangaTranslation.NonCommercialLicense" />
           <SelectableTextBlock Text="目标语言" FontWeight="SemiBold" />
           <ComboBox ItemsSource="{Binding TargetLanguages}" SelectedItem="{Binding SelectedTargetLanguage, Mode=TwoWay}"
                     HorizontalAlignment="Stretch" AutomationProperties.Name="目标语言"

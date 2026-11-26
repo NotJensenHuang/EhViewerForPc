@@ -40,6 +40,20 @@ public sealed class MangaTranslationWorkerTests
     }
 
     [Fact]
+    public void CpuPageIpcRequiresTheMatchingOnnxBackend()
+    {
+        var page = new MangaOcrResult(30, 40, [new(1, 1, 10, 20, "そうだね")], MangaOcrOrt.CpuProvider);
+        var response = MangaTranslationWorker.BuildResponse(page, JMangaTranslator.Provider, _ => "没错");
+        string json = JsonSerializer.Serialize(response, MangaTranslationJsonContext.Default.MangaTranslationResponse);
+        var parsed = MangaTranslationService.ParseResponse(json, 30, 40);
+        Assert.Equal("没错", Assert.Single(parsed.Regions).TranslatedText);
+        Assert.Equal(JMangaTranslator.Provider, parsed.TranslationBackend);
+
+        string mismatched = json.Replace(JMangaTranslator.Provider, "Vulkan0", StringComparison.Ordinal);
+        Assert.Throws<MangaTranslationException>(() => MangaTranslationService.ParseResponse(mismatched, 30, 40));
+    }
+
+    [Fact]
     public void PageIpcCarriesPixelBoundsAndOnlyOverlaysChangedTranslations()
     {
         var page = new MangaOcrResult(200, 300,

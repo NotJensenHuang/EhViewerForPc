@@ -188,6 +188,7 @@ internal static class MangaTranslationWorker
         private readonly bool _timings = Environment.GetEnvironmentVariable("EHVIEWER_MANGA_TRANSLATION_TIMINGS") == "1";
         private MangaOcr.Engine? _ocr;
         private LocalGgufTranslator? _translator;
+        private JMangaTranslator? _jManga;
         private MangaTranslationPageContext _previousPage;
         private string _previousDialogue = "";
 
@@ -202,7 +203,7 @@ internal static class MangaTranslationWorker
             try
             {
                 token.ThrowIfCancellationRequested();
-                _ocr ??= new MangaOcr.Engine(models, native);
+                _ocr ??= new MangaOcr.Engine(models, native, useDirectMl: !model.UsesCpu);
                 ocr = _ocr.Read(image, token);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -217,13 +218,20 @@ internal static class MangaTranslationWorker
 
             long ocrDone = Stopwatch.GetTimestamp();
             long translationReady = ocrDone;
-            bool coldModel = _translator is null && ocr.Regions.Count > 0;
+            bool coldModel = _translator is null && _jManga is null && ocr.Regions.Count > 0;
             try
             {
                 token.ThrowIfCancellationRequested();
                 if (ocr.Regions.Count == 0)
                 {
                     response = BuildResponse(ocr, null, null, model, language);
+                }
+                else if (model.UsesCpu)
+                {
+                    JMangaTranslator translator = _jManga ??= JMangaTranslator.Load(native,
+                        Path.Combine(models, MangaTranslationModelOption.JMangaDirectory), token);
+                    translationReady = Stopwatch.GetTimestamp();
+                    response = BuildResponse(ocr, JMangaTranslator.Provider, text => translator.Translate(text, token), model, language);
                 }
                 else
                 {
@@ -254,7 +262,11 @@ internal static class MangaTranslationWorker
         public void Dispose()
         {
             try { _translator?.Dispose(); }
-            finally { _ocr?.Dispose(); }
+            finally
+            {
+                try { _jManga?.Dispose(); }
+                finally { _ocr?.Dispose(); }
+            }
         }
     }
 

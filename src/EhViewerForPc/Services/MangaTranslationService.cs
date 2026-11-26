@@ -74,7 +74,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
             {
                 try
                 {
-                    // 快速翻页后可立即提交新页，等前一次推理完成取消后再占用 GPU。
+                    // 快速翻页后可立即提交新页，等上一项推理完成取消后再启动新一页。
                     await previous.ConfigureAwait(false);
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token, _lifetime.Token);
                     timeout.Token.ThrowIfCancellationRequested();
@@ -112,7 +112,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         MangaTranslationBackendPaths resources;
         try
         {
-            if (!MangaTranslationBackendService.HasNativeLibraries())
+            if (!MangaTranslationBackendService.HasNativeLibraries(preferences.Model))
                 throw new MangaTranslationException(MangaTranslationBackendService.MissingNativeLibrariesMessage, requiresSetup: true);
             resources = backend.Resolve(preferences.ModelDirectory, preferences.Model) ??
                 throw new MangaTranslationException("本地翻译模型尚未就绪，请在漫画翻译设置中下载或校验。", requiresSetup: true);
@@ -126,6 +126,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         if (_worker is { } existing && !existing.Matches(resources, preferences.Language))
             await StopWorkerAsync().ConfigureAwait(false);
 
+        // CPU 单气泡结果不依赖阅读会话上下文，可按源图和模型版本复用。
+        bool cacheable = resources.Model.UsesCpu || context.Reader == Guid.Empty;
         string inputRoot = Path.GetFullPath(Path.Combine(paths.MangaTranslationDirectory, "input"));
         if (!IsLocalInputDirectory(inputRoot))
         {
@@ -137,7 +139,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         bool createdJobDirectory = false;
         try
         {
-            for (LinkedListNode<CachedPage>? item = context.Reader == Guid.Empty ? _cachedPages.First : null; item is not null; item = item.Next)
+            for (LinkedListNode<CachedPage>? item = cacheable ? _cachedPages.First : null; item is not null; item = item.Next)
             {
                 CachedPage cached = item.Value;
                 if (cached.Image != image || cached.Resources != resources || cached.Language != preferences.Language) continue;
@@ -169,7 +171,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
             try
             {
                 result = await _worker.TranslateAsync(snapshot, width, height, token, context).ConfigureAwait(false);
-                if (result.ModelId != resources.Model.Id || result.TargetLanguage != preferences.Language.Id)
+                if (result.ModelId != resources.Model.Id || result.TargetLanguage != preferences.Language.Id ||
+                    result.OcrProvider != (resources.Model.UsesCpu ? MangaOcrOrt.CpuProvider : MangaOcrOrt.Provider))
                     throw InvalidResponse();
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested && _worker.IsUsable) { throw; }
@@ -179,7 +182,9 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
                 throw;
             }
 
-            if (context.Reader == Guid.Empty)
+            if (cacheable && result.Regions.Length > 0 &&
+                Array.TrueForAll(result.Regions, static region => region.Review == MangaTranslationRegionReview.None) &&
+                !Array.Exists(result.OcrObservations, static observation => observation.RequiresReview))
             {
                 _cachedPages.AddFirst(new CachedPage(image, resources, preferences.Language, result));
                 if (_cachedPages.Count > CachedPages) _cachedPages.RemoveLast();
@@ -227,8 +232,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
     {
         MangaTranslationWorker.ResourcesUnavailable => "本地翻译资源不完整，请检查模型设置与发行包。",
         MangaTranslationWorker.InvalidImage => "本页图片无法识别，或超出翻译后端的大小限制。",
-        MangaTranslationWorker.OcrFailed => "GPU 文字识别失败，请检查 DirectML 运行时和显卡驱动。",
-        MangaTranslationWorker.TranslationFailed => "GPU 翻译失败，请检查 Vulkan 运行时和翻译模型。",
+        MangaTranslationWorker.OcrFailed => "文字识别失败，请检查图像与所选模式的本地推理库。",
+        MangaTranslationWorker.TranslationFailed => "本地翻译失败，请检查所选模型和计算设备。",
         _ => "本地漫画翻译后端运行失败。",
     }, requiresSetup: code == MangaTranslationWorker.ResourcesUnavailable);
 
@@ -237,12 +242,14 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         MangaTranslationResponse? result;
         try { result = JsonSerializer.Deserialize(json, MangaTranslationJsonContext.Default.MangaTranslationResponse); }
         catch (JsonException) { throw InvalidResponse(); }
-        if (result is not { SchemaVersion: 1, OcrProvider: MangaOcrOrt.Provider, Regions: not null } ||
+        if (result is not { SchemaVersion: 1, OcrProvider: MangaOcrOrt.Provider or MangaOcrOrt.CpuProvider, Regions: not null } ||
             result.Width != width || result.Height != height || result.Regions.Length > 120)
             throw InvalidResponse();
 
-        bool valid = result.Regions.Length == 0 ? result.TranslationBackend is null :
-            result.TranslationBackend?.StartsWith("Vulkan", StringComparison.Ordinal) == true &&
+        bool backendMatches = result.OcrProvider == MangaOcrOrt.CpuProvider
+            ? result.TranslationBackend == JMangaTranslator.Provider
+            : result.TranslationBackend?.StartsWith("Vulkan", StringComparison.Ordinal) == true;
+        bool valid = result.Regions.Length == 0 ? result.TranslationBackend is null : backendMatches &&
             Array.TrueForAll(result.Regions, region => region?.SourceText is not null && region.TranslatedText is not null &&
                 region.HasValidBounds(width, height) && Enum.IsDefined(region.Review) &&
                 region.RejectedOutput is null or { Length: <= 512 });

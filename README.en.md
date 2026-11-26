@@ -128,7 +128,7 @@ Online browsing is available on first launch. To use the local library, point "L
 | :--- | :--- | :--- |
 | Local Library | Read-only scanning, multi-source merge, version management, search and filters | Virtualized grid, per-source signature cache, cache-first startup |
 | Reader | Single / vertical / horizontal modes, animation, progress, online page source | On-demand pagination, placeholder backfill, shared progress key, image memory budget |
-| Manga Translation | Japanese-to-Simplified-Chinese trial models, manual and automatic translation, and region review | DirectML OCR and Vulkan GGUF |
+| Manga Translation | Japanese-to-Simplified-Chinese manual and automatic translation and region review | JMangaTranslator-Fast CPU ONNX, plus trial DirectML OCR and Vulkan GGUF models |
 | Downloads | Queue, resume, concurrency and throttling, directory relocation | Persisted state, atomic writes, migration journal and rollback |
 | Online Browsing | Search, subscriptions, rankings, bookmarks, details, rating and archives | In-house tolerant HTML parser, fixed-structure fixture tests, cookie session |
 | Image Search | Indexing, cropped queries, matched-page location | Managed C# backend, SkiaSharp / SQLite, separate windowless host |
@@ -287,7 +287,7 @@ Inside the image-index directory, `features.db` stores deduplicated features and
 
 ### Local Manga Translation Backend
 
-The general-purpose Hy-MT2 1.8B and 7B models are retired. Settings offers two trial options, the Hy-MT2 manga fine-tune and the Qwen2.5 7B subtitle fine-tune. Select a candidate and Simplified Chinese, then prepare its weights. Existing preferences and model files stay in place. After obtaining access from the publisher, download the Qwen3 4B or 8B weights manually and run `--manga-translation-worker --evaluate <TSV> <model-dir> <native-dir> <model-id>`. See [deployment and commands](docs/MODEL_DEPLOYMENT.md) and the [benchmark report](docs/BENCHMARK_REPORT.md).
+The general-purpose Hy-MT2 1.8B and 7B models are retired. Settings offers JMangaTranslator-Fast v1 on CPU through ONNX, plus two GPU trial options, the Hy-MT2 manga fine-tune and the Qwen2.5 7B subtitle fine-tune. JMangaTranslator-Fast weights are for non-commercial use and downloaded on demand after you accept their license. Select a candidate and Simplified Chinese, then prepare its weights. Existing preferences and model files stay in place. After obtaining access from the publisher, download the Qwen3 4B or 8B weights manually and run `--manga-translation-worker --evaluate <TSV> <model-dir> <native-dir> <model-id>`. See [deployment and commands](docs/MODEL_DEPLOYMENT.md) and the [benchmark report](docs/BENCHMARK_REPORT.md).
 
 ## 🧪 Tests and Verification
 

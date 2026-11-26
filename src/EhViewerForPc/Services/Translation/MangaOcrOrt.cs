@@ -9,6 +9,7 @@ internal delegate T MangaOcrTensorReader<T>(ReadOnlySpan<float> values, ReadOnly
 internal sealed unsafe partial class MangaOcrOrt : IDisposable
 {
     public const string Provider = "DmlExecutionProvider";
+    internal const string CpuProvider = "CPUExecutionProvider";
     private const uint ApiVersion = 23;
     private const string NativeVersion = "1.23.0";
     private const uint LoadDllDirectoryAndSystem32 = 0x00000100 | 0x00000800;

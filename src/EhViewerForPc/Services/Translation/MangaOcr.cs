@@ -31,7 +31,7 @@ internal static partial class MangaOcr
         private RecognitionSessions? _recognizer;
         private string[]? _dictionary;
 
-        private string Provider => useDirectMl ? MangaOcrOrt.Provider : "CPUExecutionProvider";
+        private string Provider => useDirectMl ? MangaOcrOrt.Provider : MangaOcrOrt.CpuProvider;
 
         internal MangaOcrResult Read(string imagePath, CancellationToken token)
         {

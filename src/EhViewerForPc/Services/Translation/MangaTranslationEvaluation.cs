@@ -24,7 +24,9 @@ internal static class MangaTranslationEvaluation
         {
             if (!MangaTranslationAssetInstaller.VerifyTranslationWeightAsync(models, model, stop.Token).GetAwaiter().GetResult())
                 return MangaTranslationWorker.ResourcesUnavailable;
-            using var translator = LocalGgufTranslator.Load(native, models, model, stop.Token);
+            using var translator = model.UsesCpu ? null : LocalGgufTranslator.Load(native, models, model, stop.Token);
+            using var jmanga = model.UsesCpu ? JMangaTranslator.Load(native,
+                Path.Combine(models, MangaTranslationModelOption.JMangaDirectory), stop.Token) : null;
             using var reader = new StreamReader(cases, MangaTranslationWorker.PipeEncoding);
             if (reader.ReadLine() is not { } header ||
                 !header.StartsWith("case_id\tsource_lang\ttarget_lang\tcontext_mode\tcontext\tsource\treference", StringComparison.Ordinal))
@@ -43,9 +45,17 @@ internal static class MangaTranslationEvaluation
                 string status = "review";
                 try
                 {
-                    translated = translator.Translate(fields[5], fields[3] == "single" ? "" : fields[4], stop.Token);
-                    if (MangaTranslationWorker.ReviewOutput(fields[5], translated) == MangaTranslationRegionReview.None)
-                        status = "ok";
+                    if (jmanga is not null && fields[3] != "single")
+                    {
+                        status = "unsupported_context";
+                    }
+                    else
+                    {
+                        translated = jmanga is not null ? jmanga.Translate(fields[5], stop.Token) :
+                            translator!.Translate(fields[5], fields[3] == "single" ? "" : fields[4], stop.Token);
+                        if (MangaTranslationWorker.ReviewOutput(fields[5], translated) == MangaTranslationRegionReview.None)
+                            status = "ok";
+                    }
                 }
                 catch (MangaTranslationRegionLimitException ex) { translated = ex.PartialTranslation ?? ""; }
                 var result = new MangaTranslationEvaluationRow(fields[0], model.Id, fields[3], translated,
