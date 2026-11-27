@@ -4,6 +4,7 @@ namespace EhViewerForPc.Services;
 internal sealed record MangaOcrRegion(int X, int Y, int Width, int Height, string Text)
 {
     public int[] SourceRegionIds { get; init; } = [];
+    public int? BubbleInstanceId { get; init; }
     public MangaOcrLayoutBounds? BubbleInterior { get; init; }
     public MangaOcrLayoutBounds? BalancedBubbleInterior { get; init; }
 }
@@ -22,6 +23,7 @@ internal sealed record MangaOcrObservation(int Id, MangaOcrPoint[] Polygon, floa
     MangaOcrDirection Direction, MangaOcrRegionType Type, bool RequiresReview)
 {
     public int[] OriginalDetectionIds { get; init; } = [];
+    public int? BubbleInstanceId { get; init; }
 }
 
 internal sealed record MangaOcrResult(int Width, int Height, IReadOnlyList<MangaOcrRegion> Regions, string Provider)

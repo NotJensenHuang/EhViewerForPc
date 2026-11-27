@@ -30,6 +30,8 @@ internal static partial class MangaOcr
         private MangaOcrOrt.Session? _detector;
         private RecognitionSessions? _recognizer;
         private string[]? _dictionary;
+        private BubblePop? _bubblePop;
+        private bool _checkedBubblePop;
 
         private string Provider => useDirectMl ? MangaOcrOrt.Provider : MangaOcrOrt.CpuProvider;
 
@@ -90,6 +92,8 @@ internal static partial class MangaOcr
                     });
             }
             token.ThrowIfCancellationRequested();
+            if (regions.Count > 1)
+                ApplyBubbleEvidence(pixels, regions, observations, token);
             var dialogue = ArrangeDialogue(regions, bitmap.GetPixelSpan(), width, height, bitmap.RowBytes, token);
             recognizer.MarkPageComplete();
             return new MangaOcrResult(width, height, dialogue, Provider)
@@ -97,6 +101,35 @@ internal static partial class MangaOcr
                 RawDetections = rawDetections,
                 Observations = observations,
             };
+        }
+
+        private void ApplyBubbleEvidence(ImagePixels pixels, List<MangaOcrRegion> regions, MangaOcrObservation[] observations,
+            CancellationToken token)
+        {
+            if (!_checkedBubblePop)
+            {
+                _checkedBubblePop = true;
+                _bubblePop = BubblePop.TryOpen(modelDirectory, runtimeDirectory);
+            }
+            if (_bubblePop is null) return;
+
+            int?[] memberships;
+            try { memberships = _bubblePop.FindMemberships(pixels, regions, token); }
+            catch (Exception ex) when (ex is InvalidOperationException or MangaTranslationException)
+            {
+                _bubblePop.Dispose();
+                _bubblePop = null;
+                return;
+            }
+
+            for (int i = 0; i < regions.Count; i++)
+            {
+                if (memberships[i] is not { } id) continue;
+                MangaOcrRegion region = regions[i];
+                int observationIndex = region.SourceRegionIds[0] - 1;
+                observations[observationIndex] = observations[observationIndex] with { BubbleInstanceId = id };
+                regions[i] = region with { BubbleInstanceId = id };
+            }
         }
 
         internal void DiscardUnverifiedSessions()
@@ -120,7 +153,11 @@ internal static partial class MangaOcr
             finally
             {
                 try { _detector?.Dispose(); }
-                finally { _ort.Dispose(); }
+                finally
+                {
+                    try { _bubblePop?.Dispose(); }
+                    finally { _ort.Dispose(); }
+                }
             }
         }
     }

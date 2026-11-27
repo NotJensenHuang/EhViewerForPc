@@ -386,11 +386,17 @@ internal static partial class MangaOcr
         {
             token.ThrowIfCancellationRequested();
             MangaOcrRegion first = candidates[i];
+            int? bubble = first.BubbleInstanceId;
+            for (int prior = previous[i]; bubble is null && prior >= 0; prior = previous[prior])
+                bubble = candidates[prior].BubbleInstanceId;
             for (int j = i + 1; j < candidates.Count; j++)
             {
                 MangaOcrRegion second = candidates[j];
                 double distance = vertical ? CenterX(first) - CenterX(second) : CenterY(second) - CenterY(first);
                 if (distance > (vertical ? first.Width * 1.55 : first.Height * 1.60)) break;
+                if (bubble is { } firstBubble && second.BubbleInstanceId is { } secondBubble &&
+                    firstBubble != secondBubble)
+                    continue;
                 bool adjacent = vertical ? AdjacentColumns(first, second, distance, source, token) : AdjacentLines(first, second, distance, source);
                 if (!adjacent) continue;
                 // 已占用时，当前候选更靠近第二行或列。

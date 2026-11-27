@@ -26,6 +26,7 @@ internal sealed unsafe class LocalGgufTranslator : IDisposable
     private int[] _prefix = [];
     private int[] _suffix = [];
     private bool _mangaModel;
+    private bool _contextModel;
     private int _turnStart = -1;
     private int _batchSize;
     private int _promptCapacity;
@@ -100,10 +101,11 @@ internal sealed unsafe class LocalGgufTranslator : IDisposable
         _vocabulary = _native.GetVocabulary(_model);
         if (_vocabulary == 0)
             throw new MangaTranslationException("本地翻译模型的词表不可用。", requiresSetup: true);
+        _contextModel = model.SupportsSceneContext;
         _mangaModel = model.Id switch
         {
             "hy-mt2-manga-zh-hans" => true,
-            "qwen2.5-7b-ja2zh" or "qwen3-4b-ja2zh-eval" or "qwen3-8b-ja2zh-eval" => false,
+            MangaTranslationModelOption.QwenContextId or "qwen2.5-7b-ja2zh" or "qwen3-4b-ja2zh-eval" or "qwen3-8b-ja2zh-eval" => false,
             _ => throw new MangaTranslationException("未知的本地翻译模型。", requiresSetup: true),
         };
         if (_mangaModel)
@@ -119,9 +121,14 @@ internal sealed unsafe class LocalGgufTranslator : IDisposable
             int start = _turnStart = ReadSpecialToken("<|im_start|>"u8);
             int end = ReadSpecialToken("<|im_end|>"u8);
             int[] newline = TokenizeLiteral("\n");
-            _prefix = [start, .. TokenizeLiteral("system\n将以下日语字幕翻译成中文，文本可能存在识别错误，请根据语境修正后翻译。只输出中文。"),
-                end, .. newline, start, .. TokenizeLiteral("user\n")];
-            _suffix = [end, .. newline, start, .. TokenizeLiteral("assistant\n")];
+            string instruction = _contextModel
+                ? "你是漫画对白日译简中译者。只翻译当前日语对白。参考事实决定省略的动作和多义词的实际含义：动作明确时，译文说清是什么动作。不要凭写法或体裁猜测；没有足够证据确定词义时，只输出【待复核】。保持人称、语气和重复，不把参考段落翻译进去。只输出简体中文译文或【待复核】，不解释。"
+                : "将以下日语字幕翻译成中文，文本可能存在识别错误，请根据语境修正后翻译。只输出中文。";
+            _prefix = [start, .. TokenizeLiteral("system\n" + instruction), end, .. newline, start, .. TokenizeLiteral("user\n")];
+            _suffix = _contextModel
+                ? [end, .. newline, start, .. TokenizeLiteral("assistant\n"), ReadSpecialToken("<think>"u8),
+                    .. TokenizeLiteral("\n\n"), ReadSpecialToken("</think>"u8), .. TokenizeLiteral("\n\n")]
+                : [end, .. newline, start, .. TokenizeLiteral("assistant\n")];
         }
 
         LlamaNative.ContextParameters parameters = _native.DefaultContextParameters();
@@ -187,7 +194,7 @@ internal sealed unsafe class LocalGgufTranslator : IDisposable
             Span<int> content = tokens.Slice(_prefix.Length, tokens.Length - _prefix.Length - _suffix.Length);
             int count;
             try { count = TokenizeText(Encoding.UTF8.GetBytes(CreateInput(text, context)), content); }
-            catch (MangaTranslationRegionLimitException) when (context.Length > 0)
+            catch (MangaTranslationRegionLimitException) when (context.Length > 0 && !_contextModel)
             {
                 count = TokenizeText(Encoding.UTF8.GetBytes(CreateInput(text, "")), content);
             }
@@ -210,6 +217,9 @@ internal sealed unsafe class LocalGgufTranslator : IDisposable
 
     private string CreateInput(string text, string context)
     {
+        if (_contextModel)
+            return context.Length == 0 ? $"当前日语对白：\n{text}" :
+                $"参考语境（仅供理解）：\n{context}\n\n当前日语对白：\n{text}";
         string instruction = _mangaModel
             ? "Translate this Japanese manga line into natural Simplified Chinese. Preserve meaning, tone, names and sound effects. Output only the translation.\n\n"
             : "";
@@ -233,11 +243,11 @@ internal sealed unsafe class LocalGgufTranslator : IDisposable
         if (sampler == 0) throw new MangaTranslationException("无法创建本地翻译采样器。");
         try
         {
-            AddSampler(sampler, _native.SamplerPenalties(_native.GetVocabularySize(_vocabulary), 64, _mangaModel ? 1.05f : 1.25f, 0, 0));
+            AddSampler(sampler, _native.SamplerPenalties(_native.GetVocabularySize(_vocabulary), 64, _contextModel ? 1.02f : _mangaModel ? 1.05f : 1.25f, 0, 0));
             AddSampler(sampler, _native.SamplerTopK(20));
             AddSampler(sampler, _native.SamplerTopP(_mangaModel ? 0.6f : 0.9f, 1));
-            AddSampler(sampler, _native.SamplerTemperature(_mangaModel ? 0.15f : 0.7f));
-            AddSampler(sampler, _native.SamplerDistribution((uint)RandomNumberGenerator.GetInt32(int.MaxValue)));
+            AddSampler(sampler, _native.SamplerTemperature(_contextModel ? 0.2f : _mangaModel ? 0.15f : 0.7f));
+            AddSampler(sampler, _native.SamplerDistribution(_contextModel ? 20261127u : (uint)RandomNumberGenerator.GetInt32(int.MaxValue)));
 
             Span<int> output = stackalloc int[OutputTokens];
             for (int count = 0; count < output.Length; count++)
@@ -247,6 +257,7 @@ internal sealed unsafe class LocalGgufTranslator : IDisposable
                 if (_native.IsEndOfGeneration(_vocabulary, id) != 0 || id == _turnStart)
                 {
                     string result = DecodeOutput(output[..count]);
+                    if (_contextModel && result.Trim('【', '】') == "待复核") throw new MangaTranslationRegionLimitException(result);
                     if (!_mangaModel && result.Trim().Contains('\n')) throw new MangaTranslationRegionLimitException(result);
                     return result;
                 }

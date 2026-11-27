@@ -66,6 +66,9 @@ public partial class ReaderPage : DocumentPage
     internal Task TranslateCurrentPageAsync() =>
         _viewModel.TranslateCurrentPageAsync(GetCurrentTranslationImage());
 
+    private async void OnRetryTranslationWithScene(object? sender, RoutedEventArgs e) =>
+        await _viewModel.RetryTranslationWithSceneAsync(GetCurrentTranslationImage());
+
     private ReaderTranslationImage? GetCurrentTranslationImage()
     {
         if (!_loaded || _disposed) return null;

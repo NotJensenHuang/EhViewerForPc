@@ -205,13 +205,25 @@ internal sealed unsafe partial class MangaOcrOrt : IDisposable
         {
             if (width <= 0 || height <= 0 || width * (long)height * 3 != input.Length)
                 throw new ArgumentException("文字识别输入尺寸无效。", nameof(input));
+            return Run(input, [1, 3, height, width], readResult);
+        }
+
+        internal T RunGrayscaleImage<T>(ReadOnlySpan<float> input, int width, int height, MangaOcrTensorReader<T> readResult)
+        {
+            if (width <= 0 || height <= 0 || width * (long)height != input.Length)
+                throw new ArgumentException("文字识别输入尺寸无效。", nameof(input));
+            return Run(input, [1, height, width, 1], readResult);
+        }
+
+        private T Run<T>(ReadOnlySpan<float> input, ReadOnlySpan<long> inputShape, MangaOcrTensorReader<T> readResult)
+        {
             nint inputValue = 0;
             nint outputValue = 0;
             fixed (float* pixels = input)
+            fixed (long* shape = inputShape)
             {
                 try
                 {
-                    long* shape = stackalloc long[4] { 1, 3, height, width };
                     _runtime.Check(((delegate* unmanaged<nint, float*, nuint, long*, nuint, int, nint*, nint>)
                         _runtime.At(Slot.CreateTensorWithDataAsOrtValue))(_runtime._memoryInfo, pixels,
                             (nuint)input.Length * sizeof(float), shape, 4, FloatTensor, &inputValue));

@@ -47,6 +47,9 @@
           <SelectableTextBlock Text="JMangaTranslator-Fast 权重采用 CC BY-NC-SA 4.0，仅限非商用。选择「同意许可并准备模型」后才下载或校验权重。"
                                Classes="caption" TextWrapping="Wrap" IsVisible="{Binding RequiresNonCommercialLicense}"
                                AutomationProperties.AutomationId="MangaTranslation.NonCommercialLicense" />
+          <SelectableTextBlock Text="读取同页和已经翻译的上一相邻页对白。可在阅读器的双语文本中补充本页场景。"
+                               TextWrapping="Wrap" Classes="secondary" IsVisible="{Binding SupportsSceneContext}"
+                               AutomationProperties.AutomationId="MangaTranslation.SceneContextSupport" />
           <SelectableTextBlock Text="目标语言" FontWeight="SemiBold" />
           <ComboBox ItemsSource="{Binding TargetLanguages}" SelectedItem="{Binding SelectedTargetLanguage, Mode=TwoWay}"
                     HorizontalAlignment="Stretch" AutomationProperties.Name="目标语言"

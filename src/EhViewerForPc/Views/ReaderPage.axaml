@@ -168,6 +168,13 @@
             <ProgressBar IsVisible="{Binding IsTranslationRunning}" IsIndeterminate="True" Height="4" />
             <Button Content="打开翻译设置" Click="OnMangaTranslationSettings" IsVisible="{Binding ShowTranslationSettings}"
                     AutomationProperties.AutomationId="Reader.OpenTranslationSettings" />
+            <StackPanel IsVisible="{Binding SupportsTranslationScene}" Spacing="6">
+              <TextBox Text="{Binding TranslationScene, Mode=TwoWay}" MaxLength="{Binding MaximumTranslationSceneLength}"
+                       PlaceholderText="本页场景说明（可选）" AutomationProperties.Name="本页场景说明"
+                       AutomationProperties.AutomationId="Reader.TranslationScene" />
+              <Button Content="结合语境重译" Click="OnRetryTranslationWithScene" IsEnabled="{Binding CanRetryWithTranslationScene}"
+                      AutomationProperties.AutomationId="Reader.RetryTranslationWithScene" />
+            </StackPanel>
           </StackPanel>
           <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
             <SelectableTextBlock Text="{Binding TranslationText}" TextWrapping="Wrap"

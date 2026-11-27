@@ -14,8 +14,10 @@ internal static partial class MangaOcr
     private static bool InSameClosedBubble(ImagePixels image, MangaOcrRegion right, MangaOcrRegion left,
         int thickness, int seedX, int seedY, CancellationToken token)
     {
-        Bounds window = BubbleSearchWindow(image, left.X, Math.Min(left.Y, right.Y),
-            Math.Max(left.X + left.Width, right.X + right.Width), Math.Max(left.Y + left.Height, right.Y + right.Height), thickness * 4);
+        int top = Math.Min(left.Y, right.Y);
+        int rightEdge = Math.Max(left.X + left.Width, right.X + right.Width);
+        int bottom = Math.Max(left.Y + left.Height, right.Y + right.Height);
+        Bounds window = LargestBubbleWindow(image, left.X, top, rightEdge, bottom, thickness * 4);
         if (!IsValidBubbleWindow(window)) return false;
         int area = window.Width * window.Height;
         byte[] visited = ArrayPool<byte>.Shared.Rent(area);
@@ -98,6 +100,23 @@ internal static partial class MangaOcr
         int x = Math.Max(0, x0 - padding);
         int y = Math.Max(0, y0 - padding);
         return new Bounds(x, y, Math.Min(image.Width, x1 + padding) - x, Math.Min(image.Height, y1 + padding) - y);
+    }
+
+    private static Bounds LargestBubbleWindow(ImagePixels image, int x0, int y0, int x1, int y1, int padding)
+    {
+        Bounds window = BubbleSearchWindow(image, x0, y0, x1, y1, padding);
+        if (IsValidBubbleWindow(window)) return window;
+
+        int minimum = 0;
+        int maximum = padding;
+        while (maximum - minimum > 1)
+        {
+            int middle = minimum + (maximum - minimum) / 2;
+            if (IsValidBubbleWindow(BubbleSearchWindow(image, x0, y0, x1, y1, middle)))
+                minimum = middle;
+            else maximum = middle;
+        }
+        return BubbleSearchWindow(image, x0, y0, x1, y1, minimum);
     }
 
     private static bool IsValidBubbleWindow(Bounds window) =>

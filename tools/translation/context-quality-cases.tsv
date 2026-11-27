@@ -1,0 +1,9 @@
+case_id	source_lang	target_lang	context_mode	context	source	reference
+going	ja	zh-CN	page	出发前，两位同事约好一起去车站，答话者正准备离开办公室。	待って……イッちゃう、イッちゃうから……	离开出发
+adult	ja	zh-CN	page	两名成年人正在发生性行为，说话者呼吸急促并在身体反应达到顶点前出声。	待って……イッちゃう、イッちゃうから……	高潮
+no-context	ja	zh-CN	single		待って……イッちゃう、イッちゃうから……	保留歧义
+train	ja	zh-CN	page	说话者在月台看到电车马上关门，还没有上车。	急いで。乗り遅れちゃうよ。	赶不上电车
+nearby-motion	ja	zh-CN	page	两位朋友准备骑车下坡，后面的人请求前面的人放慢速度。	待って、先に行っちゃうの？	先走
+medical	ja	zh-CN	page	成年人在医院，医生正检查心率异常，病人担心心脏受不了。	このままじゃ心臓がイッちゃう。	心脏受不了
+danger	ja	zh-CN	page	厨房突然起火，同伴提醒有危险。	やばい、これ。	糟糕或危险
+praise	ja	zh-CN	page	朋友尝了一口甜点，高兴地竖起拇指，夸食物。	やばい、これ。	很好吃或惊艳

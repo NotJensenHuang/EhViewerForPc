@@ -18,6 +18,8 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
     private bool _usable = true;
     private MangaTranslationPageContext _lastDeliveredPage;
     private CancellationToken _lastDeliveredToken;
+    private MangaTranslationPageContext _precedingDeliveredPage;
+    private CancellationToken _precedingDeliveredToken;
 
     internal MangaTranslationConnection(ProcessStartInfo start, MangaTranslationBackendPaths resources,
         MangaTranslationLanguageOption language)
@@ -42,6 +44,8 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
         {
             string request = context.Reader == Guid.Empty ? snapshot :
                 FormattableString.Invariant($"{snapshot}\t{context.Reader:N}\t{context.Page}\t{(CanUsePriorPage(context) ? 1 : 0)}");
+            if (context.Reader != Guid.Empty && !string.IsNullOrEmpty(context.Scene))
+                request += "\t" + Convert.ToBase64String(Encoding.UTF8.GetBytes(context.Scene));
             await _process.StandardInput.WriteLineAsync(request.AsMemory(), token).ConfigureAwait(false);
             await _process.StandardInput.FlushAsync(token).ConfigureAwait(false);
         }
@@ -84,7 +88,13 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
             token.ThrowIfCancellationRequested();
             MangaTranslationResponse response = MangaTranslationService.ParseResponse(frame[2..], width, height);
             token.ThrowIfCancellationRequested();
-            _lastDeliveredPage = context;
+            if (_lastDeliveredPage.Reader != context.Reader || _lastDeliveredPage.Page != context.Page)
+            {
+                _precedingDeliveredPage = _lastDeliveredPage;
+                _precedingDeliveredToken = _lastDeliveredToken;
+            }
+            // 连续性只需页身份。手填语境不传到别页，也不随连接长期保留。
+            _lastDeliveredPage = context with { Scene = null };
             _lastDeliveredToken = token;
             return response;
         }
@@ -100,9 +110,13 @@ internal sealed class MangaTranslationConnection : IAsyncDisposable
         throw MangaTranslationService.InvalidResponse();
     }
 
-    private bool CanUsePriorPage(MangaTranslationPageContext context) =>
-        context.Reader == _lastDeliveredPage.Reader && context.Page > 1 && _lastDeliveredPage.Page == context.Page - 1 &&
-        !_lastDeliveredToken.IsCancellationRequested;
+    private bool CanUsePriorPage(MangaTranslationPageContext context)
+    {
+        if (context.Reader == Guid.Empty || context.Page <= 1 || context.Reader != _lastDeliveredPage.Reader) return false;
+        if (_lastDeliveredPage.Page == context.Page - 1) return !_lastDeliveredToken.IsCancellationRequested;
+        return _lastDeliveredPage.Page == context.Page && _precedingDeliveredPage.Reader == context.Reader &&
+            _precedingDeliveredPage.Page == context.Page - 1 && !_precedingDeliveredToken.IsCancellationRequested;
+    }
 
     private async Task CancelPageAsync(Task<string> read)
     {

@@ -165,17 +165,29 @@ internal static class MangaTranslationWorker
         }
     }
 
-    private static bool TryParsePage(string line, out string page, out MangaTranslationPageContext context, out bool usePriorPage)
+    internal static bool TryParsePage(string line, out string page, out MangaTranslationPageContext context, out bool usePriorPage)
     {
         string[] request = line.Split('\t');
         page = request[0];
         context = default;
         usePriorPage = false;
         if (request.Length == 1) return true;
-        if (request.Length != 4 || request[3] is not ("0" or "1") || !Guid.TryParseExact(request[1], "N", out Guid scope) || scope == Guid.Empty ||
+        if (request.Length is not (4 or 5) || request[3] is not ("0" or "1") ||
+            !Guid.TryParseExact(request[1], "N", out Guid scope) || scope == Guid.Empty ||
             !int.TryParse(request[2], System.Globalization.NumberStyles.None,
                 System.Globalization.CultureInfo.InvariantCulture, out int number) || number < 1) return false;
-        context = new MangaTranslationPageContext(scope, number);
+        string? scene = null;
+        if (request.Length == 5)
+        {
+            if (request[4].Length > 960) return false;
+            Span<byte> sceneBytes = stackalloc byte[720];
+            if (!Convert.TryFromBase64String(request[4], sceneBytes, out int length)) return false;
+            try { scene = PipeEncoding.GetString(sceneBytes[..length]); }
+            catch (DecoderFallbackException) { return false; }
+            if (scene.Length > MangaTranslationPageContext.MaximumSceneLength || scene.Any(char.IsControl)) return false;
+            scene = scene.Trim();
+        }
+        context = new MangaTranslationPageContext(scope, number, scene);
         usePriorPage = request[3] == "1";
         return true;
     }
@@ -189,8 +201,8 @@ internal static class MangaTranslationWorker
         private MangaOcr.Engine? _ocr;
         private LocalGgufTranslator? _translator;
         private JMangaTranslator? _jManga;
-        private MangaTranslationPageContext _previousPage;
-        private string _previousDialogue = "";
+        private DialoguePage _latest;
+        private DialoguePage _older;
 
         internal int Infer(string image, CancellationToken token, out MangaTranslationResponse? response, MangaTranslationPageContext context = default, bool usePriorPage = false)
         {
@@ -237,15 +249,41 @@ internal static class MangaTranslationWorker
                 {
                     LocalGgufTranslator translator = _translator ??= LocalGgufTranslator.Load(native, models, model, token);
                     translationReady = Stopwatch.GetTimestamp();
-                    string previous = usePriorPage && context.Reader != Guid.Empty && context.Reader == _previousPage.Reader &&
-                        context.Page > 1 && _previousPage.Page == context.Page - 1 ? _previousDialogue : "";
-                    response = BuildResponse(ocr, translator.Device, null, model, language,
-                        (text, index, reviewed) => translator.Translate(text, GetPageContext(ocr.Regions, index, reviewed, previous), token));
+                    string previous = PreviousDialogue(context, usePriorPage);
+                    MangaTranslationContextSources[]? regionContext = model.SupportsSceneContext
+                        ? new MangaTranslationContextSources[ocr.Regions.Count] : null;
+                    response = BuildResponse(ocr, translator.Device, null, model, language, (text, index, reviewed) =>
+                    {
+                        (string reference, MangaTranslationContextSources sources) = GetPageContext(ocr.Regions, index,
+                            reviewed, previous, model.SupportsSceneContext, context.Scene);
+                        try
+                        {
+                            string output = translator.Translate(text, reference, token);
+                            if (regionContext is not null) regionContext[index] = sources;
+                            return output;
+                        }
+                        catch (MangaTranslationRegionLimitException ex) when (regionContext is not null && ex.PartialTranslation is not null)
+                        {
+                            // 已生成的待复核或截断结果同样使用了语境，只有送入前超长才不记。
+                            regionContext[index] = sources;
+                            throw;
+                        }
+                    });
+                    if (regionContext is not null)
+                    {
+                        MangaTranslationContextSources pageContext = MangaTranslationContextSources.None;
+                        for (int i = 0; i < response.Regions.Length; i++)
+                        {
+                            if (regionContext[i] == MangaTranslationContextSources.None) continue;
+                            response.Regions[i] = response.Regions[i] with { ContextSources = regionContext[i] };
+                            pageContext |= regionContext[i];
+                        }
+                        response = response with { ContextSources = pageContext };
+                    }
                 }
 
                 token.ThrowIfCancellationRequested();
-                _previousPage = context;
-                _previousDialogue = context.Reader == Guid.Empty ? "" : RememberPage(response);
+                RememberPage(context, response, usePriorPage);
                 if (_timings)
                 {
                     long translationDone = Stopwatch.GetTimestamp();
@@ -259,6 +297,30 @@ internal static class MangaTranslationWorker
             catch (Exception ex) { return Fail(TranslationFailed, ex); }
         }
 
+        private string PreviousDialogue(MangaTranslationPageContext context, bool usePriorPage)
+        {
+            if (!usePriorPage || context.Reader == Guid.Empty || context.Page <= 1) return "";
+            int previousNumber = context.Page - 1;
+            if (_latest.Reader == context.Reader && _latest.Number == previousNumber) return _latest.Text;
+            if (_older.Reader == context.Reader && _older.Number == previousNumber) return _older.Text;
+            return "";
+        }
+
+        private void RememberPage(MangaTranslationPageContext context, MangaTranslationResponse response, bool usePriorPage)
+        {
+            if (context.Reader == Guid.Empty)
+            {
+                _latest = _older = default;
+                return;
+            }
+            // 同页重试替换当前页，不挤掉之前的相邻页。
+            string text = PreviousDialogue(context, usePriorPage);
+            _older = text.Length == 0 ? default : new(context.Reader, context.Page - 1, text);
+            _latest = new(context.Reader, context.Page, MangaTranslationWorker.RememberPage(response, model.SupportsSceneContext));
+        }
+
+        private readonly record struct DialoguePage(Guid Reader, int Number, string Text);
+
         public void Dispose()
         {
             try { _translator?.Dispose(); }
@@ -270,36 +332,64 @@ internal static class MangaTranslationWorker
         }
     }
 
-    private static string GetPageContext(IReadOnlyList<MangaOcrRegion> regions, int index,
-        IReadOnlyList<MangaTranslationRegion> reviewed, string previousPage)
+    internal static (string, MangaTranslationContextSources) GetPageContext(IReadOnlyList<MangaOcrRegion> regions, int index,
+        IReadOnlyList<MangaTranslationRegion> reviewed, string previousPage, bool sourceOnly, string? scene)
     {
         var text = new StringBuilder(512);
-        if (previousPage.Length > 0) text.Append("Previous page:\n").AppendLine(previousPage);
+        MangaTranslationContextSources sources = MangaTranslationContextSources.None;
+        if (sourceOnly && !string.IsNullOrWhiteSpace(scene))
+        {
+            text.Append("读者补充的场景事实：").AppendLine(scene);
+            sources |= MangaTranslationContextSources.Scene;
+        }
+        if (previousPage.Length > 0)
+        {
+            text.Append(sourceOnly ? "前一页对白：\n" : "Previous page:\n").AppendLine(previousPage);
+            sources |= MangaTranslationContextSources.PreviousPage;
+        }
         int first = Math.Max(0, index - 2);
         int last = Math.Min(regions.Count - 1, index + 2);
         for (int i = first; i <= last; i++)
         {
-            if (i == index) continue;
-            text.Append(i < index ? "Before: " : "After: ")
+            if (i == index || (sourceOnly && !HasReferenceText(regions[i].Text))) continue;
+            sources |= MangaTranslationContextSources.NearbyDialogue;
+            text.Append(sourceOnly ? (i < index ? "本页前方对白：" : "本页后方对白：") : (i < index ? "Before: " : "After: "))
                 .Append(PrefixWithoutSplittingSurrogates(regions[i].Text, 160));
-            if (i < index && reviewed[i] is { Review: MangaTranslationRegionReview.None, TranslatedText.Length: > 0 } before)
+            if (!sourceOnly && i < index && reviewed[i] is { Review: MangaTranslationRegionReview.None, TranslatedText.Length: > 0 } before)
                 text.Append(" → ").Append(PrefixWithoutSplittingSurrogates(before.TranslatedText, 80));
             text.AppendLine();
         }
-        return text.ToString();
+        return (text.ToString(), sources);
     }
 
-    private static string RememberPage(MangaTranslationResponse response)
+    private static string RememberPage(MangaTranslationResponse response, bool sourceOnly)
     {
         var text = new StringBuilder(480);
-        foreach (MangaTranslationRegion region in response.Regions.TakeLast(3))
+        IEnumerable<MangaTranslationRegion> regions = response.Regions;
+        if (sourceOnly) regions = regions.Where(static region => HasReferenceText(region.SourceText));
+        foreach (MangaTranslationRegion region in regions.TakeLast(3))
         {
+            if (sourceOnly)
+            {
+                text.Append(PrefixWithoutSplittingSurrogates(region.SourceText, 80)).AppendLine();
+                continue;
+            }
             if (region.Review != MangaTranslationRegionReview.None || string.IsNullOrWhiteSpace(region.TranslatedText)) continue;
             text.Append(PrefixWithoutSplittingSurrogates(region.SourceText, 80))
                 .Append(" → ")
                 .Append(PrefixWithoutSplittingSurrogates(region.TranslatedText, 80)).AppendLine();
         }
         return text.ToString();
+    }
+
+    private static bool HasReferenceText(string text)
+    {
+        int letters = 0;
+        foreach (Rune character in text.EnumerateRunes())
+        {
+            if (Rune.IsLetterOrDigit(character) && ++letters >= 2) return true;
+        }
+        return false;
     }
 
     private static ReadOnlySpan<char> PrefixWithoutSplittingSurrogates(string text, int limit)

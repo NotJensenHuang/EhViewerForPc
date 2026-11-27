@@ -112,21 +112,23 @@ public sealed class MangaOcrDialogueTests
         Assert.Equal((28, 20, 136, 130), (bubble.X, bubble.Y, bubble.Width, bubble.Height));
     }
     [Theory]
-    [InlineData(false, false)]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void StaggeredVerticalColumnsOnlyJoinWithClosedBubbleEvidence(bool separatingBorder, bool openOutline)
+    [InlineData(false, false, 1)]
+    [InlineData(false, false, 3)]
+    [InlineData(true, false, 1)]
+    [InlineData(true, false, 3)]
+    [InlineData(false, true, 1)]
+    public void StaggeredVerticalColumnsOnlyJoinWithClosedBubbleEvidence(bool separatingBorder, bool openOutline, int scale)
     {
-        const int size = 180;
+        int size = 180 * scale;
         byte[] pixels = new byte[size * size * 4];
         pixels.AsSpan().Fill(225);
         for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
 
-        for (int y = 18; y <= 155; y++)
-        for (int x = 45; x <= 130; x++)
+        for (int y = 18 * scale; y <= 155 * scale; y++)
+        for (int x = 45 * scale; x <= 130 * scale; x++)
         {
-            if (x == 45 || (x == 130 && !(openOutline && y == 80)) || y is 18 or 155 ||
-                (separatingBorder && x == 87))
+            if (x == 45 * scale || (x == 130 * scale && !(openOutline && y == 80 * scale)) ||
+                y == 18 * scale || y == 155 * scale || (separatingBorder && x == 87 * scale))
                 pixels.AsSpan((y * size + x) * 4, 3).Clear();
         }
 
@@ -137,6 +139,21 @@ public sealed class MangaOcrDialogueTests
             new(105, 62, 20, 67, "一列目") { SourceRegionIds = [3] },
             new(132, 55, 20, 58, "ガタン") { SourceRegionIds = [4] },
         };
+
+        if (scale > 1)
+        {
+            for (int i = 0; i < columns.Count; i++)
+            {
+                MangaOcrRegion region = columns[i];
+                columns[i] = region with
+                {
+                    X = region.X * scale,
+                    Y = region.Y * scale,
+                    Width = region.Width * scale,
+                    Height = region.Height * scale,
+                };
+            }
+        }
 
         var grouped = MangaOcr.ArrangeDialogue(columns, pixels, size, size, size * 4, TestContext.Current.CancellationToken);
         Assert.Contains(grouped, item => item.SourceRegionIds.SequenceEqual([4]));
@@ -150,7 +167,38 @@ public sealed class MangaOcrDialogueTests
         Assert.Equal(new[] { 3, 2, 1 }, bubble.SourceRegionIds);
         Assert.Equal("一列目二列目三列目", bubble.Text);
         var interior = Assert.IsType<MangaOcrLayoutBounds>(bubble.BubbleInterior);
-        Assert.True(interior.X > 45 && interior.X + interior.Width < 130);
-        Assert.True(interior.Y > 18 && interior.Y + interior.Height < 155);
+        Assert.True(interior.X > 45 * scale && interior.X + interior.Width < 130 * scale);
+        Assert.True(interior.Y > 18 * scale && interior.Y + interior.Height < 155 * scale);
+    }
+    [Theory]
+    [InlineData(1, false, 1)]
+    [InlineData(2, false, 2)]
+    [InlineData(1, true, 2)]
+    public void BubbleInstancesPreventCrossBubbleChainsWithoutOverridingInkSeparators(
+        int leftBubble, bool separatingInk, int expectedGroups)
+    {
+        const int size = 160;
+        byte[] pixels = new byte[size * size * 4];
+        pixels.AsSpan().Fill(255);
+        if (separatingInk)
+        {
+            for (int y = 18; y < 95; y++)
+                pixels.AsSpan((y * size + 81) * 4, 3).Clear();
+        }
+
+        var columns = new List<MangaOcrRegion>
+        {
+            new(30, 18, 24, 75, "左列目") { SourceRegionIds = [1], BubbleInstanceId = leftBubble },
+            new(56, 18, 24, 75, "中央列") { SourceRegionIds = [2] },
+            new(82, 18, 24, 75, "右列目") { SourceRegionIds = [3], BubbleInstanceId = 1 },
+        };
+        var grouped = MangaOcr.ArrangeDialogue(columns, pixels, size, size, size * 4, TestContext.Current.CancellationToken);
+        Assert.Equal(expectedGroups, grouped.Count);
+        Assert.Equal(new[] { 1, 2, 3 }, grouped.SelectMany(static region => region.SourceRegionIds).Order().ToArray());
+        if (leftBubble == 2)
+        {
+            Assert.DoesNotContain(grouped, item => item.SourceRegionIds.Contains(1) && item.SourceRegionIds.Contains(3));
+            Assert.Contains(grouped, item => item.SourceRegionIds.SequenceEqual([3, 2]));
+        }
     }
 }

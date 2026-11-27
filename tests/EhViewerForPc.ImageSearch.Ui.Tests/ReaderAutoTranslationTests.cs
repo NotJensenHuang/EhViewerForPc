@@ -177,6 +177,57 @@ public sealed class ReaderAutoTranslationTests
         finally { window.Close(); }
     }
 
+    [AvaloniaFact]
+    public async Task ExplicitSceneRetryDoesNotLeakToOtherPagesOrCpuModels()
+    {
+        using var fixture = new Fixture();
+        fixture.Services.SaveTranslationModel(MangaTranslationModelOption.Find("qwen3-4b-context")!);
+        using var page = fixture.CreateReader();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(8));
+        var image = new ReaderTranslationImage("page.png", 10, DateTime.UnixEpoch);
+
+        page.ViewModel.TranslationScene = "  场景在车站  ";
+        var first = page.ViewModel.RetryTranslationWithSceneAsync(image);
+        Request retry = await fixture.Requests.Reader.ReadAsync(timeout.Token);
+        Assert.Equal(1, retry.Context.Page);
+        Assert.Equal("场景在车站", retry.Context.Scene);
+        var scoped = Response("译文");
+        scoped.Regions[0] = scoped.Regions[0] with
+        {
+            ContextSources = MangaTranslationContextSources.Scene | MangaTranslationContextSources.PreviousPage,
+        };
+        retry.Completion.SetResult(scoped);
+        await first.WaitAsync(timeout.Token);
+        Assert.NotNull(page.ViewModel.ActiveTranslationOverlay);
+        Assert.Contains("上一相邻页对白、本页手填场景", page.ViewModel.TranslationText);
+        Assert.DoesNotContain("场景在车站", page.ViewModel.TranslationText);
+
+        page.ViewModel.TranslationScene = "";
+        Assert.True(page.ViewModel.CanRetryWithTranslationScene);
+        var cleared = page.ViewModel.RetryTranslationWithSceneAsync(image);
+        Request repeat = await fixture.Requests.Reader.ReadAsync(timeout.Token);
+        Assert.Null(repeat.Context.Scene);
+        Assert.Equal(retry.Context.Reader, repeat.Context.Reader);
+        repeat.Completion.SetResult(Response("新译文"));
+        await cleared.WaitAsync(timeout.Token);
+
+        page.ViewModel.TranslationScene = "另一份场景说明";
+        page.ViewModel.NextPageCommand.Execute(null);
+        Assert.Empty(page.ViewModel.TranslationScene);
+        var next = page.ViewModel.TranslateCurrentPageAsync(image);
+        Request second = await fixture.Requests.Reader.ReadAsync(timeout.Token);
+        Assert.Equal(2, second.Context.Page);
+        Assert.Null(second.Context.Scene);
+        second.Completion.SetResult(Response("第二页"));
+        await next.WaitAsync(timeout.Token);
+
+        fixture.Services.SaveTranslationModel(MangaTranslationModelOption.Find(MangaTranslationModelOption.JMangaId)!);
+        Assert.False(page.ViewModel.SupportsTranslationScene);
+        page.ViewModel.TranslationScene = "不会送给单气泡模型";
+        Assert.False(page.ViewModel.CanRetryWithTranslationScene);
+    }
+
     private static async Task WaitForAsync(Func<bool> predicate, CancellationToken token)
     {
         while (!predicate()) await Task.Delay(10, token);
@@ -185,7 +236,7 @@ public sealed class ReaderAutoTranslationTests
     private static MangaTranslationResponse Response(string text, string language = "zh-CN") =>
         new(1, 160, 240, "fixture", "fixture", [new("原文", text, 8, 8, 80, 72)]) { TargetLanguage = language };
 
-    private sealed record Request(ReaderTranslationImage Image, CancellationToken Token,
+    private sealed record Request(ReaderTranslationImage Image, MangaTranslationPageContext Context, CancellationToken Token,
         TaskCompletionSource<MangaTranslationResponse> Completion);
 
     private sealed class Fixture : IDisposable
@@ -232,10 +283,10 @@ public sealed class ReaderAutoTranslationTests
             return new ReaderPage(new ReaderViewModel(Services, source, 1, TranslateAsync, static () => true));
         }
 
-        private Task<MangaTranslationResponse> TranslateAsync(ReaderTranslationImage image, CancellationToken token)
+        private Task<MangaTranslationResponse> TranslateAsync(ReaderTranslationImage image, MangaTranslationPageContext context, CancellationToken token)
         {
             var completion = new TaskCompletionSource<MangaTranslationResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-            if (!Requests.Writer.TryWrite(new Request(image, token, completion))) throw new InvalidOperationException();
+            if (!Requests.Writer.TryWrite(new Request(image, context, token, completion))) throw new InvalidOperationException();
             return completion.Task;
         }
 

@@ -55,6 +55,8 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
         _savedDirectory = _modelDirectory = configured.Length == 0 ? _backend.DefaultModelDirectory : configured;
     }
 
+    public bool SupportsSceneContext => _selectedModel?.SupportsSceneContext == true;
+
     public IReadOnlyList<MangaTranslationModelOption> Models => MangaTranslationModelOption.Choices;
     public IReadOnlyList<MangaTranslationLanguageOption> TargetLanguages => _selectedModel is { } model
         ? MangaTranslationLanguageOption.Choices.Where(model.Supports).ToArray()
@@ -69,6 +71,7 @@ public sealed partial class MangaTranslationSettingsViewModel : ObservableObject
             OnPropertyChanged(nameof(CanInstall));
             OnPropertyChanged(nameof(TargetLanguages));
             OnPropertyChanged(nameof(RequiresNonCommercialLicense));
+            OnPropertyChanged(nameof(SupportsSceneContext));
             OnPropertyChanged(nameof(InstallLabel));
             _services.SaveTranslationModel(value);
             IsReady = false;

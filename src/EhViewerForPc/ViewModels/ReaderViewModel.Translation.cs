@@ -9,7 +9,7 @@ namespace EhViewerForPc.ViewModels;
 
 public sealed partial class ReaderViewModel
 {
-    private readonly Func<ReaderTranslationImage, CancellationToken, Task<MangaTranslationResponse>> _translatePage;
+    private readonly Func<ReaderTranslationImage, MangaTranslationPageContext, CancellationToken, Task<MangaTranslationResponse>> _translatePage;
     private readonly Func<bool> _hasTranslationModel;
     private readonly Guid _translationReader = Guid.NewGuid();
     private CancellationTokenSource? _translationJob;
@@ -23,6 +23,8 @@ public sealed partial class ReaderViewModel
     private MangaTranslationOverlay? _translationOverlay;
     private string _translationStatus = "";
     private string _translationText = "";
+    private string _translationScene = "";
+    private bool _usedTranslationScene;
 
     internal event EventHandler? AutoTranslationRequested;
 
@@ -51,7 +53,9 @@ public sealed partial class ReaderViewModel
         get => _isTranslationRunning;
         private set
         {
-            if (SetProperty(ref _isTranslationRunning, value)) OnPropertyChanged(nameof(CanTranslateCurrentPage));
+            if (!SetProperty(ref _isTranslationRunning, value)) return;
+            OnPropertyChanged(nameof(CanTranslateCurrentPage));
+            OnPropertyChanged(nameof(CanRetryWithTranslationScene));
         }
     }
 
@@ -75,6 +79,25 @@ public sealed partial class ReaderViewModel
         }
     }
 
+    public bool SupportsTranslationScene =>
+        _services.GetMangaTranslationPreferences().Model?.SupportsSceneContext == true;
+
+    public int MaximumTranslationSceneLength => MangaTranslationPageContext.MaximumSceneLength;
+
+    public string TranslationScene
+    {
+        get => _translationScene;
+        set
+        {
+            value ??= "";
+            if (value.Length > MaximumTranslationSceneLength || !SetProperty(ref _translationScene, value)) return;
+            OnPropertyChanged(nameof(CanRetryWithTranslationScene));
+        }
+    }
+
+    public bool CanRetryWithTranslationScene => SupportsTranslationScene && CanTranslateCurrentPage &&
+        (_usedTranslationScene || !string.IsNullOrWhiteSpace(TranslationScene));
+
     public bool HasTranslationText => TranslationText.Length > 0;
     public bool HasImageTranslation => _translationOverlay is not null;
     public string TranslationImageButtonText => _showTranslatedImage ? "显示原图" : "显示译文";
@@ -89,8 +112,9 @@ public sealed partial class ReaderViewModel
         }
     }
 
-    private Task<MangaTranslationResponse> TranslateWithReaderContextAsync(ReaderTranslationImage image, CancellationToken token) =>
-        _services.MangaTranslation.TranslateAsync(image, token, new MangaTranslationPageContext(_translationReader, CurrentPageNumber));
+    private Task<MangaTranslationResponse> TranslateWithReaderContextAsync(ReaderTranslationImage image,
+        MangaTranslationPageContext context, CancellationToken token) =>
+        _services.MangaTranslation.TranslateAsync(image, token, context);
 
     internal Task TranslateCurrentPageAsync(ReaderTranslationImage? image)
     {
@@ -103,6 +127,14 @@ public sealed partial class ReaderViewModel
         return TranslatePageAsync(image, currentImage: null);
     }
 
+    internal Task RetryTranslationWithSceneAsync(ReaderTranslationImage? image)
+    {
+        if (image is null || !CanRetryWithTranslationScene) return Task.CompletedTask;
+        string scene = TranslationScene.Trim();
+        if (scene.Any(char.IsControl)) return Task.CompletedTask;
+        return TranslatePageAsync(image, currentImage: null, scene.Length == 0 ? null : scene);
+    }
+
     internal Task TranslatePageAutomaticallyAsync(ReaderTranslationImage image, Func<ReaderTranslationImage?> currentImage)
     {
         if (!CanScheduleAutoTranslation || image.IsAnimated || _attemptedTranslationImage == image)
@@ -111,7 +143,7 @@ public sealed partial class ReaderViewModel
         return TranslatePageAsync(image, currentImage);
     }
 
-    private async Task TranslatePageAsync(ReaderTranslationImage? image, Func<ReaderTranslationImage?>? currentImage)
+    private async Task TranslatePageAsync(ReaderTranslationImage? image, Func<ReaderTranslationImage?>? currentImage, string? scene = null)
     {
         if (!CanTranslateCurrentPage) return;
 
@@ -141,7 +173,8 @@ public sealed partial class ReaderViewModel
         TranslationStatus = "正在本机识别并翻译…";
         try
         {
-            MangaTranslationResponse result = await _translatePage(image.Value, job.Token);
+            var context = new MangaTranslationPageContext(_translationReader, CurrentPageNumber, scene);
+            MangaTranslationResponse result = await _translatePage(image.Value, context, job.Token);
             if (_translationJob != job) return;
             if (job.IsCancellationRequested)
             {
@@ -173,6 +206,7 @@ public sealed partial class ReaderViewModel
                 if (i != 0) text.AppendLine().AppendLine();
                 MangaTranslationRegion region = result.Regions[i];
                 text.Append(i + 1).Append("  ").AppendLine(region.SourceText);
+                AppendContextSources(text, region.ContextSources);
                 if (string.IsNullOrWhiteSpace(region.TranslatedText))
                 {
                     text.Append(region.Review switch
@@ -221,6 +255,7 @@ public sealed partial class ReaderViewModel
                     text.AppendLine().Append("首次识别 ").Append(observation.OriginalText);
             }
 
+            _usedTranslationScene = scene is not null;
             TranslationText = text.ToString();
             if (overlays.Count > 0)
             {
@@ -329,6 +364,8 @@ public sealed partial class ReaderViewModel
     {
         if (_disposed) return;
         CloseTranslation();
+        OnPropertyChanged(nameof(SupportsTranslationScene));
+        OnPropertyChanged(nameof(CanRetryWithTranslationScene));
         AutoTranslationRequested?.Invoke(this, EventArgs.Empty);
     }
 
@@ -373,6 +410,8 @@ public sealed partial class ReaderViewModel
         IsTranslationOpen = false;
         TranslationStatus = "";
         TranslationText = "";
+        _usedTranslationScene = false;
+        TranslationScene = "";
         ShowTranslationSettings = false;
         ResetTranslationOverlay();
     }
@@ -449,6 +488,16 @@ public sealed partial class ReaderViewModel
             bounds is { } value ? new Rect(value.X, value.Y, value.Width, value.Height) : null;
         Rect? Clip(Rect? candidate, Rect obstacle) =>
             candidate is { } available ? MangaTranslationOverlay.SpaceBeside(available, source, obstacle) : null;
+    }
+
+    private static void AppendContextSources(StringBuilder text, MangaTranslationContextSources context)
+    {
+        if (context == MangaTranslationContextSources.None) return;
+        var sources = new List<string>(3);
+        if ((context & MangaTranslationContextSources.NearbyDialogue) != 0) sources.Add("同页对白");
+        if ((context & MangaTranslationContextSources.PreviousPage) != 0) sources.Add("上一相邻页对白");
+        if ((context & MangaTranslationContextSources.Scene) != 0) sources.Add("本页手填场景");
+        text.Append("参考语境  ").AppendJoin("、", sources).AppendLine();
     }
 
     private static Rect BoundsOf(MangaOcrPoint[] polygon) =>

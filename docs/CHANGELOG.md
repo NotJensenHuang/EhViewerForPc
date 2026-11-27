@@ -1,5 +1,11 @@
 # 变更记录
 
+## 2026-11-27 气泡分组与漫画语境翻译
+
+- MangaOcrBubble.cs 对超预算的成对气泡搜索缩减区间，保持闭合纸底证据和右到左顺序。
+- MangaTranslationOptions.cs 与 backend-assets.tsv 加入可按需准备的 Qwen3 4B 语境翻译。工作进程参考邻近原文和上一相邻页原文，并标记实际使用的语境来源。
+- ReaderPage.axaml 与 ReaderViewModel.Translation.cs 提供本页场景说明及显式重译，双语文本继续保留原文和复核条目。
+
 ## 2026-11-27 修复闭合泡短句重译与覆盖过窄
 
 - `MangaTranslationWorker.cs` 对 JManga 把不同短句译为重复内容的结果尝试逐句恢复。保留原顺序及句间换行。

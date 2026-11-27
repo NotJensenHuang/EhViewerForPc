@@ -34,7 +34,10 @@ internal readonly record struct ReaderTranslationImage(string Path, long Length,
     }
 }
 
-internal readonly record struct MangaTranslationPageContext(Guid Reader, int Page);
+internal readonly record struct MangaTranslationPageContext(Guid Reader, int Page, string? Scene = null)
+{
+    internal const int MaximumSceneLength = 160;
+}
 
 internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decoder, LogService log,
     MangaTranslationBackendService backend, Func<MangaTranslationPreferences> getPreferences) : IDisposable
@@ -243,7 +246,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         try { result = JsonSerializer.Deserialize(json, MangaTranslationJsonContext.Default.MangaTranslationResponse); }
         catch (JsonException) { throw InvalidResponse(); }
         if (result is not { SchemaVersion: 1, OcrProvider: MangaOcrOrt.Provider or MangaOcrOrt.CpuProvider, Regions: not null } ||
-            result.Width != width || result.Height != height || result.Regions.Length > 120)
+            result.Width != width || result.Height != height || result.Regions.Length > 120 ||
+            !HasValidContextSources(result.ContextSources))
             throw InvalidResponse();
 
         bool backendMatches = result.OcrProvider == MangaOcrOrt.CpuProvider
@@ -251,7 +255,8 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
             : result.TranslationBackend?.StartsWith("Vulkan", StringComparison.Ordinal) == true;
         bool valid = result.Regions.Length == 0 ? result.TranslationBackend is null : backendMatches &&
             Array.TrueForAll(result.Regions, region => region?.SourceText is not null && region.TranslatedText is not null &&
-                region.HasValidBounds(width, height) && region.HasValidBubbleInterior(width, height) && Enum.IsDefined(region.Review) &&
+                region.HasValidBounds(width, height) && region.HasValidBubbleInterior(width, height) &&
+                HasValidContextSources(region.ContextSources) && Enum.IsDefined(region.Review) &&
                 region.RejectedOutput is null or { Length: <= 512 });
         if (!valid || result.OcrObservations is not { Length: <= 120 } || result.RawDetections is not { Length: <= 120 })
             throw InvalidResponse();
@@ -299,6 +304,10 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
         }
         return result;
     }
+
+    private static bool HasValidContextSources(MangaTranslationContextSources sources) =>
+        (sources & ~(MangaTranslationContextSources.NearbyDialogue | MangaTranslationContextSources.PreviousPage |
+            MangaTranslationContextSources.Scene)) == 0;
 
     private static bool HasValidPolygon(MangaOcrPoint[]? polygon, int width, int height)
     {
@@ -401,6 +410,7 @@ internal sealed record MangaTranslationRegion(string SourceText, string Translat
     public int Id { get; init; }
     public MangaTranslationRegionReview Review { get; init; }
     public string? RejectedOutput { get; init; }
+    public MangaTranslationContextSources ContextSources { get; init; }
 
     public int[] SourceRegionIds { get; init; } = [];
     public MangaOcrLayoutBounds? BubbleInterior { get; init; }
@@ -422,12 +432,22 @@ internal sealed record MangaTranslationRegion(string SourceText, string Translat
          inset.X < X + Width && inset.Y < Y + Height && inset.X + inset.Width > X && inset.Y + inset.Height > Y);
 }
 
+[Flags]
+internal enum MangaTranslationContextSources
+{
+    None = 0,
+    NearbyDialogue = 1,
+    PreviousPage = 2,
+    Scene = 4,
+}
+
 internal sealed record MangaTranslationResponse(int SchemaVersion, int Width, int Height, string OcrProvider,
     string? TranslationBackend, MangaTranslationRegion[] Regions)
 {
     public MangaOcrDetection[] RawDetections { get; init; } = [];
     public MangaOcrObservation[] OcrObservations { get; init; } = [];
     public string ModelId { get; init; } = "";
+    public MangaTranslationContextSources ContextSources { get; init; }
     public string TargetLanguage { get; init; } = "zh-CN";
 }
 

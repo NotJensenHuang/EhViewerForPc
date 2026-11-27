@@ -74,7 +74,8 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
     }
 
     internal ReaderViewModel(AppServices services, IReaderSource source, int? initialPageNumber,
-        Func<ReaderTranslationImage, CancellationToken, Task<MangaTranslationResponse>>? translatePage, Func<bool> hasTranslationModel)
+        Func<ReaderTranslationImage, MangaTranslationPageContext, CancellationToken, Task<MangaTranslationResponse>>? translatePage,
+        Func<bool> hasTranslationModel)
     {
         _services = services;
         _translatePage = translatePage ?? TranslateWithReaderContextAsync;
@@ -462,6 +463,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(RetryStatusText));
         OnPropertyChanged(nameof(HasRetryStatus));
         OnPropertyChanged(nameof(CanTranslateCurrentPage));
+        OnPropertyChanged(nameof(CanRetryWithTranslationScene));
         UpdateItemRetryState(running, progress, text);
     }
 
@@ -549,6 +551,7 @@ public sealed partial class ReaderViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(CanPrev));
         OnPropertyChanged(nameof(CanNext));
         OnPropertyChanged(nameof(CanTranslateCurrentPage));
+        OnPropertyChanged(nameof(CanRetryWithTranslationScene));
     }
 
     private void SetIndex(int index, bool scrollContinuous, double offset = 0, bool save = true)
