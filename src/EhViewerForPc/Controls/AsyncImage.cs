@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
@@ -38,6 +39,7 @@ public sealed class AsyncImage : Control
 
     private Bitmap? _bitmap;
     private ReaderTranslationImage? _translationImage;
+    private Rect? _translationViewport;
     private Bitmap? _retiredBitmap;
     private DecodedImage? _animated;
     private CancellationTokenSource? _cancellation;
@@ -107,6 +109,7 @@ public sealed class AsyncImage : Control
     {
         base.OnAttachedToVisualTree(e);
         _attached = true;
+        UpdateTranslationViewportSubscription();
         _detachTimer?.Stop();
         _detachTimer = null;
         BeginLoad();
@@ -115,6 +118,7 @@ public sealed class AsyncImage : Control
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         _attached = false;
+        UpdateTranslationViewportSubscription();
         _generation++;
         _cancellation?.Cancel();
         _cancellation?.Dispose();
@@ -152,11 +156,30 @@ public sealed class AsyncImage : Control
         {
             BeginLoad();
         }
-        else if (change.Property == DecodeWidthOnlyProperty || change.Property == StretchProperty ||
-                 change.Property == TranslationOverlayProperty)
+        else if (change.Property == TranslationOverlayProperty)
+        {
+            UpdateTranslationViewportSubscription();
+            InvalidateVisual();
+        }
+        else if (change.Property == DecodeWidthOnlyProperty || change.Property == StretchProperty)
         {
             InvalidateVisual();
         }
+    }
+
+    private void UpdateTranslationViewportSubscription()
+    {
+        EffectiveViewportChanged -= OnTranslationViewportChanged;
+        _translationViewport = null;
+        if (_attached && TranslationOverlay is not null)
+            EffectiveViewportChanged += OnTranslationViewportChanged;
+    }
+
+    private void OnTranslationViewportChanged(object? sender, EffectiveViewportChangedEventArgs e)
+    {
+        if (_translationViewport == e.EffectiveViewport) return;
+        _translationViewport = e.EffectiveViewport;
+        InvalidateVisual();
     }
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e)
@@ -383,7 +406,7 @@ public sealed class AsyncImage : Control
         {
             context.DrawImage(_bitmap, new Rect(imageSize), destination);
             if (TranslationOverlay is { } overlay && overlay.Matches(TranslationImage))
-                overlay.Draw(context, destination, bounds);
+                overlay.Draw(context, destination, bounds.Intersect(_translationViewport ?? bounds));
         }
     }
 

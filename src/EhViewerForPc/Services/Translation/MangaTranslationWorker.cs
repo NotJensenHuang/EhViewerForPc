@@ -327,6 +327,20 @@ internal static class MangaTranslationWorker
                 try { translated = (translateInContext?.Invoke(original, i, regions) ?? translate!(original)).Trim(); }
                 catch (MangaTranslationRegionLimitException ex) { rejectedOutput = ex.PartialTranslation; }
                 review = ReviewOutput(original, translated);
+                if (review == MangaTranslationRegionReview.None && model?.UsesCpu == true &&
+                    translate is not null && translateInContext is null &&
+                    TryFindCollapsedDialogue(ocr, region, original, translated, out string first, out string second))
+                {
+                    // 同一气泡中两句明确停顿的短对白，有时会被日中模型压成相同的两句。
+                    // 分句原文来自 OCR 顺序，仍调用同一模型，保留原稿供复核。
+                    string? revised = RetryDialogue(first, second, translate);
+                    if (revised is null) review = MangaTranslationRegionReview.Duplicate;
+                    else
+                    {
+                        rejectedOutput = translated;
+                        translated = revised;
+                    }
+                }
                 if (review is MangaTranslationRegionReview.Unchanged or MangaTranslationRegionReview.SourceLanguageResidue or MangaTranslationRegionReview.SymbolOnly)
                 {
                     rejectedOutput = translated;
@@ -348,6 +362,8 @@ internal static class MangaTranslationWorker
             {
                 Id = i + 1,
                 SourceRegionIds = region.SourceRegionIds,
+                BubbleInterior = region.BubbleInterior,
+                BalancedBubbleInterior = region.BalancedBubbleInterior,
                 Review = review,
                 RejectedOutput = rejectedOutput is { Length: > 0 } ? PrefixWithoutSplittingSurrogates(rejectedOutput, 512).ToString() : null,
             };
@@ -368,6 +384,56 @@ internal static class MangaTranslationWorker
             ModelId = model?.Id ?? "",
             TargetLanguage = (language ?? MangaTranslationLanguageOption.Choices[0]).Id,
         };
+    }
+
+    private const string DialoguePauses = "・･…‥.";
+
+    private static bool TryFindCollapsedDialogue(MangaOcrResult ocr, MangaOcrRegion region, string original,
+        string translated, out string first, out string second)
+    {
+        first = second = "";
+        if (region.BubbleInterior is null || region.SourceRegionIds is not [var firstId, var secondId] ||
+            firstId == secondId) return false;
+
+        ReadOnlySpan<char> target = translated.AsSpan();
+        int breakAt = target.IndexOfAny(DialoguePauses);
+        if (breakAt <= 0) return false;
+        ReadOnlySpan<char> targetFirst = target[..breakAt].Trim();
+        ReadOnlySpan<char> targetSecond = target[breakAt..].Trim("・･…‥. \t\r\n");
+        if (targetFirst.IsEmpty || !targetFirst.SequenceEqual(targetSecond)) return false;
+
+        foreach (MangaOcrObservation observation in ocr.Observations)
+        {
+            if (observation.RequiresReview || observation.Direction != MangaOcrDirection.Vertical) continue;
+            if (observation.Id == firstId) first = observation.FinalText.Trim();
+            else if (observation.Id == secondId) second = observation.FinalText.Trim();
+        }
+
+        ReadOnlySpan<char> firstStem = first.AsSpan().TrimEnd(DialoguePauses);
+        ReadOnlySpan<char> secondStem = second.AsSpan().TrimEnd(DialoguePauses);
+        return firstStem.Length is > 0 and <= 8 && secondStem.Length is > 0 and <= 8 &&
+            firstStem.Length != first.Length && secondStem.Length != second.Length &&
+            !SameDisplayText(firstStem.ToString(), secondStem.ToString()) &&
+            SameDisplayText(original, first + second);
+    }
+
+    private static string? RetryDialogue(string first, string second, Func<string, string> translate)
+    {
+        try
+        {
+            string translatedFirst = translate(first).Trim();
+            if (ReviewOutput(first, translatedFirst) != MangaTranslationRegionReview.None) return null;
+            string translatedSecond = translate(second).Trim();
+            if (ReviewOutput(second, translatedSecond) != MangaTranslationRegionReview.None) return null;
+
+            string firstStem = translatedFirst.AsSpan().TrimEnd(DialoguePauses).ToString();
+            string secondStem = translatedSecond.AsSpan().TrimEnd(DialoguePauses).ToString();
+            return SameDisplayText(firstStem, secondStem) ? null : string.Concat(translatedFirst, "\n", translatedSecond);
+        }
+        catch (MangaTranslationRegionLimitException)
+        {
+            return null;
+        }
     }
 
     internal static MangaTranslationRegionReview ReviewOutput(string original, string translated)

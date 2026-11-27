@@ -166,6 +166,8 @@ public sealed partial class ReaderViewModel
             var text = new StringBuilder();
             var overlays = new List<MangaTranslationOverlayRegion>(result.Regions.Length);
             int translatedCount = 0;
+            var coveredObservations = new HashSet<int>();
+            var coveredDetections = new HashSet<int>();
             for (int i = 0; i < result.Regions.Length; i++)
             {
                 if (i != 0) text.AppendLine().AppendLine();
@@ -194,8 +196,15 @@ public sealed partial class ReaderViewModel
                 translatedCount++;
                 if (region.Width > 0 && region.Height > 0)
                 {
+                    Rect? safeTextBounds = GetOverlaySpace(result, region, coveredObservations, coveredDetections,
+                        out Rect? balancedBounds, out Rect[]? sourceMasks);
                     overlays.Add(new MangaTranslationOverlayRegion(
-                        new Rect(region.X, region.Y, region.Width, region.Height), region.TranslatedText));
+                        new Rect(region.X, region.Y, region.Width, region.Height), region.TranslatedText)
+                    {
+                        SafeTextBounds = safeTextBounds,
+                        BalancedTextBounds = balancedBounds,
+                        SourceMasks = sourceMasks,
+                    });
                 }
             }
 
@@ -216,11 +225,18 @@ public sealed partial class ReaderViewModel
             if (overlays.Count > 0)
             {
                 TranslationStatus = reviewCount > 0
-                    ? $"图上显示 {overlays.Count} 个区块的译文 · {reviewCount} 个识别区块待核对"
-                    : $"图上显示 {overlays.Count} 个区块的译文";
+                    ? $"已翻译 {overlays.Count} 个区块，{reviewCount} 个识别区块待核对。泡内排不下的译文会尝试贴着气泡向外排。"
+                    : $"已翻译 {overlays.Count} 个区块。泡内排不下的译文会尝试贴着气泡向外排，完整译文见双语文本。";
+                Rect[] protectedBounds = result.OcrObservations
+                    .Where(observation => !coveredObservations.Contains(observation.Id))
+                    .Select(observation => BoundsOf(observation.Polygon))
+                    .Concat(result.RawDetections.Where(detection => !coveredDetections.Contains(detection.Id))
+                        .Select(detection => BoundsOf(detection.Polygon)))
+                    .ToArray();
                 _translationOverlay = new MangaTranslationOverlay(result.Width, result.Height, overlays, result.TargetLanguage)
                 {
                     ImageSource = image.Value,
+                    ProtectedImageBounds = protectedBounds,
                 };
                 _showTranslatedImage = true;
                 IsTranslationOpen = reviewCount > 0 && !automatic;
@@ -368,6 +384,76 @@ public sealed partial class ReaderViewModel
         _showTranslatedImage = false;
         PublishTranslationOverlay();
     }
+
+    internal static Rect? GetOverlaySpace(MangaTranslationResponse page, MangaTranslationRegion region,
+        HashSet<int> coveredObservations, HashSet<int> coveredDetections, out Rect? balanced, out Rect[]? sourceMasks)
+    {
+        sourceMasks = null;
+        balanced = null;
+        if (region.SourceRegionIds.Length == 0) return null;
+        var source = new Rect(region.X, region.Y, region.Width, region.Height);
+        var masks = new Rect[region.SourceRegionIds.Length];
+        var ownedDetections = new HashSet<int>();
+
+        for (int i = 0; i < region.SourceRegionIds.Length; i++)
+        {
+            int id = region.SourceRegionIds[i];
+            if (id < 1 || id > page.OcrObservations.Length) return null;
+            MangaOcrObservation observation = page.OcrObservations[id - 1];
+            masks[i] = BoundsOf(observation.Polygon);
+            ownedDetections.UnionWith(observation.OriginalDetectionIds);
+        }
+
+        coveredObservations.UnionWith(region.SourceRegionIds);
+        Rect? area = GetBounds(region.BubbleInterior);
+        balanced = GetBounds(region.BalancedBubbleInterior);
+
+        foreach (MangaOcrObservation observation in page.OcrObservations)
+        {
+            if (region.SourceRegionIds.Contains(observation.Id)) continue;
+            Rect polygon = BoundsOf(observation.Polygon);
+            // 已被本区原字罩住的重复低置信框仍在双语面板可查，但不应阻断排版。
+            if (observation.RequiresReview && Array.Exists(masks, mask => mask.Contains(polygon)))
+            {
+                coveredObservations.Add(observation.Id);
+                foreach (int id in observation.OriginalDetectionIds)
+                {
+                    // 原始检测框可能大于校正后的复核框，仍要单独检查包含关系。
+                    if (id < 1 || id > page.RawDetections.Length) continue;
+                    MangaOcrDetection raw = page.RawDetections[id - 1];
+                    Rect rawBounds = BoundsOf(raw.Polygon);
+                    if (raw.Id == id && Array.Exists(masks, mask => mask.Contains(rawBounds)))
+                        ownedDetections.Add(id);
+                }
+                continue;
+            }
+            area = Clip(area, polygon);
+            balanced = Clip(balanced, polygon);
+        }
+
+        coveredDetections.UnionWith(ownedDetections);
+        if (area is null && balanced is null) return null;
+        foreach (MangaOcrDetection detection in page.RawDetections)
+        {
+            if (ownedDetections.Contains(detection.Id)) continue;
+            Rect polygon = BoundsOf(detection.Polygon);
+            area = Clip(area, polygon);
+            balanced = Clip(balanced, polygon);
+            if (area is null && balanced is null) return null;
+        }
+
+        sourceMasks = masks;
+        return area;
+
+        static Rect? GetBounds(MangaOcrLayoutBounds? bounds) =>
+            bounds is { } value ? new Rect(value.X, value.Y, value.Width, value.Height) : null;
+        Rect? Clip(Rect? candidate, Rect obstacle) =>
+            candidate is { } available ? MangaTranslationOverlay.SpaceBeside(available, source, obstacle) : null;
+    }
+
+    private static Rect BoundsOf(MangaOcrPoint[] polygon) =>
+        new(new Point(polygon.Min(static point => point.X), polygon.Min(static point => point.Y)),
+            new Point(polygon.Max(static point => point.X), polygon.Max(static point => point.Y)));
 
     private void PublishTranslationOverlay()
     {

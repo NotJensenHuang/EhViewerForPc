@@ -251,7 +251,7 @@ internal sealed class MangaTranslationService(AppPaths paths, ImageDecoder decod
             : result.TranslationBackend?.StartsWith("Vulkan", StringComparison.Ordinal) == true;
         bool valid = result.Regions.Length == 0 ? result.TranslationBackend is null : backendMatches &&
             Array.TrueForAll(result.Regions, region => region?.SourceText is not null && region.TranslatedText is not null &&
-                region.HasValidBounds(width, height) && Enum.IsDefined(region.Review) &&
+                region.HasValidBounds(width, height) && region.HasValidBubbleInterior(width, height) && Enum.IsDefined(region.Review) &&
                 region.RejectedOutput is null or { Length: <= 512 });
         if (!valid || result.OcrObservations is not { Length: <= 120 } || result.RawDetections is not { Length: <= 120 })
             throw InvalidResponse();
@@ -403,10 +403,23 @@ internal sealed record MangaTranslationRegion(string SourceText, string Translat
     public string? RejectedOutput { get; init; }
 
     public int[] SourceRegionIds { get; init; } = [];
+    public MangaOcrLayoutBounds? BubbleInterior { get; init; }
+    public MangaOcrLayoutBounds? BalancedBubbleInterior { get; init; }
 
     public bool HasValidBounds(int imageWidth, int imageHeight) =>
         X >= 0 && Y >= 0 && Width > 0 && Height > 0 && X <= imageWidth && Y <= imageHeight &&
         Width <= imageWidth - X && Height <= imageHeight - Y;
+
+    internal bool HasValidBubbleInterior(int imageWidth, int imageHeight) =>
+        IsValidInterior(BubbleInterior, imageWidth, imageHeight) &&
+        IsValidInterior(BalancedBubbleInterior, imageWidth, imageHeight);
+
+    private bool IsValidInterior(MangaOcrLayoutBounds? candidate, int imageWidth, int imageHeight) =>
+        candidate is not { } inset ||
+        (inset.X >= 0 && inset.Y >= 0 && inset.Width > 0 && inset.Height > 0 &&
+         inset.X <= imageWidth && inset.Y <= imageHeight &&
+         inset.Width <= imageWidth - inset.X && inset.Height <= imageHeight - inset.Y &&
+         inset.X < X + Width && inset.Y < Y + Height && inset.X + inset.Width > X && inset.Y + inset.Height > Y);
 }
 
 internal sealed record MangaTranslationResponse(int SchemaVersion, int Width, int Height, string OcrProvider,

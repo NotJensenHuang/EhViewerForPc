@@ -5,6 +5,33 @@ namespace EhViewerForPc.ImageSearch.Ui.Tests;
 public sealed class MangaOcrDialogueTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SingleSmallRecognitionMeasuresTheSurroundingBubble(bool open)
+    {
+        const int size = 180;
+        byte[] pixels = new byte[size * size * 4];
+        pixels.AsSpan().Fill(224);
+        for (int y = 22; y <= 152; y++)
+        for (int x = 42; x <= 135; x++)
+        {
+            if (x == 42 || x == 135 || y == 152 || (y == 22 && !(open && x == 84)))
+                pixels.AsSpan((y * size + x) * 4, 3).Clear();
+        }
+
+        var glyph = new MangaOcrRegion(80, 72, 7, 15, "待つ") { SourceRegionIds = [1] };
+        var result = Assert.Single(MangaOcr.ArrangeDialogue([glyph], pixels, size, size, size * 4,
+            TestContext.Current.CancellationToken));
+        Assert.Equal((glyph.X, glyph.Y, glyph.Width, glyph.Height), (result.X, result.Y, result.Width, result.Height));
+        if (open) Assert.Null(result.BubbleInterior);
+        else
+        {
+            var interior = Assert.IsType<MangaOcrLayoutBounds>(result.BubbleInterior);
+            Assert.True(interior.Width >= 80 && interior.Height >= 110);
+        }
+    }
+
+    [Theory]
     [InlineData(true, -1)]
     [InlineData(true, 67)]
     [InlineData(true, 71)]
@@ -83,5 +110,47 @@ public sealed class MangaOcrDialogueTests
         MangaOcrRegion bubble = Assert.Single(grouped);
         Assert.Equal("なぜ俺がお前の懇願を聞き入れねばならない？", bubble.Text);
         Assert.Equal((28, 20, 136, 130), (bubble.X, bubble.Y, bubble.Width, bubble.Height));
+    }
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void StaggeredVerticalColumnsOnlyJoinWithClosedBubbleEvidence(bool separatingBorder, bool openOutline)
+    {
+        const int size = 180;
+        byte[] pixels = new byte[size * size * 4];
+        pixels.AsSpan().Fill(225);
+        for (int i = 3; i < pixels.Length; i += 4) pixels[i] = 255;
+
+        for (int y = 18; y <= 155; y++)
+        for (int x = 45; x <= 130; x++)
+        {
+            if (x == 45 || (x == 130 && !(openOutline && y == 80)) || y is 18 or 155 ||
+                (separatingBorder && x == 87))
+                pixels.AsSpan((y * size + x) * 4, 3).Clear();
+        }
+
+        var columns = new List<MangaOcrRegion>
+        {
+            new(58, 35, 25, 104, "三列目") { SourceRegionIds = [1] },
+            new(85, 58, 20, 72, "二列目") { SourceRegionIds = [2] },
+            new(105, 62, 20, 67, "一列目") { SourceRegionIds = [3] },
+            new(132, 55, 20, 58, "ガタン") { SourceRegionIds = [4] },
+        };
+
+        var grouped = MangaOcr.ArrangeDialogue(columns, pixels, size, size, size * 4, TestContext.Current.CancellationToken);
+        Assert.Contains(grouped, item => item.SourceRegionIds.SequenceEqual([4]));
+        if (separatingBorder || openOutline)
+        {
+            Assert.Contains(grouped, item => item.SourceRegionIds.SequenceEqual([1]));
+            return;
+        }
+
+        MangaOcrRegion bubble = Assert.Single(grouped, item => item.SourceRegionIds.Length == 3);
+        Assert.Equal(new[] { 3, 2, 1 }, bubble.SourceRegionIds);
+        Assert.Equal("一列目二列目三列目", bubble.Text);
+        var interior = Assert.IsType<MangaOcrLayoutBounds>(bubble.BubbleInterior);
+        Assert.True(interior.X > 45 && interior.X + interior.Width < 130);
+        Assert.True(interior.Y > 18 && interior.Y + interior.Height < 155);
     }
 }

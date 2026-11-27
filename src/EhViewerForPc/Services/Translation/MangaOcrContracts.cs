@@ -4,7 +4,11 @@ namespace EhViewerForPc.Services;
 internal sealed record MangaOcrRegion(int X, int Y, int Width, int Height, string Text)
 {
     public int[] SourceRegionIds { get; init; } = [];
+    public MangaOcrLayoutBounds? BubbleInterior { get; init; }
+    public MangaOcrLayoutBounds? BalancedBubbleInterior { get; init; }
 }
+
+internal sealed record MangaOcrLayoutBounds(int X, int Y, int Width, int Height);
 
 internal readonly record struct MangaOcrPoint(float X, float Y);
 

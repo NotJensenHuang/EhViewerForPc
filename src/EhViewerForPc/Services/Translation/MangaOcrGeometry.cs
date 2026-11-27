@@ -328,7 +328,7 @@ internal static partial class MangaOcr
         ReadOnlySpan<byte> pixels, int width, int height, int stride, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (regions.Count < 2) return regions;
+        if (regions.Count == 0) return regions;
         var source = new ImagePixels(pixels, width, height, stride, 4);
         var result = new List<MangaOcrRegion>(regions.Count);
         var vertical = new List<MangaOcrRegion>();
@@ -341,6 +341,14 @@ internal static partial class MangaOcr
         }
         AppendDialogue(vertical, result, source, vertical: true, token);
         AppendDialogue(horizontal, result, source, vertical: false, token);
+        // 每个翻译区独立寻找闭合泡，单列、短句和未合并的同泡文字都有可用空间。
+        for (int i = 0; i < result.Count; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            MangaOcrRegion region = result[i];
+            if (MeasureBubbleInterior(source, region, token) is { } interiors)
+                result[i] = region with { BubbleInterior = interiors.Wide, BalancedBubbleInterior = interiors.Balanced };
+        }
 
         result.Sort(static (first, second) => first.Y == second.Y ? second.X.CompareTo(first.X) : first.Y.CompareTo(second.Y));
         var rightToLeft = Comparer<MangaOcrRegion>.Create(static (first, second) =>
@@ -383,7 +391,7 @@ internal static partial class MangaOcr
                 MangaOcrRegion second = candidates[j];
                 double distance = vertical ? CenterX(first) - CenterX(second) : CenterY(second) - CenterY(first);
                 if (distance > (vertical ? first.Width * 1.55 : first.Height * 1.60)) break;
-                bool adjacent = vertical ? AdjacentColumns(first, second, distance, source) : AdjacentLines(first, second, distance, source);
+                bool adjacent = vertical ? AdjacentColumns(first, second, distance, source, token) : AdjacentLines(first, second, distance, source);
                 if (!adjacent) continue;
                 // 已占用时，当前候选更靠近第二行或列。
                 if (previous[j] >= 0) next[previous[j]] = -1;
@@ -394,14 +402,23 @@ internal static partial class MangaOcr
         }
 
         for (int i = 0; i < candidates.Count; i++)
-            if (previous[i] < 0) output.Add(next[i] < 0 ? candidates[i] : JoinDialogue(candidates, next, i, vertical));
+        {
+            if (previous[i] >= 0) continue;
+            if (next[i] < 0)
+            {
+                output.Add(candidates[i]);
+                continue;
+            }
+
+            output.Add(JoinDialogue(candidates, next, i, vertical));
+        }
     }
 
     private static double CenterX(MangaOcrRegion region) => region.X + region.Width * 0.5;
 
     private static double CenterY(MangaOcrRegion region) => region.Y + region.Height * 0.5;
 
-    private static bool AdjacentColumns(MangaOcrRegion right, MangaOcrRegion left, double distance, ImagePixels source)
+    private static bool AdjacentColumns(MangaOcrRegion right, MangaOcrRegion left, double distance, ImagePixels source, CancellationToken token)
     {
         int width = Math.Min(right.Width, left.Width);
         int gap = right.X - left.X - left.Width;
@@ -410,11 +427,14 @@ internal static partial class MangaOcr
 
         int top = Math.Max(right.Y, left.Y);
         int bottom = Math.Min(right.Y + right.Height, left.Y + left.Height);
-        if (bottom - top < 0.72 * Math.Min(right.Height, left.Height) || Math.Abs(right.Y - left.Y) > 0.55 * width)
-            return false;
+        if (bottom - top < 0.72 * Math.Min(right.Height, left.Height)) return false;
 
         int middle = (int)Math.Round((CenterX(right) + CenterX(left)) / 2);
-        return ClearDialogueSeam(source, middle, width, top, bottom, vertical: true);
+        if (!ClearDialogueSeam(source, middle, width, top, bottom, vertical: true)) return false;
+
+        int offset = Math.Abs(right.Y - left.Y);
+        return offset <= 0.55 * width ||
+            (offset <= 2 * width && InSameClosedBubble(source, right, left, width, middle, (top + bottom) / 2, token));
     }
 
     private static bool AdjacentLines(MangaOcrRegion upper, MangaOcrRegion lower, double distance, ImagePixels source)

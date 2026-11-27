@@ -1,5 +1,23 @@
 # 变更记录
 
+## 2026-11-27 修复闭合泡短句重译与覆盖过窄
+
+- `MangaTranslationWorker.cs` 对 JManga 把不同短句译为重复内容的结果尝试逐句恢复。保留原顺序及句间换行。
+- `ReaderViewModel.Translation.cs` 识别被原字罩完全覆盖的低置信重复框，保留复核明细及气泡安全排版空间。
+- `MangaOcrBubble.cs` 增加高度与宽度较均衡的安全内框。
+- `MangaTranslationOverlay.cs` 根据实际换行比较两种气泡内框，并为泡外中日韩文设置换行宽度，改善单字列，同时避让独立原字和译文。
+
+## 2026-11-27 译文优先利用完整气泡的可用空间
+
+- `MangaOcrBubble.cs`、`MangaOcrGeometry.cs` 为单列和未合并的对白独立查找闭合气泡安全内区。
+- `MangaTranslationOverlay.cs`、`ReaderViewModel.Translation.cs` 为同泡对白分用空间。泡内不足时尝试保留交叠、减少外扩，避开同页原文和译文。
+- `AsyncImage.cs` 将连续与横向阅读的实际可见区传给排版，跟随滚动更新标签位置。
+
+## 2026-11-27 阅读器译文覆盖的字号和气泡空间
+
+- `MangaOcrBubble.cs` 在闭合气泡内识别错位的同组竖列，保留原始检测框并传递安全的排字候选。
+- `MangaTranslationOverlay.cs` 根据实际换行和显示倍率安排字号，在重叠或空间不足时保留原文，双语文本保留完整译文。见[字号与复现记录](漫画译文覆盖字号验证-2026-11-27.md)。
+
 ## 2026-11-26 阅读器接入 JMangaTranslator-Fast 单气泡 CPU 翻译
 
 - `MangaTranslationWorker.cs` 和漫画翻译设置接入 JMangaTranslator-Fast v1。CPU 运行 OCR 与 ONNX 翻译，用户同意非商用权重许可后按需准备。
